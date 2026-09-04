@@ -438,6 +438,7 @@ model Campaign {
 
   campaignRecords CampaignRecord[]
   batches         Batch[]
+  emailJobs       EmailJob[]
 
   @@index([workspaceId])
   @@index([status])
@@ -537,6 +538,7 @@ model EmailJob {
   updatedAt  DateTime @updatedAt
 
   batch                 Batch                  @relation(fields: [batchId], references: [id])
+  campaign               Campaign               @relation(fields: [campaignId], references: [id])
   record                 Record                 @relation(fields: [recordId], references: [id])
   templateVersion         TemplateVersion        @relation(fields: [templateVersionId], references: [id])
   emailProviderAccount     EmailProviderAccount?  @relation(fields: [emailProviderAccountId], references: [id])

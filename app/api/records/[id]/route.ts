@@ -6,6 +6,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { findOrCreateContactForRecord } from '@/lib/records/contactLink';
+import { onRecordChanged } from '@/lib/automation/runner';
 import { Role } from '@prisma/client';
 
 async function loadRecord(session: Awaited<ReturnType<typeof requireSession>>, id: string) {
@@ -66,7 +67,24 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
 
   await audit(session, 'RECORD_UPDATE', { targetType: 'Record', targetId: record.id, metadata: { changedFields } });
 
-  return NextResponse.json({ record: updated });
+  // §69: a record edit is an automation trigger. Evaluation runs after the
+  // write commits, and never fails the write — a broken automation must not
+  // stop an operator from editing data.
+  let automationResults: unknown[] = [];
+  if (changedFields.length > 0) {
+    try {
+      automationResults = await onRecordChanged({
+        recordId: record.id,
+        datasetId: record.datasetId,
+        workspaceId: record.dataset.workspaceId,
+        triggerType: 'RECORD_UPDATED',
+      });
+    } catch (err) {
+      console.error('[automation] evaluation failed after record update', err);
+    }
+  }
+
+  return NextResponse.json({ record: updated, automations: automationResults });
 });
 
 export const DELETE = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {

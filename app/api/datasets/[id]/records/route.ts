@@ -6,6 +6,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { findOrCreateContactForRecord } from '@/lib/records/contactLink';
+import { onRecordChanged } from '@/lib/automation/runner';
 import { Role } from '@prisma/client';
 
 const createSchema = z.object({
@@ -36,5 +37,18 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
 
   await audit(session, 'RECORD_CREATE', { targetType: 'Record', targetId: record.id });
 
-  return NextResponse.json({ record }, { status: 201 });
+  // §69 RECORD_CREATED trigger. Never fails the write (see the update route).
+  let automationResults: unknown[] = [];
+  try {
+    automationResults = await onRecordChanged({
+      recordId: record.id,
+      datasetId: dataset.id,
+      workspaceId: dataset.workspaceId,
+      triggerType: 'RECORD_CREATED',
+    });
+  } catch (err) {
+    console.error('[automation] evaluation failed after record create', err);
+  }
+
+  return NextResponse.json({ record, automations: automationResults }, { status: 201 });
 });

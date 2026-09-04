@@ -6,14 +6,16 @@
 - **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
 - **Repo:** https://github.com/Sant1513/mailflow
 
-## Verification status (last run: 4 Sep 2026, after Phase 2)
+## Verification status (last run: 4 Sep 2026, after Phase 4)
 
 | Suite | Count | Result |
 | --- | --- | --- |
-| Unit tests (`npm test`) | 87 | ✅ pass |
+| Unit tests (`npm test`) | 205 | ✅ pass |
 | Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
-| HTTP integration, localhost (`scripts/smoke-test-http.ts`) | 37 | ✅ pass |
-| HTTP integration, live production | 37 | ✅ pass |
+| Send pipeline, live DB + fake provider (`scripts/smoke-test-send.ts`) | 35 | ✅ pass |
+| Automation engine, live DB (`scripts/smoke-test-automation.ts`) | 28 | ✅ pass |
+| HTTP integration (`scripts/smoke-test-http.ts`) | 37 | ✅ pass |
+| Deployment verification (`scripts/verify-deployment.ts`) | 19 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
 Google OAuth is configured and verified as far as it can be without a real
@@ -56,16 +58,38 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [ ] **Send test email** — deliberately deferred: it needs a connected Gmail account, which is Phase 3. The health check already reports "Sender connected: fail" until then, rather than offering a button that can't work.
 - [ ] Rich-text (WYSIWYG) editing mode — HTML/CSS editing works; a visual drag-and-drop builder is a later refinement.
 
-## Phase 3 — Gmail + Campaigns + Queue — not started
-Schema exists (`EmailProviderAccount`, `Campaign`, `Batch`, `EmailJob`,
-`lib/crypto/secretBox.ts` for token encryption). No Gmail OAuth connect flow,
-no send pipeline, no BullMQ workers yet. `npm run worker:*` scripts are
-placeholders for when this phase lands — the worker files don't exist yet on
-purpose (no fake queue processing).
+## Phase 3 — Gmail + Campaigns + Queue ✅ mostly done
+- [x] Gmail OAuth as a **separate** consent step from login; CSRF-protected callback, scope verification, and a refusal to connect a mailbox that isn't the signed-in user's own
+- [x] Tokens AES-256-GCM encrypted at rest, auto-refreshed, never sent to the browser
+- [x] `EmailProvider` abstraction + `GmailProvider`; nothing outside `lib/email/*` and `lib/gmail/*` touches the Gmail SDK
+- [x] RFC 2822 MIME builder: multipart/alternative, attachments, RFC 2047 headers, and **In-Reply-To / References threading** (§46) — plus CRLF stripping so a template variable can't inject headers
+- [x] Campaign CRUD, with the template version **pinned at creation** (§21/§126)
+- [x] **Dry run** sharing one pure evaluator with the real send, so the simulation genuinely predicts the send; every record gets a reason
+- [x] "Why was this sent" recorded on every job; never blank (§35)
+- [x] Approval workflow — server-enforced: only ADMIN/SUPER_ADMIN approve, nobody approves their own campaign
+- [x] Batches + one immutable `EmailJob` snapshot per recipient (rendered body + sender identity)
+- [x] Duplicate protection enforced by a **DB unique constraint** on (campaign, record, templateVersion), not just app logic
+- [x] Pause / resume / cancel, re-checked immediately before each send
+- [x] Retry that classifies failures — permanent ones (invalid recipient, revoked auth) are never retried
+- [x] Rate limiting from durable rows, so the cap survives restarts
+- [x] BullMQ + Redis worker (`npm run worker:email`) **and** a bounded drain endpoint for deployments without Redis — both call the same `processEmailJob`
+- [x] Test email (§26) — exactly one message, clearly marked, never to campaign recipients
+- [ ] Scheduling: `scheduledAt` is stored and shown, but no scheduler process dispatches it yet — a scheduled campaign still needs Send pressed
+- [ ] CC/BCC and attachments on campaigns (the MIME builder supports both; the campaign UI does not expose them yet)
 
-## Phase 4 — Automation builder — not started
-Schema exists (`Automation`, `AutomationVersion`, `AutomationRun`). No
-condition-tree UI, no evaluator, no run log UI.
+## Phase 4 — Automation builder ✅ mostly done
+- [x] Condition engine: AND/OR trees, 8 operators, with type-loose comparison so `Trigger = 1` matches the string `"1"` people actually type
+- [x] Unknown operators **fail closed** (never send) rather than passing
+- [x] Trigger → conditions → action builder UI, with the run log
+- [x] Stop conditions (§71) evaluated **before** trigger conditions, so "already replied" wins
+- [x] Send-frequency policy (§37): once / per day / per week / per campaign / repeated, plus an N-day cooldown that takes the stricter of the two
+- [x] Actions: SEND_EMAIL (creates a real campaign/batch/job, so automated mail appears in history exactly like manual mail), UPDATE_RECORD (with change history), NOTIFY_USER
+- [x] Automation versioning (§73) — editing creates a new version **and turns the automation off**, so the new rules must be re-confirmed before they can fire
+- [x] §74 safety gate: enabling requires the caller to echo back the affected-record count it was shown, so mass email cannot be switched on without the number being displayed
+- [x] Run log records every evaluation including the no-ops (§72)
+- [x] Evaluation hooked into record create/update; a failing automation never blocks a data edit
+- [ ] WAIT action — recorded as not-implemented in the run log rather than faked; needs the delayed queue
+- [ ] SCHEDULED trigger — stored but no cron process runs it yet
 
 ## Phase 5 — Threading / inbound sync / Inbox — not started
 Schema exists (`Conversation`, `ConversationMessage`, `InternalNote`, `Tag`,
