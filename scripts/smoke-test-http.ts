@@ -24,12 +24,16 @@ function check(name: string, cond: boolean, extra?: unknown) {
   }
 }
 
+// NextAuth prefixes the session cookie with "__Secure-" when served over
+// HTTPS (its default `useSecureCookies` follows the site URL's protocol).
+const COOKIE_NAME = BASE_URL.startsWith('https://') ? '__Secure-next-auth.session-token' : 'next-auth.session-token';
+
 async function createSessionFor(userId: string) {
   const sessionToken = crypto.randomBytes(32).toString('hex');
   await prisma.session.create({
     data: { sessionToken, userId, expires: new Date(Date.now() + 3600_000) },
   });
-  return `next-auth.session-token=${sessionToken}`;
+  return `${COOKIE_NAME}=${sessionToken}`;
 }
 
 async function api(path: string, cookie: string | null, init: RequestInit = {}) {
