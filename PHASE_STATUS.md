@@ -6,14 +6,14 @@
 - **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
 - **Repo:** https://github.com/Sant1513/mailflow
 
-## Verification status (last run: 4 Sep 2026)
+## Verification status (last run: 4 Sep 2026, after Phase 2)
 
 | Suite | Count | Result |
 | --- | --- | --- |
-| Unit tests (`npm test`) | 31 | ✅ pass |
+| Unit tests (`npm test`) | 87 | ✅ pass |
 | Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
-| HTTP integration, localhost (`scripts/smoke-test-http.ts`) | 22 | ✅ pass |
-| HTTP integration, live production | 22 | ✅ pass |
+| HTTP integration, localhost (`scripts/smoke-test-http.ts`) | 37 | ✅ pass |
+| HTTP integration, live production | 37 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
 Google OAuth is configured and verified as far as it can be without a real
@@ -84,7 +84,7 @@ today. Charts, retention policy config, and the "view as" banner are not.
 ---
 
 ### Immediate next steps (in order)
-1. `npm install`, provision Postgres + Redis, `npm run db:migrate`, sign in once, `npm run db:seed`.
-2. Saved views + filter/sort UI on the data grid (closes out Phase 1).
-3. Template builder (Phase 2) — this unblocks Campaigns, which is the biggest single remaining phase.
-4. Gmail OAuth connect + `EmailProvider`/`GmailProvider` abstraction + BullMQ `email-send` worker (Phase 3).
+1. **Gmail OAuth connect + `EmailProvider`/`GmailProvider` abstraction** (Phase 3) — the single biggest unlock: it turns on test-sends, campaigns, and everything downstream.
+2. Campaign model + dry run + approval + batches + BullMQ `email-send` worker (rest of Phase 3).
+3. Saved views + filter/sort/bulk-edit UI on the data grid (closes out Phase 1).
+4. Automation builder (Phase 4).
