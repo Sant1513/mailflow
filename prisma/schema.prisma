@@ -1,0 +1,835 @@
+// MailFlow — Prisma schema
+// See ARCHITECTURE.md for the relationship rules and indexing rationale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ORG / AUTH
+// ─────────────────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+model Organization {
+  id            String   @id @default(cuid())
+  name          String
+  allowedDomain String   @unique // "masaischool.com"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users       User[]
+  workspaces  Workspace[]
+  auditLogs   AuditLog[]
+  contacts    Contact[]
+  aiUsage     AiUsage[]
+}
+
+model User {
+  id              String     @id @default(cuid())
+  organizationId  String
+  googleId        String     @unique
+  email           String     @unique
+  name            String
+  profileImage    String?
+  role            Role       @default(OPERATOR)
+  status          UserStatus @default(ACTIVE)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  lastLoginAt     DateTime?
+
+  organization       Organization         @relation(fields: [organizationId], references: [id])
+  ownedWorkspaces     Workspace[]          @relation("WorkspaceOwner")
+  workspaceMemberships WorkspaceMember[]
+  accounts            Account[]
+  sessions            Session[]
+  emailProviderAccounts EmailProviderAccount[]
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  aiUsage             AiUsage[]
+  internalNotes       InternalNote[]
+  assignedConversations Conversation[]     @relation("ConversationAssignee")
+  campaignsCreated    Campaign[]           @relation("CampaignCreatedBy")
+  templatesOwned      Template[]           @relation("TemplateOwner")
+  datasetsOwned       Dataset[]            @relation("DatasetOwner")
+  recordChanges       RecordChangeHistory[]
+
+  @@index([organizationId])
+}
+
+// NextAuth (Auth.js) adapter models — database session strategy.
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Workspace {
+  id             String   @id @default(cuid())
+  organizationId String
+  ownerId        String
+  name           String
+  disabled       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  owner        User              @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  members      WorkspaceMember[]
+
+  contacts               Contact[]
+  datasets               Dataset[]
+  templates               Template[]
+  campaigns                Campaign[]
+  automations              Automation[]
+  emailProviderAccounts    EmailProviderAccount[]
+  notifications            Notification[]
+  aiUsage                  AiUsage[]
+  tags                     Tag[]
+  conversations            Conversation[]
+
+  @@index([organizationId])
+}
+
+model WorkspaceMember {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        Role     @default(OPERATOR)
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@unique([workspaceId, userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CONTACTS
+// ─────────────────────────────────────────────────────────────────────────
+
+model Contact {
+  id             String   @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  name           String?
+  primaryEmail   String
+  phone          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id])
+
+  records             Record[]
+  conversations        Conversation[]
+  recipientHistory      RecipientHistory[]
+  campaignRecords      CampaignRecord[]
+
+  @@unique([workspaceId, primaryEmail])
+  @@index([primaryEmail])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// DATASETS / RECORDS
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ColumnType {
+  TEXT
+  LONG_TEXT
+  EMAIL
+  NUMBER
+  DATE
+  DATETIME
+  CHECKBOX
+  SINGLE_SELECT
+  MULTI_SELECT
+  URL
+  STATUS
+  FORMULA
+}
+
+model Dataset {
+  id             String   @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  ownerId        String
+  name           String
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  owner     User      @relation("DatasetOwner", fields: [ownerId], references: [id])
+
+  columns    DatasetColumn[]
+  records    Record[]
+  savedViews SavedView[]
+  campaigns  Campaign[]
+
+  @@index([workspaceId])
+}
+
+model DatasetColumn {
+  id         String     @id @default(cuid())
+  datasetId  String
+  key        String // stable key used inside Record.data jsonb
+  label      String
+  type       ColumnType
+  options    Json? // for SINGLE_SELECT/MULTI_SELECT: string[]; FORMULA: { expr }
+  isSystem   Boolean    @default(false) // e.g. email status fields, §14
+  order      Int        @default(0)
+  hidden     Boolean    @default(false)
+  width      Int?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  dataset Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, key])
+  @@index([datasetId])
+}
+
+model Record {
+  id         String   @id @default(cuid())
+  datasetId  String
+  contactId  String?
+  data       Json // { [columnKey]: value } — business fields only
+  // System email fields (§14) kept out of `data` so business Status is
+  // never overwritten by the send pipeline:
+  emailStatus            String?  // NOT_SENT | QUEUED | SENT | FAILED | SKIPPED
+  lastEmailSentAt         DateTime?
+  lastEmailError           String?
+  lastBatchId              String?
+  replyReceived            Boolean  @default(false)
+  replyReceivedAt          DateTime?
+  lastReplyAt              DateTime?
+  lastCommunicationAt      DateTime?
+  lastCommunicationDirection String? // INBOUND | OUTBOUND
+  conversationId           String?
+  gmailThreadId            String?
+  unreadReply              Boolean  @default(false)
+  followUpRequired         Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  dataset Dataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  contact Contact? @relation(fields: [contactId], references: [id])
+
+  campaignRecords CampaignRecord[]
+  changeHistory   RecordChangeHistory[]
+  emailJobs       EmailJob[]
+
+  @@index([datasetId])
+  @@index([contactId])
+  @@index([emailStatus])
+}
+
+model SavedView {
+  id         String   @id @default(cuid())
+  datasetId  String
+  name       String
+  filter     Json // condition tree, same shape as automation conditions
+  sort       Json?
+  groupBy    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  dataset Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@index([datasetId])
+}
+
+model RecordChangeHistory {
+  id        String   @id @default(cuid())
+  recordId  String
+  actorId   String?
+  field     String
+  oldValue  Json?
+  newValue  Json?
+  reason    String? // e.g. "automation triggered", "manual edit"
+  createdAt DateTime @default(now())
+
+  record Record @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  actor  User?  @relation(fields: [actorId], references: [id])
+
+  @@index([recordId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// TEMPLATES
+// ─────────────────────────────────────────────────────────────────────────
+
+model Template {
+  id             String   @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  ownerId        String
+  name           String
+  description    String?
+  archived       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  owner     User      @relation("TemplateOwner", fields: [ownerId], references: [id])
+
+  versions  TemplateVersion[]
+  campaigns Campaign[]
+
+  @@index([workspaceId])
+}
+
+model TemplateVersion {
+  id           String   @id @default(cuid())
+  templateId   String
+  version      Int
+  subject      String
+  html         String   @db.Text
+  css          String?  @db.Text
+  plainText    String?  @db.Text
+  variables    Json // string[] detected {{Var}} names, cached at save time
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  template   Template   @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  campaigns  Campaign[]
+  emailJobs  EmailJob[]
+
+  @@unique([templateId, version])
+  @@index([templateId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// EMAIL PROVIDER (Gmail) ACCOUNTS
+// ─────────────────────────────────────────────────────────────────────────
+
+enum EmailProvider {
+  GMAIL
+  SMTP
+  SENDGRID
+  SES
+  RESEND
+}
+
+model EmailProviderAccount {
+  id             String        @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  userId         String
+  provider       EmailProvider @default(GMAIL)
+  emailAddress   String
+  displayName    String?
+  // Encrypted at rest (AES-256-GCM); never sent to the browser.
+  accessTokenEnc  String? @db.Text
+  refreshTokenEnc String? @db.Text
+  tokenExpiresAt  DateTime?
+  scope           String?
+  gmailHistoryId  String?
+  watchExpiresAt  DateTime?
+  status          String   @default("CONNECTED") // CONNECTED | DISCONNECTED | EXPIRED
+  lastVerifiedAt  DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+
+  emailJobs     EmailJob[]
+  conversations Conversation[]
+
+  @@unique([workspaceId, userId, provider])
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CAMPAIGNS / BATCHES / EMAIL JOBS
+// ─────────────────────────────────────────────────────────────────────────
+
+enum CampaignStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  PARTIALLY_FAILED
+  CANCELLED
+  REJECTED
+}
+
+model Campaign {
+  id                String         @id @default(cuid())
+  organizationId    String
+  workspaceId       String
+  name              String
+  description       String?
+  datasetId         String
+  templateId        String
+  templateVersionId String
+  automationId      String?
+  senderAccountId   String?
+  status            CampaignStatus @default(DRAFT)
+  scheduledAt       DateTime?
+  timezone          String         @default("Asia/Kolkata")
+  createdById       String
+  approvedById      String?
+  approvedAt        DateTime?
+  rejectionReason   String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id])
+  dataset         Dataset          @relation(fields: [datasetId], references: [id])
+  template        Template         @relation(fields: [templateId], references: [id])
+  templateVersion TemplateVersion  @relation(fields: [templateVersionId], references: [id])
+  automation      Automation?      @relation(fields: [automationId], references: [id])
+  createdBy       User             @relation("CampaignCreatedBy", fields: [createdById], references: [id])
+
+  campaignRecords CampaignRecord[]
+  batches         Batch[]
+
+  @@index([workspaceId])
+  @@index([status])
+}
+
+model CampaignRecord {
+  id         String  @id @default(cuid())
+  campaignId String
+  recordId   String
+  contactId  String?
+  // snapshot of validation at add-time; refreshed by dry run
+  isValid        Boolean @default(true)
+  invalidReason  String?
+  isDuplicate    Boolean @default(false)
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  record   Record   @relation(fields: [recordId], references: [id])
+  contact  Contact? @relation(fields: [contactId], references: [id])
+
+  @@unique([campaignId, recordId])
+  @@index([campaignId])
+}
+
+enum BatchStatus {
+  PREPARING
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  PARTIALLY_FAILED
+  FAILED
+  CANCELLED
+}
+
+model Batch {
+  id         String      @id @default(cuid())
+  campaignId String
+  label      String // e.g. BATCH-2026-09-04-001
+  status     BatchStatus @default(PREPARING)
+  total      Int         @default(0)
+  validCount   Int       @default(0)
+  sentCount    Int       @default(0)
+  failedCount  Int       @default(0)
+  skippedCount Int       @default(0)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  campaign Campaign   @relation(fields: [campaignId], references: [id])
+  jobs     EmailJob[]
+
+  @@unique([campaignId, label])
+  @@index([campaignId])
+}
+
+enum EmailJobStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+  CANCELLED
+}
+
+model EmailJob {
+  id                String         @id @default(cuid())
+  batchId           String
+  campaignId        String
+  recordId          String
+  templateVersionId String
+  emailProviderAccountId String?
+  status            EmailJobStatus @default(QUEUED)
+
+  // immutable send snapshot (§89)
+  toEmail    String
+  ccEmails   String[]
+  bccEmails  String[]
+  fromName   String
+  fromEmail  String
+  subject    String
+  html       String   @db.Text
+  plainText  String?  @db.Text
+
+  gmailMessageId String?
+  gmailThreadId  String?
+  messageIdHeader String?
+
+  sendReason   String? @db.Text
+  skipReason   String? @db.Text
+  errorCode    String?
+  errorMessage String? @db.Text
+  providerResponse Json?
+  retryCount   Int      @default(0)
+  lastAttemptAt DateTime?
+
+  sentAt     DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  batch                 Batch                  @relation(fields: [batchId], references: [id])
+  record                 Record                 @relation(fields: [recordId], references: [id])
+  templateVersion         TemplateVersion        @relation(fields: [templateVersionId], references: [id])
+  emailProviderAccount     EmailProviderAccount?  @relation(fields: [emailProviderAccountId], references: [id])
+  attachments             Attachment[]
+
+  @@unique([campaignId, recordId, templateVersionId])
+  @@index([batchId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// AUTOMATIONS
+// ─────────────────────────────────────────────────────────────────────────
+
+model Automation {
+  id             String   @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  datasetId      String?
+  name           String
+  enabled        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace Workspace           @relation(fields: [workspaceId], references: [id])
+  versions  AutomationVersion[]
+  runs      AutomationRun[]
+  campaigns Campaign[]
+
+  @@index([workspaceId])
+}
+
+model AutomationVersion {
+  id           String   @id @default(cuid())
+  automationId String
+  version      Int
+  triggerType  String // RECORD_MATCHES_CONDITIONS | RECORD_CREATED | RECORD_UPDATED | MANUAL | SCHEDULED
+  triggerConfig Json // e.g. cron for SCHEDULED
+  conditions   Json // condition tree: { op: AND|OR, rules: [...] }
+  actions      Json // ordered list of { type, config }
+  stopConditions Json? // condition tree, evaluated before each action pass
+  frequencyPolicy Json // { mode: ONCE|ONCE_PER_DAY|ONCE_PER_WEEK|ONCE_PER_CAMPAIGN|ALLOW_REPEATED, cooldownDays? }
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  automation Automation      @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  runs       AutomationRun[]
+
+  @@unique([automationId, version])
+  @@index([automationId])
+}
+
+model AutomationRun {
+  id                  String   @id @default(cuid())
+  automationId        String
+  automationVersionId String
+  recordId            String?
+  triggerType          String
+  conditionsMet        Boolean
+  actionTaken          String?
+  result               String // TRIGGERED | SKIPPED | ERROR
+  error                String?
+  createdAt            DateTime @default(now())
+
+  automation        Automation        @relation(fields: [automationId], references: [id])
+  automationVersion AutomationVersion @relation(fields: [automationVersionId], references: [id])
+
+  @@index([automationId])
+  @@index([recordId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CONVERSATIONS / INBOX
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ConversationStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_FOR_STUDENT
+  RESOLVED
+  CLOSED
+}
+
+model Conversation {
+  id             String             @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  ownerId        String
+  contactId      String
+  recipientEmail String
+  subject        String
+  emailProviderAccountId String
+  gmailThreadId          String?
+  status                 ConversationStatus @default(OPEN)
+  assigneeId             String?
+  firstMessageAt         DateTime?
+  lastMessageAt          DateTime?
+  messageCount           Int      @default(0)
+  unread                 Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  workspace Workspace             @relation(fields: [workspaceId], references: [id])
+  contact   Contact               @relation(fields: [contactId], references: [id])
+  account   EmailProviderAccount  @relation(fields: [emailProviderAccountId], references: [id])
+  assignee  User?                 @relation("ConversationAssignee", fields: [assigneeId], references: [id])
+
+  messages      ConversationMessage[]
+  notes         InternalNote[]
+  tags          ConversationTag[]
+  followUps     FollowUp[]
+
+  @@unique([emailProviderAccountId, gmailThreadId])
+  @@index([workspaceId])
+  @@index([contactId])
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageClassification {
+  HUMAN_REPLY
+  OUT_OF_OFFICE
+  BOUNCE
+  DELIVERY_FAILURE
+  AUTO_REPLY
+  UNKNOWN
+}
+
+model ConversationMessage {
+  id              String            @id @default(cuid())
+  conversationId  String
+  gmailMessageId  String?
+  gmailThreadId   String?
+  direction       MessageDirection
+  classification  MessageClassification @default(UNKNOWN)
+  classificationConfidence Float?
+  senderEmail     String
+  senderName      String?
+  recipientEmail  String
+  cc              String[]
+  bcc             String[]
+  subject         String?
+  messageIdHeader String?
+  inReplyTo       String?
+  references      String?
+  htmlBody        String?  @db.Text
+  plainTextBody   String?  @db.Text
+  snippet         String?
+  sentAt          DateTime?
+  receivedAt      DateTime?
+  status          String   @default("RECEIVED")
+  isRead          Boolean  @default(false)
+  hasAttachments  Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachments  Attachment[]
+
+  @@unique([gmailMessageId])
+  @@index([conversationId])
+}
+
+model InternalNote {
+  id             String   @id @default(cuid())
+  conversationId String
+  authorId       String
+  body           String   @db.Text
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  author       User         @relation(fields: [authorId], references: [id])
+
+  @@index([conversationId])
+}
+
+model Tag {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String?
+  createdAt   DateTime @default(now())
+
+  workspace     Workspace         @relation(fields: [workspaceId], references: [id])
+  conversations ConversationTag[]
+
+  @@unique([workspaceId, name])
+}
+
+model ConversationTag {
+  conversationId String
+  tagId          String
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  tag          Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, tagId])
+}
+
+model FollowUp {
+  id             String    @id @default(cuid())
+  conversationId String
+  dueDate        DateTime
+  note           String?
+  completed      Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([dueDate])
+}
+
+model RecipientHistory {
+  id        String   @id @default(cuid())
+  contactId String
+  type      String // EMAIL_SENT | REPLY | NOTE | STATUS_CHANGE | FOLLOW_UP
+  summary   String
+  refId     String? // id of the related EmailJob / ConversationMessage / etc.
+  createdAt DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+}
+
+model Attachment {
+  id                  String  @id @default(cuid())
+  emailJobId          String?
+  conversationMessageId String?
+  gmailAttachmentId   String?
+  filename            String
+  mimeType            String
+  size                Int
+  createdAt           DateTime @default(now())
+
+  emailJob             EmailJob?             @relation(fields: [emailJobId], references: [id])
+  conversationMessage  ConversationMessage?  @relation(fields: [conversationMessageId], references: [id])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// NOTIFICATIONS / AUDIT / AI
+// ─────────────────────────────────────────────────────────────────────────
+
+model Notification {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String
+  type        String // NEW_REPLY | ASSIGNMENT | FOLLOW_UP_DUE | ... (§87)
+  title       String
+  body        String?
+  link        String?
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  actorId        String?
+  action         String
+  targetType     String?
+  targetId       String?
+  metadata       Json?
+  ip             String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  actor        User?        @relation(fields: [actorId], references: [id])
+
+  @@index([organizationId])
+  @@index([createdAt])
+}
+
+model AiUsage {
+  id             String   @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  userId         String
+  feature        String
+  success        Boolean
+  tokensUsed     Int?
+  latencyMs      Int?
+  errorReason    String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([organizationId, createdAt])
+}

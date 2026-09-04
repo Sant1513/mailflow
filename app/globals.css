@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 222 20% 12%;
+  --muted: 220 20% 96%;
+  --muted-foreground: 220 10% 45%;
+  --border: 220 15% 88%;
+  --primary: 222 60% 30%;
+  --primary-foreground: 0 0% 100%;
+  --card: 0 0% 100%;
+  --destructive: 0 70% 50%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+.grid-cell {
+  @apply border-b border-r border-border px-2 py-1 text-sm whitespace-nowrap overflow-hidden text-ellipsis;
+}
+
+.grid-cell input,
+.grid-cell select {
+  @apply w-full bg-transparent outline-none;
+}

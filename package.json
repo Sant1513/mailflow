@@ -1,0 +1,70 @@
+{
+  "name": "mailflow",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "worker:email": "tsx workers/email-worker.ts",
+    "worker:gmail-sync": "tsx workers/gmail-sync-worker.ts",
+    "worker:automation": "tsx workers/automation-worker.ts"
+  },
+  "dependencies": {
+    "@auth/prisma-adapter": "^2.7.4",
+    "@google-cloud/local-auth": "^3.0.1",
+    "@prisma/client": "^5.20.0",
+    "@radix-ui/react-dialog": "^1.1.2",
+    "@radix-ui/react-dropdown-menu": "^2.1.2",
+    "@radix-ui/react-popover": "^1.1.2",
+    "@radix-ui/react-select": "^2.1.2",
+    "@radix-ui/react-tabs": "^1.1.1",
+    "@radix-ui/react-toast": "^1.2.2",
+    "@tanstack/react-table": "^8.20.5",
+    "bullmq": "^5.13.2",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.1",
+    "googleapis": "^144.0.0",
+    "ioredis": "^5.4.1",
+    "next": "14.2.35",
+    "next-auth": "^4.24.8",
+    "papaparse": "^5.4.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7",
+    "sonner": "^1.5.0",
+    "tailwind-merge": "^2.5.3",
+    "xlsx": "^0.18.5",
+    "zod": "^3.23.8"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.10",
+    "@types/papaparse": "^5.3.14",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.35",
+    "postcss": "^8.4.47",
+    "prisma": "^5.20.0",
+    "tailwindcss": "^3.4.13",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.2"
+  }
+}
