@@ -9,10 +9,17 @@ Internal Masai School communication, automation, and CRM platform. See
 ## Testing
 
 ```bash
-npm test                              # 31 unit tests (no DB needed)
-npx tsx scripts/smoke-test-db.ts      # 19 checks against the real database
-BASE_URL=http://localhost:3000 npx tsx scripts/smoke-test-http.ts   # 22 HTTP checks
+npm test                              # unit tests (no DB needed)
+npx tsx scripts/smoke-test-db.ts      # checks against the real database
+BASE_URL=http://localhost:3000 npx tsx scripts/smoke-test-http.ts   # authenticated HTTP checks
+BASE_URL=https://<deployed-url> npx tsx scripts/verify-deployment.ts  # RUN AFTER EVERY DEPLOY
 ```
+
+**Always run `verify-deployment.ts` after deploying.** It hits the real URL
+as an anonymous visitor and asserts nothing 5xxs. It exists because a
+production outage (NextAuth missing its secret) slipped past every other
+suite — the authenticated suite signs in first, so it never exercised the
+signed-out path a real first-time visitor takes.
 
 The two `scripts/smoke-test-*.ts` files are integration harnesses, not app
 code. They create their own throwaway org/users/workspaces (including a real
@@ -33,9 +40,20 @@ npm run dev
 Generate the two required secrets:
 
 ```bash
-openssl rand -base64 32   # AUTH_SECRET
+openssl rand -base64 32   # NEXTAUTH_SECRET
 openssl rand -base64 32   # ENCRYPTION_KEY
 ```
+
+`NEXTAUTH_SECRET` is **required in production** — NextAuth refuses to start
+without it. It is optional in development, which is exactly why a missing
+one is easy to ship: set it in your deployment environment, not just
+locally. `NEXTAUTH_URL` must match the deployed origin exactly.
+
+### Deployment environment
+
+Set env vars at the **project level** (`vercel env add NAME production`), not
+via per-deploy `-e` flags — flags are easy to forget on a later deploy, and
+forgetting `NEXTAUTH_SECRET` takes the whole site down.
 
 ### Google OAuth (login)
 

@@ -7,6 +7,24 @@ import { Role } from '@prisma/client';
 const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN ?? 'masaischool.com';
 
 /**
+ * Resolves the session-signing secret, accepting either the NextAuth v4
+ * name (NEXTAUTH_SECRET) or the Auth.js v5 name (AUTH_SECRET).
+ *
+ * Fails loudly at startup in production instead of letting NextAuth throw
+ * an opaque NO_SECRET error on the first request — a missing secret is a
+ * deployment mistake, and it should read like one.
+ */
+function authSecret(): string | undefined {
+  const secret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
+  if (!secret && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'Missing session secret: set NEXTAUTH_SECRET (or AUTH_SECRET) in the environment. Generate one with `openssl rand -base64 32`.'
+    );
+  }
+  return secret;
+}
+
+/**
  * Login-only Google OAuth (identity, not Gmail send/read access — see
  * lib/gmail/oauth.ts for the separate, incremental-consent Gmail connection
  * flow). §5 of the spec: only @masaischool.com may sign in.
@@ -14,6 +32,13 @@ const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN ?? 'masaischool.com';
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   session: { strategy: 'database' },
+  // Set explicitly rather than relying on NextAuth picking up an env var by
+  // name. NextAuth v4 only auto-reads NEXTAUTH_SECRET; AUTH_SECRET is the
+  // Auth.js v5 name. Accepting both means a deployment configured with
+  // either name works, instead of failing at runtime with NO_SECRET — which
+  // is invisible in development, because a secret is only *required* in
+  // production.
+  secret: authSecret(),
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID ?? '',
