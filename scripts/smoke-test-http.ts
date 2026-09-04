@@ -238,6 +238,128 @@ async function main() {
     }
   }
 
+  // ── Phase 2: templates, versioning, preview, health check ──
+  console.log('\n-- Templates: create + version immutability --');
+  let templateId: string | null = null;
+  let v1Id: string | null = null;
+  {
+    const r = await api('/api/templates', opCookie, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'HTTP Smoke Template',
+        subject: 'Reminder for {{Name}}',
+        html: '<p>Hi {{Name}}, code {{Code}}</p>',
+      }),
+    });
+    check('Create template (201) with an initial v1', r.status === 201 && r.body.template.versions.length === 1, r.body);
+    templateId = r.body?.template?.id ?? null;
+    v1Id = r.body?.template?.versions?.[0]?.id ?? null;
+  }
+  {
+    const r = await api(`/api/templates/${templateId}/versions`, opCookie, {
+      method: 'POST',
+      body: JSON.stringify({ subject: 'Reminder for {{Name}} v2', html: '<p>Updated {{Name}}</p>' }),
+    });
+    check('Saving changes creates v2 (201)', r.status === 201 && r.body.version.version === 2, r.body);
+  }
+  {
+    // Saving identical content must NOT inflate the version number.
+    const r = await api(`/api/templates/${templateId}/versions`, opCookie, {
+      method: 'POST',
+      body: JSON.stringify({ subject: 'Reminder for {{Name}} v2', html: '<p>Updated {{Name}}</p>' }),
+    });
+    check('Re-saving unchanged content does not create a version', r.body?.created === false, r.body);
+  }
+  {
+    // §21/§126: v1 content must be untouched by later edits.
+    const r = await api(`/api/templates/${templateId}`, opCookie);
+    const v1 = r.body?.template?.versions?.find((v: any) => v.id === v1Id);
+    check('v1 content is immutable after v2 was saved', v1?.html === '<p>Hi {{Name}}, code {{Code}}</p>', v1?.html);
+  }
+
+  console.log('\n-- Template preview (personalization + XSS safety) --');
+  {
+    const r = await api(`/api/templates/${templateId}/preview`, opCookie, {
+      method: 'POST',
+      body: JSON.stringify({
+        draft: { subject: 'Hi {{Name}}', html: '<p>Code: {{Code}}</p>' },
+        data: { Name: 'Rahul Sharma', Code: 'fd41_470074' },
+      }),
+    });
+    check('Preview substitutes variables', r.status === 200 && r.body.subject === 'Hi Rahul Sharma' && r.body.html.includes('fd41_470074'), r.body);
+    check('Preview reports resolved values for the side panel', r.body?.resolved?.Name === 'Rahul Sharma');
+  }
+  {
+    const r = await api(`/api/templates/${templateId}/preview`, opCookie, {
+      method: 'POST',
+      body: JSON.stringify({
+        draft: { subject: 'x', html: '<p>{{Name}}</p><script>alert(1)</script>' },
+        data: { Name: '<img src=x onerror=alert(1)>' },
+      }),
+    });
+    const html: string = r.body?.html ?? '';
+    check('Preview strips <script> from template HTML', !html.toLowerCase().includes('<script'), html.slice(0, 120));
+    // The payload must survive only as escaped TEXT, never as a live tag:
+    // "&lt;img ...&gt;" renders as visible characters and cannot fire
+    // onerror; "<img ...>" would.
+    check(
+      'Preview escapes injected markup from record data into inert text',
+      !/<img/i.test(html) && html.includes('&lt;img'),
+      html.slice(0, 160)
+    );
+  }
+  {
+    const r = await api(`/api/templates/${templateId}/preview`, opCookie, {
+      method: 'POST',
+      body: JSON.stringify({ draft: { subject: 'Hi {{Name}}', html: '<p>{{Missing}}</p>' }, data: { Name: 'X' } }),
+    });
+    check('Preview reports missing variables', r.body?.missingVariables?.includes('Missing'), r.body?.missingVariables);
+  }
+
+  console.log('\n-- Email health check (§27) --');
+  {
+    const r = await api(`/api/templates/${templateId}/health`, opCookie, {
+      method: 'POST',
+      body: JSON.stringify({ draft: { subject: '', html: '<p>x</p>' } }),
+    });
+    check('Empty subject blocks sending', r.status === 200 && r.body.blocked === true, r.body);
+  }
+  {
+    const r = await api(`/api/templates/${templateId}/health`, opCookie, {
+      method: 'POST',
+      body: JSON.stringify({ draft: { subject: 'Hi {{Nope}}', html: '<p>x</p>' }, datasetId }),
+    });
+    const varItem = r.body?.items?.find((i: any) => i.id === 'variables');
+    check('Variable missing from dataset blocks sending', varItem?.level === 'fail', varItem);
+  }
+  {
+    const r = await api(`/api/templates/${templateId}/health`, opCookie, {
+      method: 'POST',
+      body: JSON.stringify({ draft: { subject: 'Hi {{Name}}', html: '<p>{{Email}}</p>' }, datasetId }),
+    });
+    const varItem = r.body?.items?.find((i: any) => i.id === 'variables');
+    check('Variables that exist in the dataset pass', varItem?.level === 'pass', varItem);
+  }
+
+  console.log('\n-- Template duplicate + RBAC --');
+  let duplicateId: string | null = null;
+  {
+    const r = await api(`/api/templates/${templateId}/duplicate`, opCookie, { method: 'POST' });
+    check('Duplicate creates a copy starting at v1', r.status === 201 && r.body.template.versions[0].version === 1, r.body);
+    duplicateId = r.body?.template?.id ?? null;
+  }
+  {
+    const r = await api(`/api/templates/${templateId}/versions`, viewerCookie, {
+      method: 'POST',
+      body: JSON.stringify({ subject: 'x', html: 'y' }),
+    });
+    check('VIEWER cannot save a template version (403)', r.status === 403, r.body);
+  }
+  {
+    const r = await api(`/api/templates/${templateId}`, viewerCookie);
+    check('VIEWER cannot read another workspace\'s template (403)', r.status === 403, r.body);
+  }
+
   // ── Super Admin cross-workspace access + audit ──
   console.log('\n-- Super Admin cross-workspace access --');
   {
@@ -268,6 +390,10 @@ async function main() {
 
   // ── Cleanup ──
   console.log('\n-- Cleanup --');
+  for (const id of [templateId, duplicateId].filter(Boolean) as string[]) {
+    await prisma.templateVersion.deleteMany({ where: { templateId: id } });
+    await prisma.template.delete({ where: { id } }).catch(() => {});
+  }
   for (const id of createdDatasetIds) {
     await prisma.record.deleteMany({ where: { datasetId: id } });
     await prisma.datasetColumn.deleteMany({ where: { datasetId: id } });

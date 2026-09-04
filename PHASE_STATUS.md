@@ -43,9 +43,18 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [ ] Column reorder/resize/hide UI, saved views, filter/sort/group UI, bulk select/update, freeze columns, virtualization — grid backend (hidden/order/width columns) exists in schema; UI controls not built yet
 - [ ] "View as" banner + Exit View UX (server-side access + audit already enforced)
 
-## Phase 2 — Templates — not started
-Schema exists (`Template`, `TemplateVersion`). No builder UI, no HTML/CSS
-editor, no variable validation, no test-send, no health check yet.
+## Phase 2 — Templates ✅ mostly done
+- [x] Template CRUD + duplicate + archive (`/api/templates*`), workspace-scoped and RBAC-enforced
+- [x] Delete is refused when a campaign references the template — it archives instead, so historical campaigns keep their content (§21/§126)
+- [x] **Versioning**: every save creates a new immutable `TemplateVersion`; identical content is a no-op instead of inflating version numbers; old versions are never mutated
+- [x] Three-pane editor (settings / HTML+CSS code editor / live preview) with CodeMirror
+- [x] **Variables** (`{{Name}}`): extraction, `+ Insert variable` menu populated from the dataset's real columns, resolved-value panel
+- [x] **Personalized preview** — "Preview as \<record\>" renders against a real dataset record; desktop/mobile widths
+- [x] **XSS-safe preview**: values are HTML-escaped on substitution, template HTML is sanitized server-side, and the result renders in an iframe with an empty `sandbox` (no scripts) — 12 attack vectors covered by tests
+- [x] **Email health check** (§27): subject, body, variable validity against the dataset, recipient column, sender connection, brace typos, links, images, plain-text alternative, Gmail's ~102KB clipping threshold. Fails block; warnings don't.
+- [x] Plain-text alternative auto-generated from HTML when not supplied
+- [ ] **Send test email** — deliberately deferred: it needs a connected Gmail account, which is Phase 3. The health check already reports "Sender connected: fail" until then, rather than offering a button that can't work.
+- [ ] Rich-text (WYSIWYG) editing mode — HTML/CSS editing works; a visual drag-and-drop builder is a later refinement.
 
 ## Phase 3 — Gmail + Campaigns + Queue — not started
 Schema exists (`EmailProviderAccount`, `Campaign`, `Batch`, `EmailJob`,
