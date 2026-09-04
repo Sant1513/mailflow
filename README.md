@@ -4,6 +4,23 @@ Internal Masai School communication, automation, and CRM platform. See
 [ARCHITECTURE.md](ARCHITECTURE.md) for the system design and
 [PHASE_STATUS.md](PHASE_STATUS.md) for exactly what's real today vs. planned.
 
+**Live:** https://mailflow-six-sooty.vercel.app
+
+## Testing
+
+```bash
+npm test                              # 31 unit tests (no DB needed)
+npx tsx scripts/smoke-test-db.ts      # 19 checks against the real database
+BASE_URL=http://localhost:3000 npx tsx scripts/smoke-test-http.ts   # 22 HTTP checks
+```
+
+The two `scripts/smoke-test-*.ts` files are integration harnesses, not app
+code. They create their own throwaway org/users/workspaces (including a real
+NextAuth database session, the same way the adapter creates one after a
+Google sign-in, so RBAC is exercised for OPERATOR / VIEWER / SUPER_ADMIN) and
+delete everything they created on the way out. `smoke-test-http.ts` works
+against localhost or the deployed URL — set `BASE_URL`.
+
 ## Local setup
 
 ```bash

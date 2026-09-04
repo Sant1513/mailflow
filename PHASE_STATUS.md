@@ -1,5 +1,28 @@
 # Phase status
 
+## Deployment
+
+- **Live:** https://mailflow-six-sooty.vercel.app (Vercel, production)
+- **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
+- **Repo:** https://github.com/Sant1513/mailflow
+
+## Verification status (last run: 4 Sep 2026)
+
+| Suite | Count | Result |
+| --- | --- | --- |
+| Unit tests (`npm test`) | 31 | ✅ pass |
+| Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
+| HTTP integration, localhost (`scripts/smoke-test-http.ts`) | 22 | ✅ pass |
+| HTTP integration, live production | 22 | ✅ pass |
+| `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
+
+Google OAuth is configured and verified as far as it can be without a real
+account: the authorization request is accepted by Google (correct client_id,
+registered redirect URI, PKCE). The final "click through Google's consent
+screen with a real @masaischool.com account" step needs a human with such an
+account — it is **not** yet confirmed end-to-end.
+
+
 Honest, current status of the spec's §138 phases. "Done" means: real DB-backed
 API route + UI calling it + server-side authorization + (where practical) a
 test. Nothing is marked done on UI alone (§139/§140).
@@ -16,6 +39,7 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] Record change history on manual edits (`RecordChangeHistory`)
 - [x] Audit logging framework (`lib/audit/log.ts`) wired into every mutation so far
 - [x] Admin: Users (role/status management), Audit Logs, Organization stats, Workspaces list, All Data — real queries
+- [x] Deployed to Vercel against a live Neon Postgres, with integration tests run against the deployed instance
 - [ ] Column reorder/resize/hide UI, saved views, filter/sort/group UI, bulk select/update, freeze columns, virtualization — grid backend (hidden/order/width columns) exists in schema; UI controls not built yet
 - [ ] "View as" banner + Exit View UX (server-side access + audit already enforced)
 
