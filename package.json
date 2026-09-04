@@ -12,6 +12,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "prisma generate",

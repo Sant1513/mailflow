@@ -1,20 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
-import { requireSession, ForbiddenError } from '@/lib/auth/session';
+import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
-import { Role } from '@prisma/client';
-
-export async function loadBatchForSession(session: Awaited<ReturnType<typeof requireSession>>, batchId: string) {
-  const batch = await prisma.batch.findUnique({
-    where: { id: batchId },
-    include: { campaign: true },
-  });
-  if (!batch) return null;
-  if (batch.campaign.workspaceId !== session.workspaceId && session.role !== Role.SUPER_ADMIN) {
-    throw new ForbiddenError('Not your workspace');
-  }
-  return batch;
-}
+import { loadBatchForSession } from '@/lib/campaigns/batchAccess';
 
 export const GET = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();

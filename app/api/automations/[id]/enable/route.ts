@@ -5,7 +5,7 @@ import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
-import { loadAutomationForSession } from '../route';
+import { loadAutomationForSession } from '@/lib/automation/access';
 import { previewImpact } from '@/lib/automation/runner';
 
 /**

@@ -4,10 +4,8 @@ import { cookies } from 'next/headers';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
-import { buildConsentUrl } from '@/lib/gmail/oauth';
+import { buildConsentUrl, OAUTH_STATE_COOKIE } from '@/lib/gmail/oauth';
 import { audit } from '@/lib/audit/log';
-
-export const OAUTH_STATE_COOKIE = 'mailflow_gmail_oauth_state';
 
 /**
  * §29: starts the Gmail consent flow. Separate from login — signing in

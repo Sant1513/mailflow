@@ -1,29 +1,11 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
-import { requireSession, ForbiddenError } from '@/lib/auth/session';
+import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
-import { Role } from '@prisma/client';
-
-export async function loadAutomationForSession(
-  session: Awaited<ReturnType<typeof requireSession>>,
-  automationId: string
-) {
-  const automation = await prisma.automation.findUnique({
-    where: { id: automationId },
-    include: {
-      versions: { orderBy: { version: 'desc' } },
-      runs: { orderBy: { createdAt: 'desc' }, take: 50 },
-    },
-  });
-  if (!automation) return null;
-  if (automation.workspaceId !== session.workspaceId && session.role !== Role.SUPER_ADMIN) {
-    throw new ForbiddenError('Not your workspace');
-  }
-  return automation;
-}
+import { loadAutomationForSession } from '@/lib/automation/access';
 
 export const GET = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
   const session = await requireSession();

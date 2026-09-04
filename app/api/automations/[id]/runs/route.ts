@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
-import { loadAutomationForSession } from '../route';
+import { loadAutomationForSession } from '@/lib/automation/access';
 
 /** §72 automation run log — every evaluation, including the no-ops. */
 export const GET = withErrorHandling(async (req, { params }: { params: { id: string } }) => {

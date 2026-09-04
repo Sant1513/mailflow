@@ -13,6 +13,13 @@ import type { EmailProviderAccount } from '@prisma/client';
  * encrypted at rest and never leave the server (§10/§97).
  */
 
+/**
+ * Name of the httpOnly cookie holding the OAuth CSRF state. Defined here
+ * rather than in the route, because Next.js route files may only export
+ * HTTP handlers.
+ */
+export const OAUTH_STATE_COOKIE = 'mailflow_gmail_oauth_state';
+
 export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   // Needed to read back sent messages (for threading metadata) and to sync

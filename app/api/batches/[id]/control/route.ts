@@ -5,7 +5,7 @@ import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
-import { loadBatchForSession } from '../route';
+import { loadBatchForSession } from '@/lib/campaigns/batchAccess';
 import { enqueueEmailJobs } from '@/lib/queue/queues';
 import { BatchStatus, CampaignStatus, EmailJobStatus } from '@prisma/client';
 

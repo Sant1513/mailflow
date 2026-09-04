@@ -4,10 +4,9 @@ import { google } from 'googleapis';
 import { prisma } from '@/lib/db/client';
 import { requireSession, ForbiddenError } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
-import { createOAuthClient, GMAIL_SCOPES } from '@/lib/gmail/oauth';
+import { createOAuthClient, GMAIL_SCOPES, OAUTH_STATE_COOKIE } from '@/lib/gmail/oauth';
 import { encryptSecret } from '@/lib/crypto/secretBox';
 import { audit } from '@/lib/audit/log';
-import { OAUTH_STATE_COOKIE } from '../connect/route';
 import { EmailProvider as EmailProviderEnum } from '@prisma/client';
 
 function settingsRedirect(message: string, ok: boolean) {

@@ -15,6 +15,11 @@ BASE_URL=http://localhost:3000 npx tsx scripts/smoke-test-http.ts   # authentica
 BASE_URL=https://<deployed-url> npx tsx scripts/verify-deployment.ts  # RUN AFTER EVERY DEPLOY
 ```
 
+`npm run verify` runs typecheck + lint + unit tests + **a real production
+build** in one go. The build step is not optional: `tsc --noEmit` does not
+catch Next.js's own route-file constraints (a route may only export HTTP
+handlers), so a change can typecheck cleanly and still fail to deploy.
+
 **Always run `verify-deployment.ts` after deploying.** It hits the real URL
 as an anonymous visitor and asserts nothing 5xxs. It exists because a
 production outage (NextAuth missing its secret) slipped past every other
