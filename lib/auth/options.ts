@@ -1,4 +1,5 @@
 import type { NextAuthOptions } from 'next-auth';
+import type { Adapter, AdapterUser } from 'next-auth/adapters';
 import GoogleProvider from 'next-auth/providers/google';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from '@/lib/db/client';
@@ -86,6 +87,60 @@ async function resolveOrganization() {
 }
 
 /**
+ * PrismaAdapter, extended to fill in the fields it cannot know about.
+ *
+ * The stock adapter only supplies email/name/image/emailVerified, but every
+ * User here also needs an organization, a role, and a personal workspace.
+ * Doing that work HERE — inside createUser — rather than in the signIn
+ * callback is what keeps the OAuth Account row linked to the User: NextAuth
+ * creates the user and links the account as one flow, and intercepting it
+ * by pre-creating the user breaks that link (OAuthAccountNotLinked).
+ */
+function mailflowAdapter(): Adapter {
+  const base = PrismaAdapter(prisma) as Adapter;
+
+  return {
+    ...base,
+    async createUser(data: AdapterUser) {
+      const org = await resolveOrganization();
+      const email = data.email.toLowerCase();
+      // `name` is required in our schema but optional in NextAuth's, so fall
+      // back to the local part of the address rather than storing null.
+      const name = data.name?.trim() || email.split('@')[0] || email;
+
+      const user = await prisma.user.create({
+        data: {
+          organizationId: org.id,
+          email,
+          name,
+          image: data.image ?? null,
+          emailVerified: data.emailVerified ?? null,
+          role: Role.OPERATOR,
+          lastLoginAt: new Date(),
+        },
+      });
+
+      await prisma.workspace.create({
+        data: {
+          organizationId: org.id,
+          ownerId: user.id,
+          name: `${name}'s Workspace`,
+          members: { create: { userId: user.id, role: Role.OPERATOR } },
+        },
+      });
+
+      return {
+        id: user.id,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        name: user.name,
+        image: user.image,
+      };
+    },
+  };
+}
+
+/**
  * Login-only Google OAuth (identity, not Gmail send/read access — see
  * lib/gmail/oauth.ts for the separate, incremental-consent Gmail connection
  * flow).
@@ -94,7 +149,7 @@ async function resolveOrganization() {
  * to a single domain (see isEmailAllowed above).
  */
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
+  adapter: mailflowAdapter(),
   session: { strategy: 'database' },
   // Set explicitly rather than relying on NextAuth picking up an env var by
   // name. NextAuth v4 only auto-reads NEXTAUTH_SECRET; AUTH_SECRET is the
@@ -130,45 +185,44 @@ export const authOptions: NextAuthOptions = {
   pages: {
     error: '/login/error',
   },
-  callbacks: {
+  events: {
+    /**
+     * Runs after the account is linked, so the Google subject is available.
+     * Kept out of the signIn callback deliberately — see the note there.
+     */
     async signIn({ user, account }) {
+      if (!user.email) return;
+      await prisma.user
+        .update({
+          where: { email: user.email.toLowerCase() },
+          data: {
+            lastLoginAt: new Date(),
+            ...(account?.providerAccountId ? { googleId: account.providerAccountId } : {}),
+          },
+        })
+        .catch((err) => {
+          // Never fail a successful login over bookkeeping.
+          console.error('[auth] could not record sign-in metadata', err);
+        });
+    },
+  },
+  callbacks: {
+    /**
+     * Gate only. User/workspace provisioning belongs to the adapter's
+     * createUser (see mailflowAdapter): creating the User here left it with
+     * no linked Account row, and NextAuth then refused to link the OAuth
+     * identity to it — surfacing as "To confirm your identity, sign in with
+     * the same account you used originally" (OAuthAccountNotLinked).
+     */
+    async signIn({ user }) {
       const email = user.email?.toLowerCase() ?? '';
       if (!isEmailAllowed(email)) {
         // Rejected — NextAuth redirects to /login/error?error=AccessDenied
         return false;
       }
 
-      // Ensure the Organization exists, and every accepted user gets an
-      // Organization + personal Workspace on first sign-in.
-      const org = await resolveOrganization();
-
       const existing = await prisma.user.findUnique({ where: { email } });
-      if (!existing) {
-        const created = await prisma.user.create({
-          data: {
-            organizationId: org.id,
-            googleId: account?.providerAccountId ?? user.id,
-            email,
-            name: user.name ?? email,
-            profileImage: user.image ?? undefined,
-            role: Role.OPERATOR,
-          },
-        });
-        await prisma.workspace.create({
-          data: {
-            organizationId: org.id,
-            ownerId: created.id,
-            name: `${created.name}'s Workspace`,
-            members: { create: { userId: created.id, role: Role.OPERATOR } },
-          },
-        });
-      } else {
-        if (existing.status === 'DISABLED') return false;
-        await prisma.user.update({
-          where: { id: existing.id },
-          data: { lastLoginAt: new Date() },
-        });
-      }
+      if (existing?.status === 'DISABLED') return false;
 
       return true;
     },

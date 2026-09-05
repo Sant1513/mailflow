@@ -97,34 +97,32 @@ describe('isEmailAllowed — locked to a domain', () => {
   });
 });
 
-describe('signIn callback — open sign-up', () => {
-  it('lets a gmail.com account in and provisions org + user + workspace', async () => {
-    const { mod, prisma } = await load(undefined);
+describe('signIn callback — gate only', () => {
+  it('lets a gmail.com account through when sign-up is open', async () => {
+    const { mod } = await load(undefined);
     await expect(callSignIn(mod, 'newperson@gmail.com')).resolves.toBe(true);
-    expect(prisma.user.create).toHaveBeenCalled();
-    expect(prisma.workspace.create).toHaveBeenCalled();
   });
 
-  it('reuses the existing organization so users are not split across tenants', async () => {
+  /**
+   * Regression cover for OAuthAccountNotLinked.
+   *
+   * The signIn callback used to create the User itself. That left the row
+   * with no linked Account, so NextAuth refused to attach the Google
+   * identity to it and every real sign-in failed with "To confirm your
+   * identity, sign in with the same account you used originally".
+   * Provisioning belongs to adapter.createUser, which creates the user and
+   * links the account as one flow.
+   */
+  it('does NOT create a user — that would break OAuth account linking', async () => {
     const { mod, prisma } = await load(undefined);
     await callSignIn(mod, 'newperson@gmail.com');
-    expect(prisma.organization.findFirst).toHaveBeenCalled();
-    // An org already exists, so a second one must not be created.
-    expect(prisma.organization.create).not.toHaveBeenCalled();
-  });
-
-  it('creates an organization when none exists yet', async () => {
-    const { mod, prisma } = await load(undefined);
-    (prisma.organization.findFirst as any).mockResolvedValue(null);
-    await callSignIn(mod, 'first@gmail.com');
-    expect(prisma.organization.create).toHaveBeenCalled();
-  });
-
-  it('rejects an account with no email, creating nothing', async () => {
-    const { mod, prisma } = await load(undefined);
-    await expect(callSignIn(mod, null)).resolves.toBe(false);
     expect(prisma.user.create).not.toHaveBeenCalled();
     expect(prisma.workspace.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects an account with no email', async () => {
+    const { mod } = await load(undefined);
+    await expect(callSignIn(mod, null)).resolves.toBe(false);
   });
 
   it('still rejects a DISABLED account', async () => {
@@ -136,18 +134,81 @@ describe('signIn callback — open sign-up', () => {
     });
     await expect(callSignIn(mod, 'disabled@gmail.com')).resolves.toBe(false);
   });
+});
 
-  it('updates lastLoginAt for an existing active user', async () => {
+describe('adapter.createUser — provisioning', () => {
+  async function createUser(mod: any, email: string, name?: string) {
+    return mod.authOptions.adapter.createUser({ id: 'x', email, name, emailVerified: null, image: null });
+  }
+
+  it('creates the user with an organization, role and personal workspace', async () => {
     const { mod, prisma } = await load(undefined);
-    (prisma.user.findUnique as any).mockResolvedValue({
-      id: 'u2',
-      status: 'ACTIVE',
-      email: 'existing@gmail.com',
+    (prisma.user.create as any).mockResolvedValue({
+      id: 'u1', email: 'new@gmail.com', name: 'New', image: null, emailVerified: null,
     });
-    await expect(callSignIn(mod, 'existing@gmail.com')).resolves.toBe(true);
-    expect(prisma.user.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'u2' } })
-    );
+
+    const result = await createUser(mod, 'new@gmail.com', 'New');
+
+    expect(prisma.user.create).toHaveBeenCalled();
+    const created = (prisma.user.create as any).mock.calls[0][0].data;
+    expect(created.organizationId).toBe('org1');
+    expect(created.role).toBe('OPERATOR');
+    expect(prisma.workspace.create).toHaveBeenCalled();
+    // NextAuth needs these exact fields back to continue the flow.
+    expect(result).toMatchObject({ id: 'u1', email: 'new@gmail.com' });
+  });
+
+  it('reuses the existing organization so users are not split across tenants', async () => {
+    const { mod, prisma } = await load(undefined);
+    (prisma.user.create as any).mockResolvedValue({ id: 'u1', email: 'a@gmail.com', name: 'a', image: null, emailVerified: null });
+    await createUser(mod, 'a@gmail.com', 'a');
+    expect(prisma.organization.findFirst).toHaveBeenCalled();
+    expect(prisma.organization.create).not.toHaveBeenCalled();
+  });
+
+  it('creates an organization when none exists yet', async () => {
+    const { mod, prisma } = await load(undefined);
+    (prisma.organization.findFirst as any).mockResolvedValue(null);
+    (prisma.user.create as any).mockResolvedValue({ id: 'u1', email: 'a@gmail.com', name: 'a', image: null, emailVerified: null });
+    await createUser(mod, 'a@gmail.com', 'a');
+    expect(prisma.organization.create).toHaveBeenCalled();
+  });
+
+  it('falls back to the address local part when Google sends no name', async () => {
+    const { mod, prisma } = await load(undefined);
+    (prisma.user.create as any).mockResolvedValue({ id: 'u1', email: 'noname@gmail.com', name: 'noname', image: null, emailVerified: null });
+    await createUser(mod, 'noname@gmail.com', undefined);
+    expect((prisma.user.create as any).mock.calls[0][0].data.name).toBe('noname');
+  });
+
+  it('lowercases the stored email so lookups match', async () => {
+    const { mod, prisma } = await load(undefined);
+    (prisma.user.create as any).mockResolvedValue({ id: 'u1', email: 'mixed@gmail.com', name: 'x', image: null, emailVerified: null });
+    await createUser(mod, 'MiXeD@Gmail.com', 'x');
+    expect((prisma.user.create as any).mock.calls[0][0].data.email).toBe('mixed@gmail.com');
+  });
+});
+
+describe('events.signIn — records sign-in metadata', () => {
+  it('stores lastLoginAt and backfills googleId from the linked account', async () => {
+    const { mod, prisma } = await load(undefined);
+    (prisma.user.update as any).mockResolvedValue({});
+    await mod.authOptions.events.signIn({
+      user: { email: 'Existing@Gmail.com' },
+      account: { providerAccountId: 'google-sub-123' },
+    });
+    const call = (prisma.user.update as any).mock.calls[0][0];
+    expect(call.where).toEqual({ email: 'existing@gmail.com' });
+    expect(call.data.googleId).toBe('google-sub-123');
+    expect(call.data.lastLoginAt).toBeInstanceOf(Date);
+  });
+
+  it('never fails a successful login over bookkeeping', async () => {
+    const { mod, prisma } = await load(undefined);
+    (prisma.user.update as any).mockRejectedValue(new Error('db down'));
+    await expect(
+      mod.authOptions.events.signIn({ user: { email: 'a@gmail.com' }, account: null })
+    ).resolves.toBeUndefined();
   });
 });
 

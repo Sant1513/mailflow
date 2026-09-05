@@ -47,10 +47,16 @@ model Organization {
 model User {
   id              String     @id @default(cuid())
   organizationId  String
-  googleId        String     @unique
+  // Optional: the authoritative Google subject lives in Account.providerAccountId.
+  // NextAuth's adapter creates the User before any account is linked, so this
+  // cannot be required — making it so broke sign-in with OAuthAccountNotLinked.
+  googleId        String?    @unique
   email           String     @unique
   name            String
-  profileImage    String?
+  // `image` and `emailVerified` are the field names NextAuth's PrismaAdapter
+  // writes. They must exist with these exact names or adapter.createUser fails.
+  image           String?
+  emailVerified   DateTime?
   role            Role       @default(OPERATOR)
   status          UserStatus @default(ACTIVE)
   createdAt       DateTime   @default(now())
