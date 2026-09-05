@@ -59,7 +59,7 @@ const patchSchema = z.object({
 
 export const PATCH = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const campaign = await loadCampaignForSession(session, params.id);
   if (!campaign) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -101,7 +101,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
 
 export const DELETE = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const campaign = await loadCampaignForSession(session, params.id);
   if (!campaign) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

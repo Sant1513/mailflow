@@ -32,7 +32,7 @@ const sendSchema = z.object({
  */
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const body = sendSchema.parse(await req.json().catch(() => ({})));
 
   const campaign = await loadCampaignForSession(session, params.id);

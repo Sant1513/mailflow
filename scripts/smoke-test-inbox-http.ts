@@ -172,7 +172,14 @@ async function main() {
   check('status/assign/note/tag are audited (§95)', audits >= 4, audits);
 
   const replyNoGmail = await req(`/api/conversations/${convId}/reply`, { method: 'POST', body: JSON.stringify({ html: '<p>hi</p>' }) });
-  check('reply without a CONNECTED mailbox is refused, not faked (400)', replyNoGmail.status === 400, replyNoGmail.json);
+  if (account.status === 'CONNECTED') {
+    // A real mailbox is connected for this user: the conversation's thread id
+    // is fabricated, so Gmail must reject it and nothing may be recorded as sent.
+    const sentRows = await prisma.conversationMessage.count({ where: { conversationId: convId, direction: 'OUTBOUND', status: 'SENT' } });
+    check('reply to a fabricated thread is rejected by Gmail, not faked (non-2xx, nothing stored)', replyNoGmail.status >= 400 && sentRows === 0, replyNoGmail.json);
+  } else {
+    check('reply without a CONNECTED mailbox is refused, not faked (400)', replyNoGmail.status === 400, replyNoGmail.json);
+  }
 
   const timeline = await req(`/api/contacts/${contact.id}`);
   check(

@@ -6,17 +6,18 @@
 - **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
 - **Repo:** https://github.com/Sant1513/mailflow
 
-## Verification status (last run: 5 Sep 2026, after Phase 5)
+## Verification status (last run: 6 Sep 2026, after Phase 6)
 
 | Suite | Count | Result |
 | --- | --- | --- |
-| Unit tests (`npm test`) | 276 | ✅ pass |
+| Unit tests (`npm test`) | 306 | ✅ pass |
 | Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
 | Send pipeline, live DB + fake provider (`scripts/smoke-test-send.ts`) | 35 | ✅ pass |
 | Automation engine, live DB (`scripts/smoke-test-automation.ts`) | 28 | ✅ pass |
 | Inbound ingestion + sync, live DB + fake Gmail (`scripts/smoke-test-inbox.ts`) | 32 | ✅ pass |
 | Inbox/conversation HTTP, real session (`scripts/smoke-test-inbox-http.ts`) | 23 | ✅ pass |
 | HTTP integration (`scripts/smoke-test-http.ts`) | 37 | ✅ pass |
+| Super Admin view-as / analytics / retention HTTP, real session (`scripts/smoke-test-admin-http.ts`) | 37 | ✅ pass |
 | Deployment verification (`scripts/verify-deployment.ts`) | 19 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
@@ -130,9 +131,15 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [ ] `gmail-sync` BullMQ worker process (the webhook queues to it when Redis is present; without Redis it syncs inline)
 - [ ] Attachment *download* — metadata is stored; fetching the bytes via `attachments.get` is not wired yet
 
-## Phase 6 — Super Admin analytics/org management — partially started
-Users, Workspaces, Organization overview, Audit Logs, All Data are real
-today. Charts, retention policy config, and the "view as" banner are not.
+## Phase 6 — Super Admin analytics/org management — done (6 Sep 2026)
+- [x] §127 Organization analytics: Users / Active users / Workspaces / Contacts / Datasets / Campaigns / Emails sent / Failed / Replies / Open / Resolved / AI calls, all live counts (`lib/analytics/metrics.ts`)
+- [x] Charts: Emails by day, Replies by day, Failure rate (null, not 0, on days with nothing attempted), Campaign performance table, User activity table; 7/30/90-day window, bucketed in IST
+- [x] §86 Dashboard: Emails sent / Pending / Failed / Replies / Unread / Open conversations / Follow-ups due, 30-day chart, recent batches, recent conversations, recent activity, quick actions
+- [x] §9 "VIEWING WORKSPACE AS … [ Exit View ]": signed HttpOnly cookie resolved inside `requireSession` so every page and API route is scoped identically; org membership re-checked on every request; entry and exit audited; **read-only** — `requireCanWrite(session)` refuses every mutation while viewing (§10: never touches the owner's Gmail)
+- [x] §130 Retention policy: per-org config (message bodies / sent-email snapshots / audit rows, ≥30 days or keep forever), live "would affect N rows" preview, audited with a before/after diff. **No enforcement job exists** — saving a policy deletes nothing, by design ("do not delete historical communication accidentally"); enforcement is a future explicit, audited action
+- [x] System Settings page: retention UI + read-only view of runtime env (sign-in restriction, rate limit, AI key presence)
+- [ ] Workspace management actions (create / rename / disable / move users) — listing exists, mutations not yet
+- [ ] Retention enforcement (deliberately deferred, see above)
 
 ## Phase 7 — Gemini AI — not started
 `AiUsage` table exists. No `AIProvider`/`GeminiProvider` implementation yet.
@@ -143,7 +150,7 @@ today. Charts, retention policy config, and the "view as" banner are not.
 
 ### Immediate next steps (in order)
 1. ~~Connect a real Gmail account and verify the Google round-trip~~ — **done**: real send, real inbound sync (scan + history paths), real in-thread reply, all against the live mailbox.
-2. Phase 6: organization analytics (emails by day, replies by day, failure rate), the "view as" banner, retention policy.
+2. ~~Phase 6: organization analytics, the "view as" banner, retention policy~~ — **done** (retention enforcement and workspace mutations deferred, see Phase 6).
 3. Phase 7: `AIProvider` + `GeminiProvider` with per-user/org rate limits; reply suggestion, summary, classification behind the header-first classifier.
 4. Close out Phase 1: saved views, filter/sort/group, bulk edit on the grid.
 5. Scheduling dispatcher (Phase 3) and the `WAIT` action / `SCHEDULED` trigger (Phase 4) — both need the delayed queue.

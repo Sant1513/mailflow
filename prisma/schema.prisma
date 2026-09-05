@@ -42,6 +42,7 @@ model Organization {
   auditLogs   AuditLog[]
   contacts    Contact[]
   aiUsage     AiUsage[]
+  retentionPolicy RetentionPolicy?
 }
 
 model User {
@@ -853,4 +854,29 @@ model AiUsage {
 
   @@index([userId, createdAt])
   @@index([organizationId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// RETENTION (§130)
+// ─────────────────────────────────────────────────────────────────────────
+
+// Per-organization retention policy. Null days = keep forever. Configuring
+// a policy never deletes anything by itself: enforcement is a separate,
+// explicit, audited step ("Do not delete historical communication
+// accidentally" — §130). This table records intent plus who set it.
+
+model RetentionPolicy {
+  id                        String   @id @default(cuid())
+  organizationId            String   @unique
+  // Strip stored HTML/plain bodies of inbound/outbound messages older than N days.
+  messageBodyDays           Int?
+  // Strip the rendered html/plainText snapshot of sent EmailJobs older than N days.
+  emailJobBodyDays          Int?
+  // Delete audit-log rows older than N days.
+  auditLogDays              Int?
+  updatedById               String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
 }

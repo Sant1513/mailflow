@@ -121,7 +121,12 @@ Workspace model note: the spec asks for per-user workspaces conceptually
 implements: one `Workspace` per `User` at creation (their personal
 operational space), `WorkspaceMember` join table so a workspace *can* later
 have multiple members without a schema change, and Super Admin cross-workspace
-access via the audited "View as" flow (§9/§128).
+access via the audited "View as" flow (§9/§128). "View as" is a signed,
+HttpOnly, 4-hour cookie (`lib/auth/viewAs.ts`) that `requireSession` resolves
+into `session.workspaceId` + `session.viewingAs` — after re-checking on every
+request that the workspace is in the admin's organization — so pages and API
+routes are scoped by exactly one code path. It is read-only: `requireCanWrite`
+takes the whole session and refuses mutations while `viewingAs` is set.
 
 ## 5. Gmail OAuth Architecture
 

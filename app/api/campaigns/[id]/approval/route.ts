@@ -19,7 +19,7 @@ const actionSchema = z.object({
 
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const campaign = await loadCampaignForSession(session, params.id);
   if (!campaign) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

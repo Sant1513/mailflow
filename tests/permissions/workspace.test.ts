@@ -12,12 +12,14 @@ const { resolveWorkspaceId, canWrite, requireCanWrite } = await import(
   '@/lib/permissions/workspace'
 );
 const { ForbiddenError } = await import('@/lib/auth/session');
+type AppSession = import('@/lib/auth/session').AppSession;
 
-function session(overrides: Partial<{ role: Role; workspaceId: string | null }> = {}) {
+function session(overrides: Partial<{ role: Role; workspaceId: string | null; viewingAs: AppSession['viewingAs'] }> = {}): AppSession {
   return {
     userId: 'u1',
     organizationId: 'org1',
     workspaceId: 'ws-own',
+    homeWorkspaceId: 'ws-own',
     role: Role.OPERATOR,
     email: 'a@masaischool.com',
     name: 'A',
@@ -73,5 +75,38 @@ describe('canWrite / requireCanWrite', () => {
   it('denies VIEWER', () => {
     expect(canWrite(Role.VIEWER)).toBe(false);
     expect(() => requireCanWrite(Role.VIEWER)).toThrow(ForbiddenError);
+    expect(() => requireCanWrite(session({ role: Role.VIEWER }))).toThrow(ForbiddenError);
+  });
+
+  it('accepts a full session for writers', () => {
+    expect(() => requireCanWrite(session({ role: Role.OPERATOR }))).not.toThrow();
+    expect(() => requireCanWrite(session({ role: Role.SUPER_ADMIN }))).not.toThrow();
+  });
+
+  // §9: inspection is not impersonation.
+  it('makes SUPER_ADMIN read-only while viewing another workspace', () => {
+    const viewing = session({
+      role: Role.SUPER_ADMIN,
+      workspaceId: 'ws-other',
+      viewingAs: { workspaceId: 'ws-other', workspaceName: 'Other', ownerName: 'R', ownerEmail: 'r@masaischool.com' },
+    });
+    expect(() => requireCanWrite(viewing)).toThrow(/Read-only while viewing/);
+    // The bare-role overload cannot see the view-as flag, which is exactly
+    // why every route now passes the session (see the Phase 6 sweep).
+    expect(() => requireCanWrite(viewing.role)).not.toThrow();
+  });
+});
+
+describe('resolveWorkspaceId while viewing as', () => {
+  it('scopes to the viewed workspace without a DB lookup', async () => {
+    vi.clearAllMocks();
+    const viewing = session({
+      role: Role.SUPER_ADMIN,
+      workspaceId: 'ws-other',
+      viewingAs: { workspaceId: 'ws-other', workspaceName: 'Other', ownerName: 'R', ownerEmail: 'r@masaischool.com' },
+    });
+    expect(await resolveWorkspaceId(viewing)).toBe('ws-other');
+    expect(await resolveWorkspaceId(viewing, 'ws-other')).toBe('ws-other');
+    expect(prisma.workspace.findFirst).not.toHaveBeenCalled();
   });
 });

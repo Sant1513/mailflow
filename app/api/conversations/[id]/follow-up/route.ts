@@ -15,7 +15,7 @@ const createSchema = z.object({
 /** §60 follow-ups. Also flags the linked records so the grid shows it. */
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const conversation = await loadConversationForSession(session, params.id);
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -53,7 +53,7 @@ const completeSchema = z.object({ followUpId: z.string(), completed: z.boolean()
 
 export const PATCH = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const conversation = await loadConversationForSession(session, params.id);
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

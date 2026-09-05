@@ -49,7 +49,7 @@ const enableSchema = z.object({
 
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const automation = await loadAutomationForSession(session, params.id);
   if (!automation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

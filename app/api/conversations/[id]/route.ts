@@ -36,7 +36,7 @@ const patchSchema = z.object({
 /** §56 status and §57 assignment — both audited. */
 export const PATCH = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const conversation = await loadConversationForSession(session, params.id);
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

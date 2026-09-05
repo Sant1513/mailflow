@@ -35,7 +35,7 @@ const patchSchema = z.object({
 export const PATCH = withErrorHandling(
   async (req, { params }: { params: { id: string; columnId: string } }) => {
     const session = await requireSession();
-    requireCanWrite(session.role);
+    requireCanWrite(session);
     const column = await loadColumn(session, params.id, params.columnId);
     if (!column) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     if (column.isSystem) throw new ForbiddenError('System columns cannot be modified');
@@ -87,7 +87,7 @@ export const PATCH = withErrorHandling(
 export const DELETE = withErrorHandling(
   async (_req, { params }: { params: { id: string; columnId: string } }) => {
     const session = await requireSession();
-    requireCanWrite(session.role);
+    requireCanWrite(session);
     const column = await loadColumn(session, params.id, params.columnId);
     if (!column) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     if (column.isSystem) throw new ForbiddenError('System columns cannot be deleted');

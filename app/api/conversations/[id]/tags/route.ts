@@ -15,7 +15,7 @@ const tagSchema = z.object({
 /** §59 tags. Tags are per-workspace and created on first use. */
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const conversation = await loadConversationForSession(session, params.id);
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -47,7 +47,7 @@ const untagSchema = z.object({ name: z.string().trim().min(1) });
 
 export const DELETE = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const conversation = await loadConversationForSession(session, params.id);
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

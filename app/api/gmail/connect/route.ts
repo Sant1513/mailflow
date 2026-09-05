@@ -14,7 +14,7 @@ import { audit } from '@/lib/audit/log';
  */
 export const GET = withErrorHandling(async () => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
 
   // CSRF: a random state, stored in an httpOnly cookie and verified on the
   // callback, so a third party cannot complete an OAuth flow on the user's
