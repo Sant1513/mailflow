@@ -8,7 +8,7 @@ function ErrorMessage() {
   const error = params.get('error');
   const message =
     error === 'AccessDenied'
-      ? 'Please sign in using your official @masaischool.com account.'
+      ? 'That account is not permitted to sign in. If your account was disabled, contact an administrator.'
       : 'Something went wrong signing you in. Please try again.';
 
   return <p className="mb-6 text-sm text-muted-foreground">{message}</p>;

@@ -4,7 +4,34 @@ import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from '@/lib/db/client';
 import { Role } from '@prisma/client';
 
-const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN ?? 'masaischool.com';
+/**
+ * Optional sign-up allowlist.
+ *
+ * When ALLOWED_EMAIL_DOMAIN is set (e.g. "masaischool.com"), only that
+ * domain may sign in. When it is unset or empty, ANY Google account may
+ * sign in — which is what open signup means: anyone who finds the URL can
+ * create a workspace and send mail from their own Gmail.
+ *
+ * The mechanism is kept rather than deleted so the restriction can be
+ * restored with one env var before real student data is loaded.
+ */
+export function allowedDomain(): string | null {
+  const configured = process.env.ALLOWED_EMAIL_DOMAIN?.trim();
+  return configured ? configured.toLowerCase() : null;
+}
+
+export function isEmailAllowed(email: string | null | undefined): boolean {
+  const normalized = email?.trim().toLowerCase() ?? '';
+  // An address is still required — open signup is not "no identity".
+  if (!normalized || !normalized.includes('@')) return false;
+
+  const restriction = allowedDomain();
+  if (!restriction) return true;
+
+  // Compare the full domain, never a suffix: "masaischool.com.evil.com"
+  // must not pass a check for "masaischool.com".
+  return normalized.split('@')[1] === restriction;
+}
 
 /**
  * Resolves the session-signing secret, accepting either the NextAuth v4
@@ -25,9 +52,46 @@ function authSecret(): string | undefined {
 }
 
 /**
+ * Organization.allowedDomain is a unique column, so open signup still needs
+ * a stable key for the single shared organization. "*" reads as "any
+ * domain" and cannot collide with a real domain.
+ */
+const OPEN_SIGNUP_ORG_KEY = '*';
+
+/**
+ * Resolves the organization a signing-in user belongs to.
+ *
+ * With a domain restriction, the organization is keyed by that domain. With
+ * open signup, everyone shares one organization — and crucially it reuses
+ * whichever organization already exists, so lifting the restriction does
+ * not strand existing users and their workspaces in a separate tenant from
+ * everyone who signs up afterwards.
+ */
+async function resolveOrganization() {
+  const restriction = allowedDomain();
+  if (restriction) {
+    return prisma.organization.upsert({
+      where: { allowedDomain: restriction },
+      update: {},
+      create: { name: 'Masai School', allowedDomain: restriction },
+    });
+  }
+
+  const existing = await prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
+  if (existing) return existing;
+
+  return prisma.organization.create({
+    data: { name: 'MailFlow', allowedDomain: OPEN_SIGNUP_ORG_KEY },
+  });
+}
+
+/**
  * Login-only Google OAuth (identity, not Gmail send/read access — see
  * lib/gmail/oauth.ts for the separate, incremental-consent Gmail connection
- * flow). §5 of the spec: only @masaischool.com may sign in.
+ * flow).
+ *
+ * Sign-up is open by default; set ALLOWED_EMAIL_DOMAIN to restrict it back
+ * to a single domain (see isEmailAllowed above).
  */
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
@@ -69,19 +133,14 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async signIn({ user, account }) {
       const email = user.email?.toLowerCase() ?? '';
-      const domain = email.split('@')[1];
-      if (domain !== ALLOWED_DOMAIN) {
+      if (!isEmailAllowed(email)) {
         // Rejected — NextAuth redirects to /login/error?error=AccessDenied
         return false;
       }
 
-      // Ensure the Organization exists, and every allowed-domain user gets
-      // an Organization + personal Workspace on first sign-in.
-      const org = await prisma.organization.upsert({
-        where: { allowedDomain: ALLOWED_DOMAIN },
-        update: {},
-        create: { name: 'Masai School', allowedDomain: ALLOWED_DOMAIN },
-      });
+      // Ensure the Organization exists, and every accepted user gets an
+      // Organization + personal Workspace on first sign-in.
+      const org = await resolveOrganization();
 
       const existing = await prisma.user.findUnique({ where: { email } });
       if (!existing) {

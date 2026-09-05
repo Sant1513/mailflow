@@ -1,13 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
- * §5 / acceptance criterion #2: only @masaischool.com accounts may sign in.
- * This exercises the real signIn callback from lib/auth/options.ts — the
- * single gate every Google login passes through.
+ * Sign-up policy.
+ *
+ * ALLOWED_EMAIL_DOMAIN is optional: set it to lock sign-up to one domain,
+ * leave it unset for open sign-up. Both modes are covered here, because
+ * "open" must still reject junk (no email at all) and disabled accounts,
+ * and "locked" must not be fooled by a lookalike domain.
  */
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    organization: { upsert: vi.fn() },
+    organization: { upsert: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     user: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     workspace: { create: vi.fn() },
   },
@@ -15,88 +18,150 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@auth/prisma-adapter', () => ({ PrismaAdapter: () => ({}) }));
 
-const { prisma } = await import('@/lib/db/client');
-const { authOptions } = await import('@/lib/auth/options');
+const ORIGINAL_ENV = { ...process.env };
 
-const signIn = authOptions.callbacks!.signIn!;
+async function load(domain?: string) {
+  vi.resetModules();
+  if (domain === undefined) delete process.env.ALLOWED_EMAIL_DOMAIN;
+  else process.env.ALLOWED_EMAIL_DOMAIN = domain;
+  const mod = await import('@/lib/auth/options');
+  const { prisma } = await import('@/lib/db/client');
+  (prisma.organization.upsert as any).mockResolvedValue({ id: 'org1' });
+  (prisma.organization.findFirst as any).mockResolvedValue({ id: 'org1' });
+  (prisma.organization.create as any).mockResolvedValue({ id: 'org1' });
+  (prisma.user.findUnique as any).mockResolvedValue(null);
+  (prisma.user.create as any).mockResolvedValue({ id: 'u1', name: 'Test User' });
+  (prisma.workspace.create as any).mockResolvedValue({ id: 'ws1' });
+  return { mod, prisma };
+}
 
-function callSignIn(email: string) {
-  return signIn({
-    user: { id: 'google-sub-1', email, name: 'Test User', image: null } as any,
-    account: { providerAccountId: 'google-sub-1' } as any,
+function callSignIn(mod: any, email: string | null) {
+  return mod.authOptions.callbacks.signIn({
+    user: { id: 'google-sub-1', email, name: 'Test User', image: null },
+    account: { providerAccountId: 'google-sub-1' },
     profile: undefined,
   });
 }
 
-describe('signIn domain restriction', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    (prisma.organization.upsert as any).mockResolvedValue({ id: 'org1' });
-    (prisma.user.findUnique as any).mockResolvedValue(null);
-    (prisma.user.create as any).mockResolvedValue({ id: 'u1', name: 'Test User' });
-    (prisma.workspace.create as any).mockResolvedValue({ id: 'ws1' });
+beforeEach(() => vi.clearAllMocks());
+afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+});
+
+describe('isEmailAllowed — open sign-up (no ALLOWED_EMAIL_DOMAIN)', () => {
+  it('accepts any real domain', async () => {
+    const { mod } = await load(undefined);
+    expect(mod.isEmailAllowed('someone@gmail.com')).toBe(true);
+    expect(mod.isEmailAllowed('someone@masaischool.com')).toBe(true);
+    expect(mod.isEmailAllowed('someone@anything.example')).toBe(true);
   });
 
-  it('allows an @masaischool.com account', async () => {
-    await expect(callSignIn('rahul@masaischool.com')).resolves.toBe(true);
+  it('still requires an actual email address', async () => {
+    const { mod } = await load(undefined);
+    expect(mod.isEmailAllowed(null)).toBe(false);
+    expect(mod.isEmailAllowed('')).toBe(false);
+    expect(mod.isEmailAllowed('   ')).toBe(false);
+    expect(mod.isEmailAllowed('not-an-email')).toBe(false);
   });
 
-  it('rejects gmail.com', async () => {
-    await expect(callSignIn('someone@gmail.com')).resolves.toBe(false);
+  it('reports no restriction', async () => {
+    const { mod } = await load(undefined);
+    expect(mod.allowedDomain()).toBeNull();
   });
 
-  it('rejects yahoo.com and outlook.com', async () => {
-    await expect(callSignIn('someone@yahoo.com')).resolves.toBe(false);
-    await expect(callSignIn('someone@outlook.com')).resolves.toBe(false);
+  it('treats an empty/whitespace env value as unrestricted', async () => {
+    const { mod } = await load('   ');
+    expect(mod.allowedDomain()).toBeNull();
+    expect(mod.isEmailAllowed('anyone@gmail.com')).toBe(true);
+  });
+});
+
+describe('isEmailAllowed — locked to a domain', () => {
+  it('accepts the configured domain, case-insensitively', async () => {
+    const { mod } = await load('masaischool.com');
+    expect(mod.isEmailAllowed('rahul@masaischool.com')).toBe(true);
+    expect(mod.isEmailAllowed('Rahul@MasaiSchool.com')).toBe(true);
   });
 
-  it('rejects a lookalike domain (not a suffix match)', async () => {
-    await expect(callSignIn('attacker@notmasaischool.com')).resolves.toBe(false);
-    await expect(callSignIn('attacker@masaischool.com.evil.com')).resolves.toBe(false);
+  it('rejects other public domains', async () => {
+    const { mod } = await load('masaischool.com');
+    expect(mod.isEmailAllowed('someone@gmail.com')).toBe(false);
+    expect(mod.isEmailAllowed('someone@yahoo.com')).toBe(false);
+    expect(mod.isEmailAllowed('someone@outlook.com')).toBe(false);
   });
 
-  it('rejects an account with no email at all', async () => {
-    await expect(
-      signIn({ user: { id: 'x', email: null } as any, account: null as any, profile: undefined })
-    ).resolves.toBe(false);
+  it('rejects lookalike domains (full match, not a suffix)', async () => {
+    const { mod } = await load('masaischool.com');
+    expect(mod.isEmailAllowed('attacker@notmasaischool.com')).toBe(false);
+    expect(mod.isEmailAllowed('attacker@masaischool.com.evil.com')).toBe(false);
+  });
+});
+
+describe('signIn callback — open sign-up', () => {
+  it('lets a gmail.com account in and provisions org + user + workspace', async () => {
+    const { mod, prisma } = await load(undefined);
+    await expect(callSignIn(mod, 'newperson@gmail.com')).resolves.toBe(true);
+    expect(prisma.user.create).toHaveBeenCalled();
+    expect(prisma.workspace.create).toHaveBeenCalled();
   });
 
-  it('does not create any org/user/workspace rows for a rejected domain', async () => {
-    await callSignIn('someone@gmail.com');
+  it('reuses the existing organization so users are not split across tenants', async () => {
+    const { mod, prisma } = await load(undefined);
+    await callSignIn(mod, 'newperson@gmail.com');
+    expect(prisma.organization.findFirst).toHaveBeenCalled();
+    // An org already exists, so a second one must not be created.
+    expect(prisma.organization.create).not.toHaveBeenCalled();
+  });
+
+  it('creates an organization when none exists yet', async () => {
+    const { mod, prisma } = await load(undefined);
+    (prisma.organization.findFirst as any).mockResolvedValue(null);
+    await callSignIn(mod, 'first@gmail.com');
+    expect(prisma.organization.create).toHaveBeenCalled();
+  });
+
+  it('rejects an account with no email, creating nothing', async () => {
+    const { mod, prisma } = await load(undefined);
+    await expect(callSignIn(mod, null)).resolves.toBe(false);
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(prisma.workspace.create).not.toHaveBeenCalled();
+  });
+
+  it('still rejects a DISABLED account', async () => {
+    const { mod, prisma } = await load(undefined);
+    (prisma.user.findUnique as any).mockResolvedValue({
+      id: 'u9',
+      status: 'DISABLED',
+      email: 'disabled@gmail.com',
+    });
+    await expect(callSignIn(mod, 'disabled@gmail.com')).resolves.toBe(false);
+  });
+
+  it('updates lastLoginAt for an existing active user', async () => {
+    const { mod, prisma } = await load(undefined);
+    (prisma.user.findUnique as any).mockResolvedValue({
+      id: 'u2',
+      status: 'ACTIVE',
+      email: 'existing@gmail.com',
+    });
+    await expect(callSignIn(mod, 'existing@gmail.com')).resolves.toBe(true);
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'u2' } })
+    );
+  });
+});
+
+describe('signIn callback — locked to a domain', () => {
+  it('rejects a non-matching domain and creates nothing', async () => {
+    const { mod, prisma } = await load('masaischool.com');
+    await expect(callSignIn(mod, 'someone@gmail.com')).resolves.toBe(false);
     expect(prisma.organization.upsert).not.toHaveBeenCalled();
     expect(prisma.user.create).not.toHaveBeenCalled();
     expect(prisma.workspace.create).not.toHaveBeenCalled();
   });
 
-  it('provisions org + user + personal workspace on first allowed sign-in', async () => {
-    await callSignIn('newjoiner@masaischool.com');
-    expect(prisma.organization.upsert).toHaveBeenCalled();
-    expect(prisma.user.create).toHaveBeenCalled();
-    expect(prisma.workspace.create).toHaveBeenCalled();
-  });
-
-  it('rejects a DISABLED existing user even on the allowed domain', async () => {
-    (prisma.user.findUnique as any).mockResolvedValue({
-      id: 'u9',
-      status: 'DISABLED',
-      email: 'disabled@masaischool.com',
-    });
-    await expect(callSignIn('disabled@masaischool.com')).resolves.toBe(false);
-  });
-
-  it('updates lastLoginAt for an existing active user', async () => {
-    (prisma.user.findUnique as any).mockResolvedValue({
-      id: 'u2',
-      status: 'ACTIVE',
-      email: 'existing@masaischool.com',
-    });
-    await expect(callSignIn('existing@masaischool.com')).resolves.toBe(true);
-    expect(prisma.user.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'u2' } })
-    );
-  });
-
-  it('is case-insensitive about the domain', async () => {
-    await expect(callSignIn('Someone@MasaiSchool.com')).resolves.toBe(true);
+  it('accepts a matching domain', async () => {
+    const { mod } = await load('masaischool.com');
+    await expect(callSignIn(mod, 'rahul@masaischool.com')).resolves.toBe(true);
   });
 });
