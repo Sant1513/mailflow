@@ -137,13 +137,13 @@ export function ImportDialog({
               className="w-full rounded-md border p-2 font-mono text-xs"
             />
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={onClose} className="rounded-md border px-3 py-1.5 text-sm">
+              <button onClick={onClose} className="btn-secondary">
                 Cancel
               </button>
               <button
                 disabled={busy}
                 onClick={runPreview}
-                className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+                className="btn-primary"
               >
                 {busy ? 'Parsing…' : 'Preview'}
               </button>
@@ -190,7 +190,7 @@ export function ImportDialog({
                         <select
                           value={types[h]}
                           onChange={(e) => setTypes((t) => ({ ...t, [h]: e.target.value as ColumnType }))}
-                          className="mt-1 w-full rounded border bg-white px-1 py-0.5 text-[11px]"
+                          className="mt-1 w-full rounded border bg-card px-1 py-0.5 text-[11px]"
                         >
                           {['TEXT', 'LONG_TEXT', 'EMAIL', 'NUMBER', 'DATE', 'DATETIME', 'CHECKBOX', 'URL', 'STATUS'].map((t) => (
                             <option key={t} value={t}>{t}</option>
@@ -243,13 +243,13 @@ export function ImportDialog({
             </div>
 
             <div className="flex justify-end gap-2">
-              <button onClick={() => setStep('paste')} className="rounded-md border px-3 py-1.5 text-sm">
+              <button onClick={() => setStep('paste')} className="btn-secondary">
                 Back
               </button>
               <button
                 disabled={busy}
                 onClick={commit}
-                className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+                className="btn-primary"
               >
                 {busy ? 'Importing…' : `Import ${preview.rowCount} records`}
               </button>

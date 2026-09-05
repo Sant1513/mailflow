@@ -208,7 +208,7 @@ export default function CampaignDetailPage() {
               Sends from <strong>{data.sender.emailAddress}</strong> ({data.sender.status})
             </p>
           ) : (
-            <p className="mt-1 text-xs text-red-700">
+            <p className="mt-1 text-xs text-primary">
               No Gmail account connected — <Link href="/settings" className="underline">connect one</Link> before sending.
             </p>
           )}
@@ -217,23 +217,23 @@ export default function CampaignDetailPage() {
 
       {/* Workflow actions */}
       <div className="mb-6 flex flex-wrap gap-2">
-        <button onClick={runSimulation} disabled={busy === 'simulate'} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50">
+        <button onClick={runSimulation} disabled={busy === 'simulate'} className="btn-secondary">
           {busy === 'simulate' ? 'Simulating…' : 'Run simulation (dry run)'}
         </button>
         {campaign.status === 'DRAFT' || campaign.status === 'REJECTED' ? (
-          <button onClick={() => approvalAction('SUBMIT')} disabled={!!busy} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+          <button onClick={() => approvalAction('SUBMIT')} disabled={!!busy} className="btn-secondary">
             Submit for approval
           </button>
         ) : null}
         {campaign.status === 'PENDING_APPROVAL' && canApprove && !data.viewerIsCreator ? (
           <>
-            <button onClick={() => approvalAction('APPROVE')} disabled={!!busy} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">
+            <button onClick={() => approvalAction('APPROVE')} disabled={!!busy} className="btn-primary">
               Approve
             </button>
             <button
               onClick={() => approvalAction('REJECT', prompt('Reason for rejection?') ?? undefined)}
               disabled={!!busy}
-              className="rounded-md border px-3 py-1.5 text-sm"
+              className="btn-secondary"
             >
               Reject
             </button>
@@ -245,12 +245,12 @@ export default function CampaignDetailPage() {
           </span>
         )}
         {campaign.status === 'APPROVED' && (
-          <button onClick={() => send(false)} disabled={!!busy} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">
+          <button onClick={() => send(false)} disabled={!!busy} className="btn-primary">
             {busy === 'send' ? 'Sending…' : 'Send now'}
           </button>
         )}
         {isAdmin && ['DRAFT', 'REJECTED'].includes(campaign.status) && (
-          <button onClick={() => send(true)} disabled={!!busy} className="rounded-md border border-amber-400 px-3 py-1.5 text-sm text-amber-800 hover:bg-amber-50">
+          <button onClick={() => send(true)} disabled={!!busy} className="rounded-md border border-warning/40 px-3 py-1.5 text-sm text-warning hover:bg-warning/10">
             Send without approval (admin)
           </button>
         )}
@@ -291,7 +291,7 @@ export default function CampaignDetailPage() {
       )}
 
       {campaign.rejectionReason && (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-primary">
           <strong>Rejected:</strong> {campaign.rejectionReason}
         </div>
       )}
@@ -302,7 +302,7 @@ export default function CampaignDetailPage() {
           <h2 className="mb-2 text-sm font-semibold">Validation</h2>
           <ul className="space-y-1 text-sm">
             {validation.issues.map((issue: any) => (
-              <li key={issue.id} className={issue.level === 'error' ? 'text-red-700' : 'text-amber-700'}>
+              <li key={issue.id} className={issue.level === 'error' ? 'text-primary' : 'text-warning'}>
                 {issue.level === 'error' ? '✕' : '!'} {issue.message}
               </li>
             ))}
@@ -351,7 +351,7 @@ export default function CampaignDetailPage() {
                   {simulation.evaluations.map((e) => (
                     <tr key={e.recordId} className="border-t">
                       <td className="px-2 py-1">{e.email ?? '—'}</td>
-                      <td className={`px-2 py-1 ${e.willSend ? 'text-green-700' : 'text-muted-foreground'}`}>
+                      <td className={`px-2 py-1 ${e.willSend ? 'text-success' : 'text-muted-foreground'}`}>
                         {e.willSend ? 'Would send' : REASON_LABELS[e.skipReason ?? ''] ?? 'Skipped'}
                       </td>
                       <td className="px-2 py-1 text-muted-foreground">{e.reasonDetail}</td>
@@ -372,19 +372,19 @@ export default function CampaignDetailPage() {
               Batch {latestBatch.label} — {latestBatch.status.replace(/_/g, ' ')}
             </h2>
             <div className="flex gap-2">
-              <button onClick={drain} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-muted">
+              <button onClick={drain} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-elevated">
                 {busy === 'drain' ? 'Sending…' : 'Process queue'}
               </button>
-              <button onClick={() => batchControl('PAUSE')} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-muted">
+              <button onClick={() => batchControl('PAUSE')} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-elevated">
                 Pause
               </button>
-              <button onClick={() => batchControl('RESUME')} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-muted">
+              <button onClick={() => batchControl('RESUME')} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-elevated">
                 Resume
               </button>
-              <button onClick={() => batchControl('CANCEL')} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-muted">
+              <button onClick={() => batchControl('CANCEL')} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-elevated">
                 Cancel
               </button>
-              <button onClick={() => batchControl('RETRY_FAILED')} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-muted">
+              <button onClick={() => batchControl('RETRY_FAILED')} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-elevated">
                 Retry failed
               </button>
             </div>
@@ -438,7 +438,7 @@ export default function CampaignDetailPage() {
 }
 
 function Stat({ label, value, tone }: { label: string; value: number; tone?: 'good' | 'bad' }) {
-  const color = tone === 'good' ? 'text-green-700' : tone === 'bad' ? 'text-red-700' : '';
+  const color = tone === 'good' ? 'text-success' : tone === 'bad' ? 'text-primary' : '';
   return (
     <div className="rounded border p-2">
       <div className={`text-lg font-semibold ${color}`}>{value}</div>

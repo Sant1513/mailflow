@@ -210,7 +210,7 @@ export default function ConversationPage() {
               </select>
             </label>
             {c.status !== 'RESOLVED' && (
-              <button onClick={() => patch({ status: 'RESOLVED' }, 'resolve')} disabled={!!busy} className="rounded border px-2 py-1 hover:bg-muted">
+              <button onClick={() => patch({ status: 'RESOLVED' }, 'resolve')} disabled={!!busy} className="rounded border px-2 py-1 hover:bg-elevated">
                 Mark resolved
               </button>
             )}
@@ -241,13 +241,13 @@ export default function ConversationPage() {
           <div className="mx-auto w-full max-w-3xl space-y-3">
             {timeline.map(({ kind, item }) =>
               kind === 'note' ? (
-                <div key={`n-${item.id}`} className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
-                  <div className="mb-1 flex items-center justify-between text-xs text-amber-900">
+                <div key={`n-${item.id}`} className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+                  <div className="mb-1 flex items-center justify-between text-xs text-warning">
                     <span><strong>INTERNAL NOTE</strong> · {item.author.name}</span>
                     <span>{new Date(item.createdAt).toLocaleString()}</span>
                   </div>
-                  <div className="whitespace-pre-wrap text-amber-950">{item.body}</div>
-                  <div className="mt-1 text-[10px] text-amber-800">Never sent to the recipient.</div>
+                  <div className="whitespace-pre-wrap text-warning">{item.body}</div>
+                  <div className="mt-1 text-[10px] text-warning">Never sent to the recipient.</div>
                 </div>
               ) : (
                 <div
@@ -261,7 +261,7 @@ export default function ConversationPage() {
                       </strong>{' '}
                       · {item.direction}
                       {item.classification && item.classification !== 'HUMAN_REPLY' && item.direction === 'INBOUND' && (
-                        <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800">
+                        <span className="ml-1 rounded bg-warning/15 px-1 text-[10px] text-warning">
                           {item.classification.replace(/_/g, ' ').toLowerCase()}
                         </span>
                       )}
@@ -337,7 +337,7 @@ export default function ConversationPage() {
               <button
                 onClick={sendReply}
                 disabled={busy === 'reply' || !reply.trim()}
-                className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+                className="btn-primary"
               >
                 {busy === 'reply' ? 'Sending…' : newThread ? 'Send new email' : 'Send reply'}
               </button>
@@ -355,7 +355,7 @@ export default function ConversationPage() {
             placeholder="Visible to your team only…"
             className="w-full rounded border px-2 py-1 text-xs"
           />
-          <button onClick={addNote} disabled={busy === 'note' || !note.trim()} className="mt-1 w-full rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50">
+          <button onClick={addNote} disabled={busy === 'note' || !note.trim()} className="mt-1 w-full rounded border px-2 py-1 text-xs hover:bg-elevated disabled:opacity-50">
             Add note
           </button>
 
@@ -364,7 +364,7 @@ export default function ConversationPage() {
             <label key={f.id} className={`mb-1 flex items-start gap-2 rounded border p-2 text-xs ${f.completed ? 'opacity-60' : ''}`}>
               <input type="checkbox" checked={f.completed} onChange={(e) => completeFollowUp(f.id, e.target.checked)} />
               <span>
-                <div className={f.completed ? 'line-through' : new Date(f.dueDate) < new Date() ? 'font-semibold text-red-700' : 'font-semibold'}>
+                <div className={f.completed ? 'line-through' : new Date(f.dueDate) < new Date() ? 'font-semibold text-primary' : 'font-semibold'}>
                   {new Date(f.dueDate).toLocaleDateString()}
                 </div>
                 {f.note && <div className="text-muted-foreground">{f.note}</div>}
@@ -373,7 +373,7 @@ export default function ConversationPage() {
           ))}
           <input type="date" value={followUpDate} onChange={(e) => setFollowUpDate(e.target.value)} className="mt-1 w-full rounded border px-2 py-1 text-xs" />
           <input value={followUpNote} onChange={(e) => setFollowUpNote(e.target.value)} placeholder="What to check" className="mt-1 w-full rounded border px-2 py-1 text-xs" />
-          <button onClick={addFollowUp} disabled={!followUpDate} className="mt-1 w-full rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50">
+          <button onClick={addFollowUp} disabled={!followUpDate} className="mt-1 w-full rounded border px-2 py-1 text-xs hover:bg-elevated disabled:opacity-50">
             Set follow-up
           </button>
 

@@ -13,7 +13,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <AppNav
         user={{ name: user.name, email: user.email, image: user.image, role: user.role }}
       />
-      <main className="flex-1 overflow-x-hidden bg-muted/30">{children}</main>
+      <main className="flex-1 overflow-x-hidden bg-background">{children}</main>
     </div>
   );
 }

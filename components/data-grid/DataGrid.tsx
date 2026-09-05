@@ -84,7 +84,7 @@ export function DataGrid({
         </thead>
         <tbody>
           {records.map((record, i) => (
-            <tr key={record.id} className="hover:bg-muted/40">
+            <tr key={record.id} className="hover:bg-elevated/60">
               <td className="grid-cell text-center text-xs text-muted-foreground">{i + 1}</td>
               {visible.map((col) => {
                 const isEditing = editing?.row === record.id && editing.col === col.key;
@@ -147,9 +147,9 @@ function StatusBadge({ status }: { status: string | null }) {
   }
   const color =
     status === 'SENT'
-      ? 'bg-green-100 text-green-800'
+      ? 'bg-success/15 text-success'
       : status === 'FAILED'
-        ? 'bg-red-100 text-red-800'
-        : 'bg-yellow-100 text-yellow-800';
+        ? 'bg-destructive/15 text-primary'
+        : 'bg-warning/15 text-warning';
   return <span className={`rounded px-1.5 py-0.5 text-xs ${color}`}>{status}</span>;
 }

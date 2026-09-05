@@ -101,7 +101,7 @@ export function CampaignReview({
       </div>
 
       {(data.summary.ccPerMessage > 0 || data.summary.bccPerMessage > 0) && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
           CC/BCC are on every message. {data.summary.wouldSend} recipients ×{' '}
           {1 + data.summary.ccPerMessage + data.summary.bccPerMessage} copies ={' '}
           <strong>{data.summary.totalDeliveries} total emails</strong>.
@@ -139,12 +139,12 @@ export function CampaignReview({
               : 'none'}
           </div>
           {data.templateCheck.variablesMissing.length > 0 ? (
-            <div className="text-red-700">
+            <div className="text-primary">
               ✕ Missing from dataset:{' '}
               {data.templateCheck.variablesMissing.map((v) => `{{${v}}}`).join(', ')} — sending is blocked.
             </div>
           ) : (
-            <div className="text-green-700">✓ Every variable exists in the dataset.</div>
+            <div className="text-success">✓ Every variable exists in the dataset.</div>
           )}
           {data.templateCheck.columnsUnused.length > 0 && (
             <div className="text-muted-foreground">
@@ -182,7 +182,7 @@ export function CampaignReview({
                     key={r.recordId}
                     onClick={() => r.willSend && onSelectRecipient(r.recordId)}
                     className={`border-t ${
-                      r.willSend ? 'cursor-pointer hover:bg-muted/50' : 'bg-red-50/40'
+                      r.willSend ? 'cursor-pointer hover:bg-elevated/60' : 'bg-destructive/10'
                     } ${data.preview?.recordId === r.recordId ? 'bg-primary/10' : ''}`}
                     title={r.willSend ? 'Click to preview this person\'s email' : r.reasonDetail}
                   >
@@ -192,7 +192,7 @@ export function CampaignReview({
                         {String(r.data[c] ?? '')}
                       </td>
                     ))}
-                    <td className={`px-2 py-1 ${r.willSend ? 'text-green-700' : 'text-red-700'}`}>
+                    <td className={`px-2 py-1 ${r.willSend ? 'text-success' : 'text-primary'}`}>
                       {r.willSend ? 'Will send' : REASON_LABELS[r.skipReason ?? ''] ?? 'Skipped'}
                     </td>
                   </tr>
@@ -203,7 +203,7 @@ export function CampaignReview({
           {data.recipients.length > 12 && (
             <button
               onClick={() => setShowAll((s) => !s)}
-              className="w-full border-t px-4 py-2 text-xs text-primary hover:bg-muted"
+              className="w-full border-t px-4 py-2 text-xs text-primary hover:bg-elevated"
             >
               {showAll ? 'Show fewer' : `Show all ${data.recipients.length}`}
               {data.recipientsTruncated && !showAll ? ' (first page)' : ''}
@@ -236,7 +236,7 @@ export function CampaignReview({
           {data.preview ? (
             <>
               {data.preview.missingVariables.length > 0 && (
-                <div className="border-b bg-amber-50 px-4 py-2 text-xs text-amber-900">
+                <div className="border-b bg-warning/10 px-4 py-2 text-xs text-warning">
                   Unresolved for this person:{' '}
                   {data.preview.missingVariables.map((v) => `{{${v}}}`).join(', ')}
                 </div>
@@ -254,7 +254,7 @@ export function CampaignReview({
                       <div key={k} className="flex gap-1">
                         <dt className="font-mono text-muted-foreground">{`{{${k}}}`}</dt>
                         <dd className="truncate">
-                          → {v || <span className="italic text-amber-700">empty</span>}
+                          → {v || <span className="italic text-warning">empty</span>}
                         </dd>
                       </div>
                     ))}
@@ -283,7 +283,7 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function Stat({ label, value, tone }: { label: string; value: number; tone?: 'good' | 'bad' }) {
-  const color = tone === 'good' ? 'text-green-700' : tone === 'bad' ? 'text-red-700' : '';
+  const color = tone === 'good' ? 'text-success' : tone === 'bad' ? 'text-primary' : '';
   return (
     <div className="rounded border bg-card p-2">
       <div className={`text-lg font-semibold ${color}`}>{value}</div>

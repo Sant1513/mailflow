@@ -176,10 +176,10 @@ export default function AutomationBuilderPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={checkImpact} disabled={!!busy} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+          <button onClick={checkImpact} disabled={!!busy} className="btn-secondary">
             Check impact
           </button>
-          <button onClick={saveVersion} disabled={!!busy} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+          <button onClick={saveVersion} disabled={!!busy} className="btn-secondary">
             {busy === 'save' ? 'Saving…' : 'Save new version'}
           </button>
           <button
@@ -187,7 +187,7 @@ export default function AutomationBuilderPage() {
             disabled={!!busy}
             className={`rounded-md px-3 py-1.5 text-sm ${
               automation.enabled
-                ? 'border border-amber-400 text-amber-800 hover:bg-amber-50'
+                ? 'border border-warning/40 text-warning hover:bg-warning/10'
                 : 'bg-primary text-primary-foreground'
             }`}
           >
@@ -197,12 +197,12 @@ export default function AutomationBuilderPage() {
       </div>
 
       {impact && (
-        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm">
-          <div className="mb-1 font-semibold text-amber-900">Automation impact</div>
-          <div className="text-amber-900">
+        <div className="mb-6 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm">
+          <div className="mb-1 font-semibold text-warning">Automation impact</div>
+          <div className="text-warning">
             Condition: <code>{impact.conditionText}</code>
           </div>
-          <div className="text-amber-900">
+          <div className="text-warning">
             Would act on <strong>{impact.potentialRecords}</strong> of {impact.totalRecords} records
             {impact.willSendEmail && ' — and this action SENDS EMAIL.'}
           </div>
@@ -303,7 +303,7 @@ export default function AutomationBuilderPage() {
                   <tr key={run.id} className="border-t">
                     <td className="px-2 py-1 text-muted-foreground">{new Date(run.createdAt).toLocaleString()}</td>
                     <td className="px-2 py-1">{run.triggerType}</td>
-                    <td className={`px-2 py-1 ${run.result === 'TRIGGERED' ? 'text-green-700' : run.result === 'ERROR' ? 'text-red-700' : 'text-muted-foreground'}`}>
+                    <td className={`px-2 py-1 ${run.result === 'TRIGGERED' ? 'text-success' : run.result === 'ERROR' ? 'text-primary' : 'text-muted-foreground'}`}>
                       {run.result}
                     </td>
                     <td className="px-2 py-1 text-muted-foreground">{run.actionTaken ?? run.error ?? '—'}</td>

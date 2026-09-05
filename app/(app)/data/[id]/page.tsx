@@ -116,10 +116,10 @@ export default function DatasetDetailPage() {
           <p className="text-sm text-muted-foreground">{detail.total} records · {detail.columns.length} columns</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleAddColumn} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+          <button onClick={handleAddColumn} className="btn-secondary">
             + Column
           </button>
-          <button onClick={handleAddRow} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+          <button onClick={handleAddRow} className="btn-secondary">
             + Row
           </button>
         </div>

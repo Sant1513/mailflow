@@ -6,10 +6,10 @@ import Link from 'next/link';
 
 const TYPE_LABEL: Record<string, { label: string; tone: string }> = {
   EMAIL_SENT: { label: 'Campaign email', tone: 'text-primary' },
-  REPLY: { label: 'Reply', tone: 'text-green-700' },
+  REPLY: { label: 'Reply', tone: 'text-success' },
   MANUAL_REPLY: { label: 'Manual reply', tone: 'text-primary' },
-  AUTOMATED_MESSAGE: { label: 'Automated message', tone: 'text-amber-700' },
-  NOTE: { label: 'Internal note', tone: 'text-amber-800' },
+  AUTOMATED_MESSAGE: { label: 'Automated message', tone: 'text-warning' },
+  NOTE: { label: 'Internal note', tone: 'text-warning' },
   STATUS_CHANGE: { label: 'Status change', tone: 'text-muted-foreground' },
   FOLLOW_UP: { label: 'Follow-up', tone: 'text-muted-foreground' },
 };
@@ -30,7 +30,7 @@ export default function ContactProfilePage() {
       .catch((e) => setError(e.message));
   }, [params.id]);
 
-  if (error) return <div className="p-6 text-sm text-red-700">{error}</div>;
+  if (error) return <div className="p-6 text-sm text-primary">{error}</div>;
   if (!contact) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
 
   const openFollowUps = contact.conversations.flatMap((c: any) => c.followUps.filter((f: any) => !f.completed));
@@ -47,7 +47,7 @@ export default function ContactProfilePage() {
         <span className="rounded bg-muted px-2 py-1">{contact.conversations.length} conversation{contact.conversations.length === 1 ? '' : 's'}</span>
         {unread > 0 && <span className="rounded bg-primary/10 px-2 py-1 text-primary">🔵 {unread} unread</span>}
         {openFollowUps.length > 0 && (
-          <span className="rounded bg-amber-100 px-2 py-1 text-amber-900">{openFollowUps.length} follow-up pending</span>
+          <span className="rounded bg-warning/15 px-2 py-1 text-warning">{openFollowUps.length} follow-up pending</span>
         )}
       </div>
 
@@ -87,7 +87,7 @@ export default function ContactProfilePage() {
             <ul className="space-y-1">
               {contact.conversations.map((c: any) => (
                 <li key={c.id}>
-                  <Link href={`/inbox/${c.id}`} className={`block rounded border bg-card px-3 py-2 text-xs hover:bg-muted ${c.unread ? 'border-primary/40' : ''}`}>
+                  <Link href={`/inbox/${c.id}`} className={`block rounded border bg-card px-3 py-2 text-xs hover:bg-elevated ${c.unread ? 'border-primary/40' : ''}`}>
                     <div className="flex items-center gap-1">
                       {c.unread && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
                       <span className="truncate font-medium">{c.subject}</span>

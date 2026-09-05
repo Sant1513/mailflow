@@ -18,16 +18,16 @@ interface CampaignRow {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  DRAFT: 'bg-slate-100 text-slate-700',
-  PENDING_APPROVAL: 'bg-amber-100 text-amber-800',
-  APPROVED: 'bg-blue-100 text-blue-800',
-  SCHEDULED: 'bg-indigo-100 text-indigo-800',
-  RUNNING: 'bg-cyan-100 text-cyan-800',
-  PAUSED: 'bg-amber-100 text-amber-800',
-  COMPLETED: 'bg-green-100 text-green-800',
-  PARTIALLY_FAILED: 'bg-orange-100 text-orange-800',
-  CANCELLED: 'bg-slate-200 text-slate-600',
-  REJECTED: 'bg-red-100 text-red-800',
+  DRAFT: 'bg-muted text-muted-foreground',
+  PENDING_APPROVAL: 'bg-warning/15 text-warning',
+  APPROVED: 'bg-info/15 text-info',
+  SCHEDULED: 'bg-info/15 text-info',
+  RUNNING: 'bg-info/15 text-info',
+  PAUSED: 'bg-warning/15 text-warning',
+  COMPLETED: 'bg-success/15 text-success',
+  PARTIALLY_FAILED: 'bg-warning/15 text-warning',
+  CANCELLED: 'bg-muted text-muted-foreground',
+  REJECTED: 'bg-destructive/15 text-primary',
 };
 
 export default function CampaignsPage() {
@@ -88,7 +88,7 @@ export default function CampaignsPage() {
         </div>
         <button
           onClick={() => setShowForm((s) => !s)}
-          className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
+          className="btn-primary"
         >
           New campaign
         </button>
@@ -138,13 +138,13 @@ export default function CampaignsPage() {
             not change what this campaign sends.
           </p>
           <div className="mt-3 flex gap-2">
-            <button onClick={() => setShowForm(false)} className="rounded-md border px-3 py-1.5 text-sm">
+            <button onClick={() => setShowForm(false)} className="btn-secondary">
               Cancel
             </button>
             <button
               onClick={create}
               disabled={creating}
-              className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+              className="btn-primary"
             >
               {creating ? 'Creating…' : 'Create campaign'}
             </button>
@@ -174,7 +174,7 @@ export default function CampaignsPage() {
               {campaigns.map((c) => {
                 const batch = c.batches[0];
                 return (
-                  <tr key={c.id} className="border-t hover:bg-muted/50">
+                  <tr key={c.id} className="border-t hover:bg-elevated/60">
                     <td className="px-4 py-2">
                       <Link href={`/campaigns/${c.id}`} className="font-medium text-primary hover:underline">
                         {c.name}

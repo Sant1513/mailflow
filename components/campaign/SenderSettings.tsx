@@ -79,7 +79,7 @@ export function SenderSettings({
           <p className="mt-1 text-[11px] text-muted-foreground">
             Always your connected mailbox — a campaign cannot send as someone else.
             {senderStatus && senderStatus !== 'CONNECTED' && (
-              <span className="text-amber-700"> Status: {senderStatus}.</span>
+              <span className="text-warning"> Status: {senderStatus}.</span>
             )}
           </p>
         </div>
@@ -118,7 +118,7 @@ export function SenderSettings({
             placeholder="archive@masaischool.com"
             className="w-full rounded-md border px-2 py-1.5 text-sm disabled:bg-muted"
           />
-          <p className="mt-1 text-[11px] text-amber-700">
+          <p className="mt-1 text-[11px] text-warning">
             CC and BCC are added to <strong>every</strong> message in this campaign — one
             address on a 250-recipient campaign means 250 extra emails to that person.
           </p>
@@ -129,7 +129,7 @@ export function SenderSettings({
         <button
           onClick={save}
           disabled={saving}
-          className="mt-3 rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+          className="mt-3 btn-secondary"
         >
           {saving ? 'Saving…' : 'Save sender settings'}
         </button>

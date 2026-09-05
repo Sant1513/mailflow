@@ -102,7 +102,7 @@ export default function InboxPage() {
             onClick={syncNow}
             disabled={syncing || gmail?.connected === false}
             title={gmail?.connected === false ? 'Connect Gmail in Settings first' : 'Pull new replies from Gmail'}
-            className="rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+            className="rounded border px-2 py-1 text-xs hover:bg-elevated disabled:opacity-50"
           >
             {syncing ? 'Syncing…' : 'Sync now'}
           </button>
@@ -116,12 +116,12 @@ export default function InboxPage() {
                 key={f.key}
                 onClick={() => setFilter(f.key)}
                 className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm ${
-                  filter === f.key ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                  filter === f.key ? 'bg-primary text-primary-foreground' : 'hover:bg-elevated'
                 }`}
               >
                 <span>{f.label}</span>
                 {n !== undefined && n > 0 && (
-                  <span className={`rounded-full px-1.5 text-[11px] ${filter === f.key ? 'bg-white/20' : 'bg-muted'}`}>{n}</span>
+                  <span className={`rounded-full px-1.5 text-[11px] ${filter === f.key ? 'bg-card/20' : 'bg-muted'}`}>{n}</span>
                 )}
               </button>
             );
@@ -154,7 +154,7 @@ export default function InboxPage() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search name, email, subject, message text, or thread id…"
-            className="w-full max-w-xl rounded-md border px-3 py-1.5 text-sm"
+            className="w-full max-w-xl btn-secondary"
           />
         </div>
 
@@ -174,7 +174,7 @@ export default function InboxPage() {
                 <li key={c.id} className="border-b">
                   <Link
                     href={`/inbox/${c.id}`}
-                    className={`block px-4 py-3 hover:bg-muted/50 ${c.unread ? 'bg-primary/5' : ''}`}
+                    className={`block px-4 py-3 hover:bg-elevated/60 ${c.unread ? 'bg-primary/5' : ''}`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
@@ -193,7 +193,7 @@ export default function InboxPage() {
                         <div className="truncate text-xs text-muted-foreground">
                           {c.lastMessage?.direction === 'OUTBOUND' && <span className="mr-1">You:</span>}
                           {c.lastMessage?.classification && c.lastMessage.classification !== 'HUMAN_REPLY' && (
-                            <span className="mr-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800">
+                            <span className="mr-1 rounded bg-warning/15 px-1 text-[10px] text-warning">
                               {c.lastMessage.classification.replace(/_/g, ' ').toLowerCase()}
                             </span>
                           )}

@@ -56,7 +56,7 @@ export default async function DashboardPage() {
 
 function QuickAction({ href, label, desc }: { href: string; label: string; desc: string }) {
   return (
-    <a href={href} className="rounded-lg border bg-card p-4 hover:bg-muted">
+    <a href={href} className="rounded-lg border bg-card p-4 hover:bg-elevated">
       <div className="text-sm font-medium">{label}</div>
       <div className="text-xs text-muted-foreground">{desc}</div>
     </a>
