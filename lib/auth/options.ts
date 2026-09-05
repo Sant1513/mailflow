@@ -44,6 +44,15 @@ export const authOptions: NextAuthOptions = {
       clientId: process.env.GOOGLE_CLIENT_ID ?? '',
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
       authorization: { params: { scope: 'openid email profile' } },
+      // Before redirecting to Google, NextAuth fetches Google's OpenID
+      // discovery document server-side. openid-client caps that at 3500ms,
+      // which is too tight: a cold Next.js route compile stalls the event
+      // loop long enough to blow the budget even on a fast connection
+      // (measured ~150ms to accounts.google.com from this machine). The
+      // timeout surfaced as ?error=OAuthSignin — a Sign in button that
+      // simply did nothing. 10s tolerates the stall without hanging a user
+      // on a genuinely unreachable network.
+      httpOptions: { timeout: 10_000 },
       profile(profile) {
         return {
           id: profile.sub,
