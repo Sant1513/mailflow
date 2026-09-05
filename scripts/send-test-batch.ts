@@ -70,7 +70,9 @@ async function main() {
     include: { user: true, workspace: true },
   });
 
-  if (!sender) {
+  // A dry run sends nothing, so it must not require a connected mailbox —
+  // otherwise the pipeline cannot be inspected before granting Gmail access.
+  if (!sender && !isDryRun) {
     const anyAccount = await prisma.emailProviderAccount.findFirst();
     fail(
       anyAccount
@@ -79,15 +81,27 @@ async function main() {
         : 'No Gmail account is connected.\n' +
             '  1. Sign in to the app\n' +
             '  2. Go to Settings -> Connect Gmail and complete Google consent\n' +
-            '  3. Re-run this script'
+            '  3. Re-run this script\n\n' +
+            '  (Add --dry-run to inspect the whole pipeline without sending.)'
     );
   }
 
-  console.log(`Sender:    ${sender.emailAddress} (${sender.user.name})`);
-  console.log(`Workspace: ${sender.workspace.name}\n`);
+  // On a dry run without a connected mailbox, fall back to the signed-in
+  // user purely so the preview has an owner/workspace to attach to.
+  const fallbackUser = sender
+    ? null
+    : await prisma.user.findFirst({ include: { ownedWorkspaces: true }, orderBy: { createdAt: 'asc' } });
+  if (!sender && (!fallbackUser || !fallbackUser.ownedWorkspaces[0])) {
+    fail('No signed-in user found. Sign in to the app once, then re-run.');
+  }
 
-  const owner = sender.user;
-  const workspace = sender.workspace;
+  const owner = sender ? sender.user : fallbackUser!;
+  const workspace = sender ? sender.workspace : fallbackUser!.ownedWorkspaces[0]!;
+  const senderEmail = sender?.emailAddress ?? '(no mailbox connected — dry run only)';
+
+  console.log(`Sender:    ${senderEmail}`);
+  console.log(`Workspace: ${workspace.name}\n`);
+
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 
   // ── 2. Dataset with the single recipient ──
@@ -161,7 +175,7 @@ async function main() {
       templateId: template.id,
       templateVersionId: version.id,
       createdById: owner.id,
-      senderAccountId: sender.id,
+      senderAccountId: sender?.id ?? null,
       status: CampaignStatus.APPROVED,
       approvedById: owner.id,
       approvedAt: new Date(),
@@ -181,7 +195,7 @@ async function main() {
         templateName: template.name,
         templateVersion: version.version,
         batchLabel: label,
-        senderEmail: sender.emailAddress,
+        senderEmail,
       },
     }
   );
@@ -203,7 +217,7 @@ async function main() {
   );
 
   console.log(`\n--- Message preview ---`);
-  console.log(`  From:    ${sender.displayName ?? owner.name} <${sender.emailAddress}>`);
+  console.log(`  From:    ${sender?.displayName ?? owner.name} <${sender?.emailAddress ?? owner.email}>`);
   console.log(`  To:      ${evaluation.email}`);
   console.log(`  Subject: ${rendered.subject}`);
   console.log(`\n--- Why this is being sent (§35) ---`);
@@ -227,13 +241,13 @@ async function main() {
       campaignId: campaign.id,
       recordId: record.id,
       templateVersionId: version.id,
-      emailProviderAccountId: sender.id,
+      emailProviderAccountId: sender?.id ?? null,
       status: EmailJobStatus.QUEUED,
       toEmail: evaluation.email!,
       ccEmails: [],
       bccEmails: [],
-      fromName: sender.displayName ?? owner.name,
-      fromEmail: sender.emailAddress,
+      fromName: sender?.displayName ?? owner.name,
+      fromEmail: senderEmail,
       subject: rendered.subject,
       html: rendered.html,
       plainText: rendered.plainText,
@@ -269,8 +283,9 @@ async function main() {
     console.log(`  Message-ID:       ${finalJob.messageIdHeader}`);
     console.log(`  Sent at:          ${finalJob.sentAt?.toISOString()}`);
 
+    // Reaching here means the send succeeded, so a sender must exist.
     const conversation = await prisma.conversation.findFirst({
-      where: { emailProviderAccountId: sender.id, gmailThreadId: finalJob.gmailThreadId },
+      where: { emailProviderAccountId: sender!.id, gmailThreadId: finalJob.gmailThreadId },
       include: { messages: true },
     });
     console.log(`\n  Conversation created: ${conversation ? 'yes' : 'no'} (${conversation?.messages.length ?? 0} message)`);

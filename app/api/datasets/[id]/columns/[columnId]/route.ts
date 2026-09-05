@@ -5,7 +5,8 @@ import { requireSession, ForbiddenError } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
-import { Role } from '@prisma/client';
+import { linkContactsForDataset } from '@/lib/records/contactLink';
+import { ColumnType, Role } from '@prisma/client';
 
 async function loadColumn(session: Awaited<ReturnType<typeof requireSession>>, datasetId: string, columnId: string) {
   const column = await prisma.datasetColumn.findFirst({ where: { id: columnId, datasetId } });
@@ -20,6 +21,11 @@ async function loadColumn(session: Awaited<ReturnType<typeof requireSession>>, d
 
 const patchSchema = z.object({
   label: z.string().min(1).max(200).optional(),
+  // Retyping matters: import type-inference can guess wrong (an email
+  // column named "Status" lands as TEXT), and without this there is no way
+  // to correct it — the dataset stays permanently unsendable because
+  // contact linking and recipient resolution both require an EMAIL column.
+  type: z.nativeEnum(ColumnType).optional(),
   hidden: z.boolean().optional(),
   order: z.number().int().optional(),
   width: z.number().int().positive().optional(),
@@ -35,10 +41,46 @@ export const PATCH = withErrorHandling(
     if (column.isSystem) throw new ForbiddenError('System columns cannot be modified');
 
     const body = patchSchema.parse(await req.json());
-    const updated = await prisma.datasetColumn.update({ where: { id: column.id }, data: body });
-    await audit(session, 'DATASET_COLUMN_UPDATE', { targetType: 'DatasetColumn', targetId: column.id, metadata: body });
 
-    return NextResponse.json({ column: updated });
+    // Only one EMAIL column can be the recipient source, and
+    // findOrCreateContactForRecord picks the lowest-ordered one. Promoting
+    // a second column to EMAIL would silently change who gets mailed, so
+    // refuse rather than guess.
+    if (body.type === ColumnType.EMAIL && column.type !== ColumnType.EMAIL) {
+      const existingEmailColumn = await prisma.datasetColumn.findFirst({
+        where: { datasetId: params.id, type: ColumnType.EMAIL, id: { not: column.id } },
+      });
+      if (existingEmailColumn) {
+        return NextResponse.json(
+          {
+            error: `"${existingEmailColumn.label}" is already the email column for this dataset. Change it to another type first.`,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    const updated = await prisma.datasetColumn.update({ where: { id: column.id }, data: body });
+
+    // Retyping to EMAIL is the recovery path for a mis-detected column, so
+    // backfill the contacts that could not be created while it was TEXT.
+    let contactsLinked = 0;
+    if (body.type === ColumnType.EMAIL && column.type !== ColumnType.EMAIL) {
+      const dataset = await prisma.dataset.findUniqueOrThrow({ where: { id: params.id } });
+      contactsLinked = await linkContactsForDataset({
+        organizationId: dataset.organizationId,
+        workspaceId: dataset.workspaceId,
+        datasetId: dataset.id,
+      });
+    }
+
+    await audit(session, 'DATASET_COLUMN_UPDATE', {
+      targetType: 'DatasetColumn',
+      targetId: column.id,
+      metadata: { ...body, previousType: column.type, contactsLinked },
+    });
+
+    return NextResponse.json({ column: updated, contactsLinked });
   }
 );
 

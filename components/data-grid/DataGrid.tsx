@@ -24,16 +24,24 @@ export interface GridRecord {
  * virtualized yet (fine at hundreds of rows; §135 flags this as a Phase 8
  * follow-up once datasets regularly exceed a few thousand rows).
  */
+const COLUMN_TYPES = [
+  'TEXT', 'LONG_TEXT', 'EMAIL', 'NUMBER', 'DATE', 'DATETIME',
+  'CHECKBOX', 'SINGLE_SELECT', 'MULTI_SELECT', 'URL', 'STATUS',
+];
+
 export function DataGrid({
   columns,
   records,
   onCellCommit,
   onDeleteRow,
+  onColumnTypeChange,
 }: {
   columns: GridColumn[];
   records: GridRecord[];
   onCellCommit: (recordId: string, key: string, value: string) => Promise<void>;
   onDeleteRow: (recordId: string) => Promise<void>;
+  /** Import type-inference can guess wrong; this is how a user corrects it. */
+  onColumnTypeChange?: (columnId: string, type: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState<{ row: string; col: string } | null>(null);
   const [draft, setDraft] = useState('');
@@ -52,8 +60,21 @@ export function DataGrid({
             <th className="grid-cell w-8 text-center text-xs text-muted-foreground">#</th>
             {visible.map((col) => (
               <th key={col.id} className="grid-cell text-left text-xs font-medium">
-                {col.label}
-                <span className="ml-1 text-[10px] font-normal text-muted-foreground">{col.type}</span>
+                <div>{col.label}</div>
+                {onColumnTypeChange ? (
+                  <select
+                    value={col.type}
+                    onChange={(e) => onColumnTypeChange(col.id, e.target.value)}
+                    className="mt-0.5 rounded border bg-card px-1 py-0.5 text-[10px] font-normal"
+                    title="Column type — set the address column to EMAIL to enable sending"
+                  >
+                    {COLUMN_TYPES.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="ml-1 text-[10px] font-normal text-muted-foreground">{col.type}</span>
+                )}
               </th>
             ))}
             <th className="grid-cell text-left text-xs font-medium">Email Status</th>

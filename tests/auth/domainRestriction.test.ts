@@ -190,13 +190,19 @@ describe('adapter.createUser — provisioning', () => {
 });
 
 describe('events.signIn — records sign-in metadata', () => {
+  function fireSignIn(mod: any, email: string, providerAccountId?: string) {
+    return mod.authOptions.events.signIn({
+      user: { id: 'u1', email },
+      account: providerAccountId
+        ? { provider: 'google', type: 'oauth', providerAccountId }
+        : null,
+    });
+  }
+
   it('stores lastLoginAt and backfills googleId from the linked account', async () => {
     const { mod, prisma } = await load(undefined);
     (prisma.user.update as any).mockResolvedValue({});
-    await mod.authOptions.events.signIn({
-      user: { email: 'Existing@Gmail.com' },
-      account: { providerAccountId: 'google-sub-123' },
-    });
+    await fireSignIn(mod, 'Existing@Gmail.com', 'google-sub-123');
     const call = (prisma.user.update as any).mock.calls[0][0];
     expect(call.where).toEqual({ email: 'existing@gmail.com' });
     expect(call.data.googleId).toBe('google-sub-123');
@@ -206,9 +212,7 @@ describe('events.signIn — records sign-in metadata', () => {
   it('never fails a successful login over bookkeeping', async () => {
     const { mod, prisma } = await load(undefined);
     (prisma.user.update as any).mockRejectedValue(new Error('db down'));
-    await expect(
-      mod.authOptions.events.signIn({ user: { email: 'a@gmail.com' }, account: null })
-    ).resolves.toBeUndefined();
+    await expect(fireSignIn(mod, 'a@gmail.com')).resolves.toBeUndefined();
   });
 });
 

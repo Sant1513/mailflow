@@ -69,6 +69,25 @@ export default function DatasetDetailPage() {
     load();
   }
 
+  async function handleColumnTypeChange(columnId: string, type: string) {
+    const res = await fetch(`/api/datasets/${params.id}/columns/${columnId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      toast.error(json.error ?? 'Failed to change column type');
+      return;
+    }
+    toast.success(
+      json.contactsLinked
+        ? `Column set to ${type} — ${json.contactsLinked} contact(s) linked.`
+        : `Column set to ${type}.`
+    );
+    load();
+  }
+
   async function handleAddColumn() {
     const label = prompt('Column name');
     if (!label) return;
@@ -112,6 +131,7 @@ export default function DatasetDetailPage() {
           records={detail.records}
           onCellCommit={handleCellCommit}
           onDeleteRow={handleDeleteRow}
+          onColumnTypeChange={handleColumnTypeChange}
         />
       </div>
 
