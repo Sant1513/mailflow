@@ -2,7 +2,31 @@ import { PrismaClient, ColumnType, Role } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN ?? 'masaischool.com';
+/**
+ * Mirrors allowedDomain() in lib/auth/options.ts. Note the trim/empty check:
+ * "?? 'masaischool.com'" was wrong, because ?? only falls back on
+ * null/undefined and open signup sets ALLOWED_EMAIL_DOMAIN="". That keyed an
+ * organization on the empty string and silently created a SECOND org.
+ */
+function allowedDomain(): string | null {
+  const configured = process.env.ALLOWED_EMAIL_DOMAIN?.trim();
+  return configured ? configured.toLowerCase() : null;
+}
+
+/** Same resolution rule as auth: with open signup, reuse the existing org. */
+async function resolveOrganization() {
+  const restriction = allowedDomain();
+  if (restriction) {
+    return prisma.organization.upsert({
+      where: { allowedDomain: restriction },
+      update: {},
+      create: { name: 'Masai School', allowedDomain: restriction },
+    });
+  }
+  const existing = await prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
+  if (existing) return existing;
+  return prisma.organization.create({ data: { name: 'MailFlow', allowedDomain: '*' } });
+}
 
 /**
  * Seeds the Organization and a sample dataset (§122). Does NOT create fake
@@ -11,11 +35,7 @@ const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN ?? 'masaischool.com';
  * then run: npx tsx prisma/seed.ts --promote you@masaischool.com
  */
 async function main() {
-  const org = await prisma.organization.upsert({
-    where: { allowedDomain: ALLOWED_DOMAIN },
-    update: {},
-    create: { name: 'Masai School', allowedDomain: ALLOWED_DOMAIN },
-  });
+  const org = await resolveOrganization();
   console.log(`Organization ready: ${org.name} (${org.id})`);
 
   const promoteFlagIdx = process.argv.indexOf('--promote');
