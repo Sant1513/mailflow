@@ -35,7 +35,11 @@ export function GmailPanel() {
     const ok = params.get('gmail');
     const error = params.get('gmailError');
     if (ok?.startsWith('connected:')) toast.success(`Gmail connected: ${ok.slice('connected:'.length)}`);
-    if (error) toast.error(error);
+    // A connection failure can carry an instruction with a URL in it (e.g.
+    // "enable the Gmail API at ..."), so it must stay on screen until
+    // dismissed — a 4-second toast is not enough time to read, let alone
+    // act on, a link.
+    if (error) toast.error(error, { duration: Infinity, closeButton: true });
   }, [params]);
 
   async function disconnect() {

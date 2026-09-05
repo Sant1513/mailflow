@@ -59,8 +59,32 @@ export const GET = withErrorHandling(async (req) => {
   // Identify the mailbox we were actually granted access to.
   client.setCredentials(tokens);
   const gmail = google.gmail({ version: 'v1', auth: client });
-  const profile = await gmail.users.getProfile({ userId: 'me' });
-  const emailAddress = profile.data.emailAddress ?? '';
+  let emailAddress = '';
+  try {
+    const profile = await gmail.users.getProfile({ userId: 'me' });
+    emailAddress = profile.data.emailAddress ?? '';
+  } catch (err) {
+    // This is the first Gmail API call in the whole flow, so it is where a
+    // Google Cloud project misconfiguration surfaces. The consent itself
+    // succeeded; the tokens are simply not usable yet. Send the user back
+    // to Settings with the exact fix instead of a raw JSON 500 — an
+    // operator saw that raw page and could not tell whether consent had
+    // worked at all.
+    const message = (err as Error).message ?? String(err);
+    const projectMatch = message.match(/project\s+(\d+)/);
+    if (/has not been used in project|is disabled|accessNotConfigured|SERVICE_DISABLED/i.test(message)) {
+      const project = projectMatch?.[1];
+      const enableUrl = project
+        ? `https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=${project}`
+        : 'https://console.cloud.google.com/apis/library/gmail.googleapis.com';
+      return settingsRedirect(
+        `Consent succeeded, but the Gmail API is not enabled in your Google Cloud project. Enable it at ${enableUrl}, wait a minute, then click Connect Gmail again.`,
+        false
+      );
+    }
+    console.error('[gmail] getProfile failed after consent', message);
+    return settingsRedirect(`Google accepted the connection but the mailbox could not be read: ${message}`, false);
+  }
 
   // §28: the connected mailbox must be the signed-in user's own account.
   // Connecting somebody else's mailbox — even with their consent screen —
