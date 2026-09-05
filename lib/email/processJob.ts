@@ -85,6 +85,7 @@ export async function processEmailJob(
       bcc: job.bccEmails,
       fromName: job.fromName,
       fromEmail: job.fromEmail,
+      replyTo: job.replyTo ?? undefined,
       subject: job.subject,
       html: job.html,
       plainText: job.plainText,

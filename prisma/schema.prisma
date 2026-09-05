@@ -425,6 +425,14 @@ model Campaign {
   templateVersionId String
   automationId      String?
   senderAccountId   String?
+  // §22 sender/recipient settings. The From ADDRESS is never configurable —
+  // it is pinned to the connected mailbox (§28) — but the display name,
+  // Reply-To and Cc/Bcc are. Cc/Bcc are added to every message in the
+  // campaign, so they are for supervisors/archives, not per-recipient.
+  fromName          String?
+  replyTo           String?
+  ccEmails          String[]
+  bccEmails         String[]
   status            CampaignStatus @default(DRAFT)
   scheduledAt       DateTime?
   timezone          String         @default("Asia/Kolkata")
@@ -523,6 +531,7 @@ model EmailJob {
   bccEmails  String[]
   fromName   String
   fromEmail  String
+  replyTo    String?
   subject    String
   html       String   @db.Text
   plainText  String?  @db.Text

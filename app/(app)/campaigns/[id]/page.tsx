@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { SenderSettings } from '@/components/campaign/SenderSettings';
+import { CampaignReview, type CampaignPreview } from '@/components/campaign/CampaignReview';
 
 interface Simulation {
   total: number;
@@ -40,6 +42,8 @@ export default function CampaignDetailPage() {
   const [validation, setValidation] = useState<any>(null);
   const [batch, setBatch] = useState<any>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [preview, setPreview] = useState<CampaignPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/campaigns/${params.id}`);
@@ -66,6 +70,32 @@ export default function CampaignDetailPage() {
   useEffect(() => {
     loadBatch();
   }, [loadBatch]);
+
+  const loadPreview = useCallback(
+    async (recordId?: string) => {
+      setPreviewLoading(true);
+      const res = await fetch(`/api/campaigns/${params.id}/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(recordId ? { recordId } : {}),
+      });
+      setPreviewLoading(false);
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error ?? 'Could not build the preview');
+        return;
+      }
+      setPreview(json);
+    },
+    [params.id]
+  );
+
+  // The review is the point of this screen, so load it up front rather than
+  // making the operator ask for it before sending.
+  useEffect(() => {
+    if (data) loadPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.campaign?.id]);
 
   async function runSimulation() {
     setBusy('simulate');
@@ -225,6 +255,40 @@ export default function CampaignDetailPage() {
           </button>
         )}
       </div>
+
+      {/* §22 sender settings */}
+      <div className="mb-6">
+        <SenderSettings
+          campaignId={campaign.id}
+          initial={{
+            fromName: campaign.fromName ?? null,
+            replyTo: campaign.replyTo ?? null,
+            cc: campaign.ccEmails ?? [],
+            bcc: campaign.bccEmails ?? [],
+          }}
+          senderEmail={data.sender?.emailAddress ?? null}
+          senderStatus={data.sender?.status ?? null}
+          locked={['RUNNING', 'COMPLETED', 'PARTIALLY_FAILED', 'CANCELLED'].includes(campaign.status)}
+          onSaved={() => {
+            load();
+            loadPreview(preview?.preview?.recordId);
+          }}
+        />
+      </div>
+
+      {/* §113 pre-send review */}
+      {preview && (
+        <div className="mb-6">
+          <h2 className="mb-2 text-sm font-semibold">
+            Review — nothing has been sent
+          </h2>
+          <CampaignReview
+            data={preview}
+            loadingRecipient={previewLoading}
+            onSelectRecipient={(recordId) => loadPreview(recordId)}
+          />
+        </div>
+      )}
 
       {campaign.rejectionReason && (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">

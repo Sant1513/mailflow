@@ -142,12 +142,14 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
           emailProviderAccountId: sender.id,
           status: EmailJobStatus.QUEUED,
           toEmail: evaluation.email!,
-          ccEmails: [],
-          bccEmails: [],
+          // Campaign-level Cc/Bcc go on every message (§22).
+          ccEmails: campaign.ccEmails,
+          bccEmails: campaign.bccEmails,
           // §30 sender snapshot — immutable, even if the user later renames
           // themselves or disconnects the account.
-          fromName: sender.displayName ?? campaign.createdBy.name,
+          fromName: campaign.fromName?.trim() || sender.displayName || campaign.createdBy.name,
           fromEmail: sender.emailAddress,
+          replyTo: campaign.replyTo,
           subject: rendered.subject,
           html,
           plainText: rendered.plainText,
