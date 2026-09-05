@@ -63,11 +63,34 @@ export class GmailProvider implements EmailProvider {
         throw new SendEmailError('Gmail accepted the request but returned no message id.', 'UNKNOWN');
       }
 
+      // Gmail REPLACES the Message-ID we put in the MIME with one of its
+      // own (<...@mail.gmail.com>) on send. A recipient's reply cites
+      // Gmail's ID in In-Reply-To, so storing ours would leave threading
+      // by Message-ID silently dead and put a phantom ID into every
+      // References chain. Read the real header back; it costs one cheap
+      // metadata GET per send. Found only by a live round-trip — the fake
+      // provider preserved the ID and hid this.
+      let finalMessageId = messageIdHeader;
+      try {
+        const sent = await gmail.users.messages.get({
+          userId: 'me',
+          id: data.id,
+          format: 'metadata',
+          metadataHeaders: ['Message-Id'],
+        });
+        const real = sent.data.payload?.headers?.find((h) => (h.name ?? '').toLowerCase() === 'message-id')?.value;
+        if (real) finalMessageId = real.trim();
+      } catch (readErr) {
+        // The send already succeeded; a failed read-back must not turn it
+        // into a failure. Keep our ID and say so.
+        console.warn('[gmail] could not read back Message-Id after send; keeping generated id', (readErr as Error).message);
+      }
+
       return {
         providerMessageId: data.id,
         threadId: data.threadId ?? null,
-        messageIdHeader,
-        raw: { labelIds: data.labelIds, internalDate: data.internalDate },
+        messageIdHeader: finalMessageId,
+        raw: { labelIds: data.labelIds, internalDate: data.internalDate, generatedMessageId: messageIdHeader },
       };
     } catch (err) {
       throw await this.translateError(err);

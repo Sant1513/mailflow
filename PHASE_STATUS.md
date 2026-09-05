@@ -10,7 +10,7 @@
 
 | Suite | Count | Result |
 | --- | --- | --- |
-| Unit tests (`npm test`) | 270 | ✅ pass |
+| Unit tests (`npm test`) | 276 | ✅ pass |
 | Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
 | Send pipeline, live DB + fake provider (`scripts/smoke-test-send.ts`) | 35 | ✅ pass |
 | Automation engine, live DB (`scripts/smoke-test-automation.ts`) | 28 | ✅ pass |
@@ -20,10 +20,25 @@
 | Deployment verification (`scripts/verify-deployment.ts`) | 19 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
-Google sign-in is verified end-to-end with a real account. Gmail **send/sync**
-is verified only through the fake provider/source: no real Gmail account has
-been connected yet, so no real email has been sent or received. The code path
-is exercised; the Google round-trip is not.
+**The full loop is verified against real Gmail** (5 Sep 2026, mailbox
+`abhishesh.kumar@masaischool.com`): a campaign email was sent through the
+real pipeline (Gmail id `1a0739611a8fe148`), the recipient's real reply was
+synced into the Inbox (scan path on the first run, then the `history.list`
+path with a persisted cursor on the second, both against the live mailbox),
+and an in-thread reply was sent from the app's composer with a correct
+three-message `References` chain. Scope held on a real mailbox: 1 of 100
+recent messages ingested, 99 ignored.
+
+That round-trip exposed one real bug the fake provider had hidden: **Gmail
+replaces the MIME `Message-ID` on send** with its own `<…@mail.gmail.com>`
+value, so we were storing an ID no reply would ever cite. Threading survived
+only via the thread-id match. `GmailProvider` now reads the assigned
+Message-Id back after every send (`tests/email/gmailProvider.test.ts`), and
+the one pre-fix message was backfilled.
+
+Not yet exercised live: Pub/Sub push delivery (`GMAIL_PUBSUB_TOPIC` unset;
+Sync Now and the webhook path are tested with a fake source), and attachment
+byte download.
 
 Honest, current status of the spec's §138 phases. "Done" means: real DB-backed
 API route + UI calling it + server-side authorization + (where practical) a
@@ -127,7 +142,7 @@ today. Charts, retention policy config, and the "view as" banner are not.
 ---
 
 ### Immediate next steps (in order)
-1. **Connect a real Gmail account** and run `scripts/send-test-batch.ts` — the one remaining unverified link is the Google round-trip itself.
+1. ~~Connect a real Gmail account and verify the Google round-trip~~ — **done**: real send, real inbound sync (scan + history paths), real in-thread reply, all against the live mailbox.
 2. Phase 6: organization analytics (emails by day, replies by day, failure rate), the "view as" banner, retention policy.
 3. Phase 7: `AIProvider` + `GeminiProvider` with per-user/org rate limits; reply suggestion, summary, classification behind the header-first classifier.
 4. Close out Phase 1: saved views, filter/sort/group, bulk edit on the grid.
