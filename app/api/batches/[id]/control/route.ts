@@ -22,7 +22,7 @@ const controlSchema = z.object({
  */
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const batch = await loadBatchForSession(session, params.id);
   if (!batch) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

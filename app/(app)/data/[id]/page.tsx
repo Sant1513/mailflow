@@ -69,6 +69,25 @@ export default function DatasetDetailPage() {
     load();
   }
 
+  async function handleColumnTypeChange(columnId: string, type: string) {
+    const res = await fetch(`/api/datasets/${params.id}/columns/${columnId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      toast.error(json.error ?? 'Failed to change column type');
+      return;
+    }
+    toast.success(
+      json.contactsLinked
+        ? `Column set to ${type} — ${json.contactsLinked} contact(s) linked.`
+        : `Column set to ${type}.`
+    );
+    load();
+  }
+
   async function handleAddColumn() {
     const label = prompt('Column name');
     if (!label) return;
@@ -97,10 +116,10 @@ export default function DatasetDetailPage() {
           <p className="text-sm text-muted-foreground">{detail.total} records · {detail.columns.length} columns</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleAddColumn} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+          <button onClick={handleAddColumn} className="btn-secondary">
             + Column
           </button>
-          <button onClick={handleAddRow} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+          <button onClick={handleAddRow} className="btn-secondary">
             + Row
           </button>
         </div>
@@ -112,6 +131,7 @@ export default function DatasetDetailPage() {
           records={detail.records}
           onCellCommit={handleCellCommit}
           onDeleteRow={handleDeleteRow}
+          onColumnTypeChange={handleColumnTypeChange}
         />
       </div>
 

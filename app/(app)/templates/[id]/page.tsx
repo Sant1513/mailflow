@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { EmailPreview } from '@/components/email-preview/EmailPreview';
 import { HealthCheckPanel, type HealthCheckResult } from '@/components/email-editor/HealthCheckPanel';
 import { VariableMenu } from '@/components/email-editor/VariableMenu';
+import { AiWriter } from '@/components/ai/AiWriter';
 
 // CodeMirror touches `document` on load, so it must not be server-rendered.
 const CodeEditor = dynamic(() => import('@/components/email-editor/CodeEditor').then((m) => m.CodeEditor), {
@@ -188,18 +189,18 @@ export default function TemplateEditorPage() {
             <div className="text-sm font-semibold">{template.name}</div>
             <div className="text-xs text-muted-foreground">
               {latest ? `v${latest.version} saved ${new Date(latest.createdAt).toLocaleString()}` : 'unsaved'}
-              {dirty && <span className="ml-2 text-amber-600">● unsaved changes</span>}
+              {dirty && <span className="ml-2 text-warning">● unsaved changes</span>}
             </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={runHealthCheck} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+          <button onClick={runHealthCheck} className="btn-secondary">
             Run health check
           </button>
           <button
             onClick={saveVersion}
             disabled={saving || !dirty}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+            className="btn-primary"
           >
             {saving ? 'Saving…' : 'Save new version'}
           </button>
@@ -250,8 +251,18 @@ export default function TemplateEditorPage() {
 
           <VariableMenu columns={datasetColumns} onInsert={insertVariable} />
 
+          <AiWriter
+            subject={subject}
+            html={html}
+            variables={datasetColumns}
+            onApply={(patch) => {
+              if (patch.subject !== undefined) setSubject(patch.subject);
+              if (patch.html !== undefined) setHtml(patch.html);
+            }}
+          />
+
           {preview && preview.missingVariables.length > 0 && (
-            <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
               <div className="font-medium">Unresolved variables</div>
               <div>{preview.missingVariables.map((v) => `{{${v}}}`).join(', ')}</div>
             </div>
@@ -264,7 +275,7 @@ export default function TemplateEditorPage() {
                 {Object.entries(preview.resolved).map(([k, v]) => (
                   <div key={k} className="flex gap-1">
                     <dt className="shrink-0 font-mono text-muted-foreground">{`{{${k}}}`}</dt>
-                    <dd className="truncate">→ {v || <span className="italic text-amber-700">empty</span>}</dd>
+                    <dd className="truncate">→ {v || <span className="italic text-warning">empty</span>}</dd>
                   </div>
                 ))}
               </dl>
@@ -336,7 +347,7 @@ export default function TemplateEditorPage() {
                 setCss(v.css ?? '');
                 toast.info(`Loaded v${v.version} into the editor — saving creates a new version, v${(latest?.version ?? 0) + 1}.`);
               }}
-              className="shrink-0 rounded border px-2 py-1 hover:bg-muted"
+              className="shrink-0 rounded border px-2 py-1 hover:bg-elevated"
               title={new Date(v.createdAt).toLocaleString()}
             >
               v{v.version}

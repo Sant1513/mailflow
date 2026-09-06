@@ -85,6 +85,7 @@ export async function processEmailJob(
       bcc: job.bccEmails,
       fromName: job.fromName,
       fromEmail: job.fromEmail,
+      replyTo: job.replyTo ?? undefined,
       subject: job.subject,
       html: job.html,
       plainText: job.plainText,
@@ -169,6 +170,10 @@ export async function processEmailJob(
             references: buildReferences(null, result.messageIdHeader),
             // §89: an immutable snapshot of exactly what was sent. Never
             // re-rendered from the current template later.
+            // The inbox list shows the latest message's snippet, so an
+            // outbound message without one rendered the literal string
+            // "undefined" whenever a campaign email was the last thing sent.
+            snippet: (job.plainText ?? job.html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 200),
             htmlBody: job.html,
             plainTextBody: job.plainText,
             sentAt: new Date(),

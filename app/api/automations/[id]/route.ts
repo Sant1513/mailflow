@@ -18,7 +18,7 @@ const patchSchema = z.object({ name: z.string().min(1).max(200).optional() });
 
 export const PATCH = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const automation = await loadAutomationForSession(session, params.id);
   if (!automation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -30,7 +30,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
 
 export const DELETE = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const automation = await loadAutomationForSession(session, params.id);
   if (!automation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

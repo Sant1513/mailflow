@@ -24,16 +24,24 @@ export interface GridRecord {
  * virtualized yet (fine at hundreds of rows; §135 flags this as a Phase 8
  * follow-up once datasets regularly exceed a few thousand rows).
  */
+const COLUMN_TYPES = [
+  'TEXT', 'LONG_TEXT', 'EMAIL', 'NUMBER', 'DATE', 'DATETIME',
+  'CHECKBOX', 'SINGLE_SELECT', 'MULTI_SELECT', 'URL', 'STATUS',
+];
+
 export function DataGrid({
   columns,
   records,
   onCellCommit,
   onDeleteRow,
+  onColumnTypeChange,
 }: {
   columns: GridColumn[];
   records: GridRecord[];
   onCellCommit: (recordId: string, key: string, value: string) => Promise<void>;
   onDeleteRow: (recordId: string) => Promise<void>;
+  /** Import type-inference can guess wrong; this is how a user corrects it. */
+  onColumnTypeChange?: (columnId: string, type: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState<{ row: string; col: string } | null>(null);
   const [draft, setDraft] = useState('');
@@ -52,8 +60,21 @@ export function DataGrid({
             <th className="grid-cell w-8 text-center text-xs text-muted-foreground">#</th>
             {visible.map((col) => (
               <th key={col.id} className="grid-cell text-left text-xs font-medium">
-                {col.label}
-                <span className="ml-1 text-[10px] font-normal text-muted-foreground">{col.type}</span>
+                <div>{col.label}</div>
+                {onColumnTypeChange ? (
+                  <select
+                    value={col.type}
+                    onChange={(e) => onColumnTypeChange(col.id, e.target.value)}
+                    className="mt-0.5 rounded border bg-card px-1 py-0.5 text-[10px] font-normal"
+                    title="Column type — set the address column to EMAIL to enable sending"
+                  >
+                    {COLUMN_TYPES.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="ml-1 text-[10px] font-normal text-muted-foreground">{col.type}</span>
+                )}
               </th>
             ))}
             <th className="grid-cell text-left text-xs font-medium">Email Status</th>
@@ -63,7 +84,7 @@ export function DataGrid({
         </thead>
         <tbody>
           {records.map((record, i) => (
-            <tr key={record.id} className="hover:bg-muted/40">
+            <tr key={record.id} className="hover:bg-elevated/60">
               <td className="grid-cell text-center text-xs text-muted-foreground">{i + 1}</td>
               {visible.map((col) => {
                 const isEditing = editing?.row === record.id && editing.col === col.key;
@@ -126,9 +147,9 @@ function StatusBadge({ status }: { status: string | null }) {
   }
   const color =
     status === 'SENT'
-      ? 'bg-green-100 text-green-800'
+      ? 'bg-success/15 text-success'
       : status === 'FAILED'
-        ? 'bg-red-100 text-red-800'
-        : 'bg-yellow-100 text-yellow-800';
+        ? 'bg-destructive/15 text-primary'
+        : 'bg-warning/15 text-warning';
   return <span className={`rounded px-1.5 py-0.5 text-xs ${color}`}>{status}</span>;
 }

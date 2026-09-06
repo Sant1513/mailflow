@@ -121,7 +121,12 @@ Workspace model note: the spec asks for per-user workspaces conceptually
 implements: one `Workspace` per `User` at creation (their personal
 operational space), `WorkspaceMember` join table so a workspace *can* later
 have multiple members without a schema change, and Super Admin cross-workspace
-access via the audited "View as" flow (§9/§128).
+access via the audited "View as" flow (§9/§128). "View as" is a signed,
+HttpOnly, 4-hour cookie (`lib/auth/viewAs.ts`) that `requireSession` resolves
+into `session.workspaceId` + `session.viewingAs` — after re-checking on every
+request that the workspace is in the admin's organization — so pages and API
+routes are scoped by exactly one code path. It is read-only: `requireCanWrite`
+takes the whole session and refuses mutations while `viewingAs` is set.
 
 ## 5. Gmail OAuth Architecture
 
@@ -334,3 +339,30 @@ until it has a working DB-backed API route, a UI that calls it, and
 server-side authorization — per §139/§140, no fake functionality: an
 unfinished feature is left visibly marked "Not yet implemented" in the UI
 and in `PHASE_STATUS.md`, never faked.
+
+## AI Assistant (Phase 7)
+
+- **One provider seam.** `lib/ai/types.ts` defines `AIProvider` (§83);
+  `lib/ai/gemini.ts` is the only implementation today. It talks to the public
+  Generative Language REST API directly (no SDK), asks for JSON via a response
+  schema so every feature returns typed data, and owns timeout, retry with
+  backoff and 429 handling. Adding OpenAI/Anthropic means one new class.
+- **One policy seam.** `lib/ai/service.ts#runAiFeature` is the only way the
+  app invokes a provider. It checks `AI_ENABLED`, key presence, the per-user
+  and per-organisation daily limits (`lib/ai/limits.ts`, IST days), runs the
+  call, logs an `AiUsage` row whether it succeeded or not, and maps every
+  failure to `{ ok: false, code, message }`. Nothing upstream ever sees an
+  exception from the AI (§82: "do not fail the entire application because
+  AI is unavailable"). Note the count query spells out `errorReason: null`
+  — Prisma `notIn` excludes NULLs, and successful rows are NULL.
+- **Minimum context (§81).** `lib/ai/prompts.ts` builds every prompt from
+  already-minimised input: the last 8 turns, quoted tails and signatures
+  stripped, addresses and phone numbers redacted, first names only. Loaders
+  in `lib/ai/context.ts` run *after* the route has verified the row is in the
+  caller's workspace.
+- **Suggestions, never actions (§77–§80).** Every output lands in an editor
+  or a panel behind an explicit Insert / Apply / Mark-as button. The AI reply
+  intent is stored in separate `aiIntent*` columns beside the header-first
+  classification and drives no record, status or automation.
+- **Endpoint.** `POST /api/ai` with a discriminated `action`; `GET /api/ai`
+  reports enabled/model/usage for the "AI usage today: N / limit" line.

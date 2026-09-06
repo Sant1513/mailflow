@@ -1,0 +1,14 @@
+# Build outputs. Vercel excludes .next by default but not our isolated
+# verification dist dir, which is ~450MB — uploading it aborts the deploy.
+.next
+.next-verify
+
+# Never needed by the build, and some are large or sensitive.
+node_modules
+.git
+tests
+scripts
+coverage
+*.log
+.env
+.env.local

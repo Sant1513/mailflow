@@ -35,7 +35,11 @@ export function GmailPanel() {
     const ok = params.get('gmail');
     const error = params.get('gmailError');
     if (ok?.startsWith('connected:')) toast.success(`Gmail connected: ${ok.slice('connected:'.length)}`);
-    if (error) toast.error(error);
+    // A connection failure can carry an instruction with a URL in it (e.g.
+    // "enable the Gmail API at ..."), so it must stay on screen until
+    // dismissed — a 4-second toast is not enough time to read, let alone
+    // act on, a link.
+    if (error) toast.error(error, { duration: Infinity, closeButton: true });
   }, [params]);
 
   async function disconnect() {
@@ -58,7 +62,7 @@ export function GmailPanel() {
       {account ? (
         <div className="mb-3 rounded-md border bg-muted/40 p-3 text-sm">
           <div className="flex items-center gap-2">
-            <span className={connected ? 'text-green-700' : 'text-amber-700'}>
+            <span className={connected ? 'text-success' : 'text-warning'}>
               {connected ? '✓ Connected' : `⚠ ${account.status}`}
             </span>
             <span className="font-medium">{account.emailAddress}</span>
@@ -69,7 +73,7 @@ export function GmailPanel() {
             </div>
           )}
           {!connected && (
-            <div className="mt-2 text-xs text-amber-800">
+            <div className="mt-2 text-xs text-warning">
               This connection needs to be re-authorized before campaigns can send.
             </div>
           )}
@@ -81,12 +85,12 @@ export function GmailPanel() {
       <div className="flex gap-2">
         <a
           href="/api/gmail/connect"
-          className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
+          className="btn-primary"
         >
           {account ? 'Reconnect' : 'Connect Gmail'}
         </a>
         {account && (
-          <button onClick={disconnect} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+          <button onClick={disconnect} className="btn-secondary">
             Disconnect
           </button>
         )}

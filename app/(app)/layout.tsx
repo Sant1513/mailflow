@@ -1,19 +1,21 @@
 import { redirect } from 'next/navigation';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/options';
+import { getOptionalSession } from '@/lib/auth/session';
 import { AppNav } from '@/components/nav/AppNav';
+import { ViewAsBanner } from '@/components/nav/ViewAsBanner';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) redirect('/login');
-  const user = session.user as any;
+  // Resolved server-side, including any §9 "view as" scope, so the banner
+  // is driven by the same session every page and API route sees.
+  const session = await getOptionalSession();
+  if (!session) redirect('/login');
 
   return (
     <div className="flex min-h-screen">
-      <AppNav
-        user={{ name: user.name, email: user.email, image: user.image, role: user.role }}
-      />
-      <main className="flex-1 overflow-x-hidden bg-muted/30">{children}</main>
+      <AppNav user={{ name: session.name, email: session.email, image: null, role: session.role }} />
+      <div className="flex min-w-0 flex-1 flex-col">
+        {session.viewingAs && <ViewAsBanner viewingAs={session.viewingAs} />}
+        <main className="flex-1 overflow-x-hidden bg-background">{children}</main>
+      </div>
     </div>
   );
 }

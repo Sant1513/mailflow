@@ -110,7 +110,7 @@ export function ConditionBuilder({
         </div>
       )}
 
-      <button onClick={addRule} className="mt-2 rounded border px-2 py-1 text-xs hover:bg-muted">
+      <button onClick={addRule} className="mt-2 rounded border px-2 py-1 text-xs hover:bg-elevated">
         + Add condition
       </button>
     </div>

@@ -59,12 +59,12 @@ export default function DataPage() {
           <p className="text-sm text-muted-foreground">Datasets are collections of records — the spreadsheet layer.</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={createEmptyDataset} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+          <button onClick={createEmptyDataset} className="btn-secondary">
             + New empty dataset
           </button>
           <button
             onClick={() => setImportOpen(true)}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
+            className="btn-primary"
           >
             Import data
           </button>
@@ -90,7 +90,7 @@ export default function DataPage() {
             </thead>
             <tbody>
               {datasets.map((d) => (
-                <tr key={d.id} className="border-t hover:bg-muted/50">
+                <tr key={d.id} className="border-t hover:bg-elevated/60">
                   <td className="px-4 py-2">
                     <Link href={`/data/${d.id}`} className="font-medium text-primary hover:underline">
                       {d.name}

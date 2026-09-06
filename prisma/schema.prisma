@@ -42,15 +42,22 @@ model Organization {
   auditLogs   AuditLog[]
   contacts    Contact[]
   aiUsage     AiUsage[]
+  retentionPolicy RetentionPolicy?
 }
 
 model User {
   id              String     @id @default(cuid())
   organizationId  String
-  googleId        String     @unique
+  // Optional: the authoritative Google subject lives in Account.providerAccountId.
+  // NextAuth's adapter creates the User before any account is linked, so this
+  // cannot be required — making it so broke sign-in with OAuthAccountNotLinked.
+  googleId        String?    @unique
   email           String     @unique
   name            String
-  profileImage    String?
+  // `image` and `emailVerified` are the field names NextAuth's PrismaAdapter
+  // writes. They must exist with these exact names or adapter.createUser fails.
+  image           String?
+  emailVerified   DateTime?
   role            Role       @default(OPERATOR)
   status          UserStatus @default(ACTIVE)
   createdAt       DateTime   @default(now())
@@ -419,6 +426,14 @@ model Campaign {
   templateVersionId String
   automationId      String?
   senderAccountId   String?
+  // §22 sender/recipient settings. The From ADDRESS is never configurable —
+  // it is pinned to the connected mailbox (§28) — but the display name,
+  // Reply-To and Cc/Bcc are. Cc/Bcc are added to every message in the
+  // campaign, so they are for supervisors/archives, not per-recipient.
+  fromName          String?
+  replyTo           String?
+  ccEmails          String[]
+  bccEmails         String[]
   status            CampaignStatus @default(DRAFT)
   scheduledAt       DateTime?
   timezone          String         @default("Asia/Kolkata")
@@ -517,6 +532,7 @@ model EmailJob {
   bccEmails  String[]
   fromName   String
   fromEmail  String
+  replyTo    String?
   subject    String
   html       String   @db.Text
   plainText  String?  @db.Text
@@ -678,6 +694,10 @@ model ConversationMessage {
   direction       MessageDirection
   classification  MessageClassification @default(UNKNOWN)
   classificationConfidence Float?
+  // §80 AI intent — stored beside the header-first classification, never in place of it.
+  aiIntent           String?
+  aiIntentConfidence Float?
+  aiIntentReason     String?
   senderEmail     String
   senderName      String?
   recipientEmail  String
@@ -838,4 +858,29 @@ model AiUsage {
 
   @@index([userId, createdAt])
   @@index([organizationId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// RETENTION (§130)
+// ─────────────────────────────────────────────────────────────────────────
+
+// Per-organization retention policy. Null days = keep forever. Configuring
+// a policy never deletes anything by itself: enforcement is a separate,
+// explicit, audited step ("Do not delete historical communication
+// accidentally" — §130). This table records intent plus who set it.
+
+model RetentionPolicy {
+  id                        String   @id @default(cuid())
+  organizationId            String   @unique
+  // Strip stored HTML/plain bodies of inbound/outbound messages older than N days.
+  messageBodyDays           Int?
+  // Strip the rendered html/plainText snapshot of sent EmailJobs older than N days.
+  emailJobBodyDays          Int?
+  // Delete audit-log rows older than N days.
+  auditLogDays              Int?
+  updatedById               String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
 }
