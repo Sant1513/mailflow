@@ -694,6 +694,10 @@ model ConversationMessage {
   direction       MessageDirection
   classification  MessageClassification @default(UNKNOWN)
   classificationConfidence Float?
+  // §80 AI intent — stored beside the header-first classification, never in place of it.
+  aiIntent           String?
+  aiIntentConfidence Float?
+  aiIntentReason     String?
   senderEmail     String
   senderName      String?
   recipientEmail  String

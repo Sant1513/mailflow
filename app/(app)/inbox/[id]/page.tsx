@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { AiSummaryCard, ReplyAssistant } from '@/components/ai/ReplyAssistant';
 import { EmailPreview } from '@/components/email-preview/EmailPreview';
 
 const STATUSES = ['OPEN', 'IN_PROGRESS', 'WAITING_FOR_STUDENT', 'RESOLVED', 'CLOSED'];
@@ -158,6 +159,12 @@ export default function ConversationPage() {
 
   if (!data) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   const c = data.conversation;
+
+  // §80: the most recent inbound message's AI intent, if ingest or the user classified it.
+  const latestInbound = [...c.messages].reverse().find((m: any) => m.direction === 'INBOUND' && m.aiIntent);
+  const latestIntent = latestInbound
+    ? { intent: latestInbound.aiIntent as string, confidence: latestInbound.aiIntentConfidence ?? 0, reason: latestInbound.aiIntentReason ?? '' }
+    : null;
 
   // Merge messages and notes into one chronological timeline (§50/§58).
   const timeline = [
@@ -323,6 +330,7 @@ export default function ConversationPage() {
               placeholder="CC (optional)"
               className="mb-2 w-full rounded border px-2 py-1 text-xs"
             />
+            <ReplyAssistant conversationId={c.id} onInsert={(text) => setReply(text)} />
             <textarea
               value={reply}
               onChange={(e) => setReply(e.target.value)}
@@ -347,6 +355,13 @@ export default function ConversationPage() {
 
         {/* RIGHT: notes + follow-ups */}
         <aside className="w-72 shrink-0 overflow-y-auto border-l bg-card p-3">
+          <AiSummaryCard
+            conversationId={c.id}
+            currentStatus={c.status}
+            onApplyStatus={(status) => patch({ status }, 'change status')}
+            latestIntent={latestIntent}
+          />
+
           <h2 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Internal note</h2>
           <textarea
             value={note}

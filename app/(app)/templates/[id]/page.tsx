@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { EmailPreview } from '@/components/email-preview/EmailPreview';
 import { HealthCheckPanel, type HealthCheckResult } from '@/components/email-editor/HealthCheckPanel';
 import { VariableMenu } from '@/components/email-editor/VariableMenu';
+import { AiWriter } from '@/components/ai/AiWriter';
 
 // CodeMirror touches `document` on load, so it must not be server-rendered.
 const CodeEditor = dynamic(() => import('@/components/email-editor/CodeEditor').then((m) => m.CodeEditor), {
@@ -249,6 +250,16 @@ export default function TemplateEditorPage() {
           )}
 
           <VariableMenu columns={datasetColumns} onInsert={insertVariable} />
+
+          <AiWriter
+            subject={subject}
+            html={html}
+            variables={datasetColumns}
+            onApply={(patch) => {
+              if (patch.subject !== undefined) setSubject(patch.subject);
+              if (patch.html !== undefined) setHtml(patch.html);
+            }}
+          />
 
           {preview && preview.missingVariables.length > 0 && (
             <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning">

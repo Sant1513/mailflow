@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { ExplainButton } from '@/components/ai/ExplainButton';
 import { SenderSettings } from '@/components/campaign/SenderSettings';
 import { CampaignReview, type CampaignPreview } from '@/components/campaign/CampaignReview';
 
@@ -371,7 +372,13 @@ export default function CampaignDetailPage() {
             <h2 className="text-sm font-semibold">
               Batch {latestBatch.label} — {latestBatch.status.replace(/_/g, ' ')}
             </h2>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <ExplainButton
+                request={{ action: 'summarize_campaign', campaignId: params.id as string }}
+                label="AI summary"
+                className="rounded border border-primary/40 px-2 py-1 text-xs text-primary hover:bg-primary/10"
+                compact
+              />
               <button onClick={drain} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-elevated">
                 {busy === 'drain' ? 'Sending…' : 'Process queue'}
               </button>
@@ -414,6 +421,7 @@ export default function CampaignDetailPage() {
                       <th className="px-2 py-1 text-left">To</th>
                       <th className="px-2 py-1 text-left">Status</th>
                       <th className="px-2 py-1 text-left">Detail</th>
+                      <th className="px-2 py-1" />
                     </tr>
                   </thead>
                   <tbody>
@@ -423,6 +431,9 @@ export default function CampaignDetailPage() {
                         <td className="px-2 py-1">{j.status}</td>
                         <td className="px-2 py-1 text-muted-foreground">
                           {j.errorMessage ?? j.skipReason ?? (j.gmailThreadId ? `thread ${j.gmailThreadId.slice(0, 10)}…` : '')}
+                        </td>
+                        <td className="relative px-2 py-1 text-right">
+                          <ExplainButton request={{ action: 'explain_send', emailJobId: j.id }} label="Why?" className="text-[11px] text-muted-foreground hover:text-primary" compact />
                         </td>
                       </tr>
                     ))}

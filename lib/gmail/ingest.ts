@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db/client';
 import { classifyInbound, countsAsReply } from '@/lib/conversations/classify';
+import { classifyStoredMessage } from '@/lib/ai/context';
 import { normalizeSubject, type ParsedMessage } from '@/lib/gmail/parseMessage';
 import { MessageDirection, MessageClassification, type EmailProviderAccount } from '@prisma/client';
 
@@ -219,6 +220,16 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   // default interactive-transaction timeout (P2028), which would drop
   // every inbound reply. The work is bounded, so a generous ceiling is safe.
   { timeout: 30_000, maxWait: 10_000 });
+
+  if (isReply) {
+    // §80 AI intent, stored beside the header-first result. Best effort:
+    // AI being off, over limit or slow never delays or fails ingestion.
+    await classifyStoredMessage(result.messageId, {
+      userId: account.userId,
+      organizationId: account.organizationId,
+      workspaceId: account.workspaceId,
+    });
+  }
 
   return { status: 'STORED', ...result, classification: cls.classification };
 }

@@ -2,6 +2,9 @@ import { requireSuperAdminPage } from '@/lib/auth/adminGuard';
 import { getOptionalSession } from '@/lib/auth/session';
 import { allowedDomain } from '@/lib/auth/options';
 import { RetentionPanel } from '@/components/admin/RetentionPanel';
+import { aiStatus } from '@/lib/ai/service';
+import { startOfTodayIst } from '@/lib/ai/limits';
+import { prisma } from '@/lib/db/client';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,12 +15,21 @@ export default async function AdminSystemSettingsPage() {
 
   const domain = allowedDomain();
   const rateLimit = process.env.EMAIL_RATE_LIMIT_PER_MINUTE ?? '';
-  const aiConfigured = Boolean(process.env.GEMINI_API_KEY);
+  const ai = aiStatus();
+  const aiConfigured = ai.configured;
+  const since = startOfTodayIst();
+  const [aiCallsToday, aiFailedToday] = await Promise.all([
+    prisma.aiUsage.count({ where: { organizationId: session!.organizationId, createdAt: { gte: since }, OR: [{ errorReason: null }, { errorReason: { notIn: ['LIMIT', 'DISABLED', 'NOT_CONFIGURED'] } }] } }),
+    prisma.aiUsage.count({ where: { organizationId: session!.organizationId, createdAt: { gte: since }, success: false } }),
+  ]);
 
   const runtime = [
     { label: 'Sign-in restriction', value: domain ? `@${domain} only` : 'Open — any Google account', env: 'ALLOWED_EMAIL_DOMAIN' },
     { label: 'Send rate limit', value: rateLimit ? `${rateLimit} emails / minute / mailbox` : 'Default', env: 'EMAIL_RATE_LIMIT_PER_MINUTE' },
-    { label: 'AI provider', value: aiConfigured ? 'Gemini key present' : 'Not configured (Phase 7)', env: 'GEMINI_API_KEY' },
+    { label: 'AI provider', value: aiConfigured ? `Gemini · ${ai.model}${ai.fallbackModels.length ? ` (falls back to ${ai.fallbackModels.join(', ')})` : ''}` : 'Not configured', env: 'GEMINI_API_KEY / GEMINI_MODEL / GEMINI_FALLBACK_MODELS' },
+    { label: 'AI enabled', value: ai.enabled ? (aiConfigured ? 'On' : 'On, but no key — features hidden') : 'Off (AI_ENABLED=false)', env: 'AI_ENABLED' },
+    { label: 'AI daily limits', value: `${ai.limits.userDaily} per user · ${ai.limits.orgDaily} per organisation`, env: 'AI_USER_DAILY_LIMIT / AI_ORG_DAILY_LIMIT' },
+    { label: 'AI usage today (org)', value: `${aiCallsToday} / ${ai.limits.orgDaily} requests · ${aiFailedToday} failed or refused`, env: 'AiUsage table' },
   ];
 
   return (

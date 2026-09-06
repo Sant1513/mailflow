@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { ExplainButton } from '@/components/ai/ExplainButton';
 import { ConditionBuilder, type Group } from '@/components/automation-builder/ConditionBuilder';
 
 const FREQUENCY_MODES = [
@@ -296,6 +297,7 @@ export default function AutomationBuilderPage() {
                   <th className="px-2 py-1 text-left">Trigger</th>
                   <th className="px-2 py-1 text-left">Result</th>
                   <th className="px-2 py-1 text-left">Action / reason</th>
+                  <th className="px-2 py-1" />
                 </tr>
               </thead>
               <tbody>
@@ -307,6 +309,9 @@ export default function AutomationBuilderPage() {
                       {run.result}
                     </td>
                     <td className="px-2 py-1 text-muted-foreground">{run.actionTaken ?? run.error ?? '—'}</td>
+                    <td className="relative px-2 py-1 text-right">
+                      <ExplainButton request={{ action: 'explain_automation', runId: run.id }} label="Why?" className="text-[11px] text-muted-foreground hover:text-primary" compact />
+                    </td>
                   </tr>
                 ))}
               </tbody>

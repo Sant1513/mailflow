@@ -6,11 +6,11 @@
 - **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
 - **Repo:** https://github.com/Sant1513/mailflow
 
-## Verification status (last run: 6 Sep 2026, after Phase 6)
+## Verification status (last run: 6 Sep 2026, after Phase 7)
 
 | Suite | Count | Result |
 | --- | --- | --- |
-| Unit tests (`npm test`) | 306 | ✅ pass |
+| Unit tests (`npm test`) | 347 | ✅ pass |
 | Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
 | Send pipeline, live DB + fake provider (`scripts/smoke-test-send.ts`) | 35 | ✅ pass |
 | Automation engine, live DB (`scripts/smoke-test-automation.ts`) | 28 | ✅ pass |
@@ -18,6 +18,7 @@
 | Inbox/conversation HTTP, real session (`scripts/smoke-test-inbox-http.ts`) | 23 | ✅ pass |
 | HTTP integration (`scripts/smoke-test-http.ts`) | 37 | ✅ pass |
 | Super Admin view-as / analytics / retention HTTP, real session (`scripts/smoke-test-admin-http.ts`) | 37 | ✅ pass |
+| AI assistant, real session + **real Gemini** (`scripts/smoke-test-ai.ts`) | 34 | ✅ pass |
 | Deployment verification (`scripts/verify-deployment.ts`) | 19 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
@@ -141,8 +142,19 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [ ] Workspace management actions (create / rename / disable / move users) — listing exists, mutations not yet
 - [ ] Retention enforcement (deliberately deferred, see above)
 
-## Phase 7 — Gemini AI — not started
-`AiUsage` table exists. No `AIProvider`/`GeminiProvider` implementation yet.
+## Phase 7 — Gemini AI — done (6 Sep 2026)
+- [x] §83 `AIProvider` abstraction (`lib/ai/types.ts`) with `GeminiProvider` (`lib/ai/gemini.ts`): REST `generateContent`, JSON response schemas (typed output, no prose parsing), 30s timeout, 2 retries with backoff + Retry-After, 429 → `RATE_LIMITED`, safety blocks and malformed JSON surfaced as their own kinds. Key in a header, never a URL. Configurable via `GEMINI_API_KEY` / `GEMINI_MODEL` (default `gemini-3.6-flash`; verified live)
+- [x] §81/§82 policy in one place (`lib/ai/service.ts`): `AI_ENABLED`, per-user and per-org daily limits (`AI_USER_DAILY_LIMIT` 100 / `AI_ORG_DAILY_LIMIT` 1000, IST days), every call logged to `AiUsage` (feature, success, tokens, latency, error reason), every failure mapped to a graceful "you can continue manually" outcome — the AI being down never fails a page or a sync
+- [x] §81 context minimisation (`lib/ai/prompts.ts`): last 8 turns only, quoted tails and signatures stripped, email addresses and phone numbers redacted, per-message cap; first names only. Tokens/secrets are never in scope
+- [x] §76/§77 template editor assistant: generate email (subject, preview, text, HTML) → Insert / Regenerate / Make shorter / More professional; improve current body (improve, shorten, professional, friendly, grammar, CTA, rewrite, translate); subject ideas; personalisation check (missing variables computed locally, quality judged by AI)
+- [x] §78 reply assistant in the conversation: AI suggest reply → Insert / Regenerate / Make shorter / More formal. Sending stays the human-only button
+- [x] §79 conversation summary + suggested next action + suggested status shown as a button the human presses; never applied automatically
+- [x] §80 reply intent (COMPLETED / QUESTION / REQUEST / COMPLAINT / ACKNOWLEDGEMENT / NEEDS_ACTION / OUT_OF_OFFICE / AUTO_REPLY / UNKNOWN) with confidence, stored on the message **beside** the header-first classification (`aiIntent*` columns, migration); ingest annotates human replies best-effort with a 12s cap; no record or status is ever changed by the AI
+- [x] §76 items 18–20: campaign summary, "Why?" per sent job (from the immutable send snapshot + `sendReason`), "Why?" per automation run
+- [x] "AI usage today: N / limit" on every panel; System Settings shows provider, model, enabled flag, limits and org-wide usage
+- [x] `/api/ai`: one endpoint, discriminated actions, workspace ownership checked per row, read-only under "view as" (no annotation written)
+- [ ] Translate targets other than Hindi in the UI (API accepts any language)
+- [ ] Per-org AI on/off in the database (today it is the `AI_ENABLED` env flag)
 
 ## Phase 8 — Advanced analytics / integrations — not started
 
@@ -151,6 +163,6 @@ test. Nothing is marked done on UI alone (§139/§140).
 ### Immediate next steps (in order)
 1. ~~Connect a real Gmail account and verify the Google round-trip~~ — **done**: real send, real inbound sync (scan + history paths), real in-thread reply, all against the live mailbox.
 2. ~~Phase 6: organization analytics, the "view as" banner, retention policy~~ — **done** (retention enforcement and workspace mutations deferred, see Phase 6).
-3. Phase 7: `AIProvider` + `GeminiProvider` with per-user/org rate limits; reply suggestion, summary, classification behind the header-first classifier.
+3. ~~Phase 7: `AIProvider` + `GeminiProvider` with per-user/org rate limits; reply suggestion, summary, classification behind the header-first classifier~~ — **done**, verified against real Gemini.
 4. Close out Phase 1: saved views, filter/sort/group, bulk edit on the grid.
 5. Scheduling dispatcher (Phase 3) and the `WAIT` action / `SCHEDULED` trigger (Phase 4) — both need the delayed queue.
