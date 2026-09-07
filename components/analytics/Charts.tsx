@@ -15,15 +15,18 @@ import type { DayPoint, FailureRatePoint } from '@/lib/analytics/series';
 
 // Chart colours come from the same tokens as the rest of the UI so the
 // charts follow the Masai palette without a second colour system.
+// CSS variables resolve inside SVG presentation attributes, so the charts
+// follow the light/dark theme with no JS colour switching.
 const C = {
-  primary: 'hsl(348 97% 47%)',
-  info: 'hsl(213 94% 68%)',
-  warning: 'hsl(43 96% 56%)',
-  grid: 'hsl(240 4% 16%)',
-  axis: 'hsl(240 4% 46%)',
-  tooltipBg: 'hsl(240 6% 13%)',
-  tooltipBorder: 'hsl(240 4% 16%)',
-  text: 'hsl(60 5% 96%)',
+  primary: 'hsl(var(--primary))',
+  info: 'hsl(var(--info))',
+  warning: 'hsl(var(--warning))',
+  success: 'hsl(var(--success))',
+  grid: 'hsl(var(--border))',
+  axis: 'hsl(var(--faint))',
+  tooltipBg: 'hsl(var(--elevated))',
+  tooltipBorder: 'hsl(var(--border))',
+  text: 'hsl(var(--foreground))',
 };
 
 function shortDay(day: string) {
@@ -98,6 +101,29 @@ export function FailureRateChart({ series, height = 220 }: { series: FailureRate
           }}
         />
         <Bar dataKey="ratePct" name="Failure rate" fill={C.warning} radius={[3, 3, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** §36 approvals: requests, approvals and rejections per day (stacked). */
+export function ApprovalsChart({
+  series,
+  height = 200,
+}: {
+  series: { day: string; submitted: number; approved: number; rejected: number }[];
+  height?: number;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={series} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+        <CartesianGrid stroke={C.grid} vertical={false} />
+        <XAxis dataKey="day" tickFormatter={shortDay} minTickGap={24} {...axisProps} />
+        <YAxis allowDecimals={false} {...axisProps} />
+        <Tooltip {...tooltipStyle} labelFormatter={(d) => shortDay(String(d))} />
+        <Bar dataKey="submitted" name="Requested" fill={C.info} radius={[3, 3, 0, 0]} />
+        <Bar dataKey="approved" name="Approved" fill={C.success} radius={[3, 3, 0, 0]} />
+        <Bar dataKey="rejected" name="Rejected" fill={C.primary} radius={[3, 3, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );

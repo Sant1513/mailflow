@@ -272,3 +272,72 @@ export function parseDays(raw: string | string[] | undefined, fallback = 30): nu
   const n = Number(Array.isArray(raw) ? raw[0] : raw);
   return [7, 30, 90].includes(n) ? n : fallback;
 }
+
+// ── §36 approvals ─────────────────────────────────────────────────────────
+
+export interface ApprovalDayPoint {
+  day: string;
+  submitted: number;
+  approved: number;
+  rejected: number;
+}
+
+export interface ApprovalStats {
+  pending: number;
+  approved: number;
+  rejected: number;
+  /** Median hours from submission to decision inside the window; null if none decided. */
+  medianWaitHours: number | null;
+  /** Oldest pending request, in hours; null if none. */
+  oldestPendingHours: number | null;
+  byDay: ApprovalDayPoint[];
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+/** Requests, approvals and rejections by day plus the current queue; scoped like everything else. */
+export async function approvalStats(scope: Scope, days: number, now = new Date()): Promise<ApprovalStats> {
+  const since = windowStart(days, now);
+  const where = 'workspaceId' in scope ? { workspaceId: scope.workspaceId } : { organizationId: scope.organizationId };
+
+  const [pendingRows, decided, submitted] = await Promise.all([
+    prisma.campaign.findMany({ where: { ...where, status: 'PENDING_APPROVAL' }, select: { submittedAt: true } }),
+    prisma.campaign.findMany({
+      where: { ...where, OR: [{ approvedAt: { gte: since } }, { rejectedAt: { gte: since } }] },
+      select: { submittedAt: true, approvedAt: true, rejectedAt: true },
+    }),
+    prisma.campaign.findMany({ where: { ...where, submittedAt: { gte: since } }, select: { submittedAt: true } }),
+  ]);
+
+  const submittedByDay = bucketByDay(submitted.map((c) => c.submittedAt), days, now);
+  const approvedByDay = bucketByDay(decided.map((c) => c.approvedAt), days, now);
+  const rejectedByDay = bucketByDay(decided.map((c) => c.rejectedAt), days, now);
+
+  const waits = decided
+    .map((c) => {
+      const decidedAt = c.approvedAt ?? c.rejectedAt;
+      return c.submittedAt && decidedAt ? (decidedAt.getTime() - c.submittedAt.getTime()) / 3_600_000 : null;
+    })
+    .filter((h): h is number => h !== null && h >= 0);
+
+  const oldest = pendingRows.map((p) => p.submittedAt).filter((d): d is Date => !!d).sort((a, b) => a.getTime() - b.getTime())[0];
+
+  return {
+    pending: pendingRows.length,
+    approved: decided.filter((c) => c.approvedAt).length,
+    rejected: decided.filter((c) => c.rejectedAt).length,
+    medianWaitHours: median(waits) === null ? null : Math.round(median(waits)! * 10) / 10,
+    oldestPendingHours: oldest ? Math.round(((now.getTime() - oldest.getTime()) / 3_600_000) * 10) / 10 : null,
+    byDay: submittedByDay.map((p, i) => ({
+      day: p.day,
+      submitted: p.value,
+      approved: approvedByDay[i]?.value ?? 0,
+      rejected: rejectedByDay[i]?.value ?? 0,
+    })),
+  };
+}

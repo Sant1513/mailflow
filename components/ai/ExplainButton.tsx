@@ -45,7 +45,7 @@ export function ExplainButton({
         {busy ? 'Thinking…' : label}
       </button>
       {open && (result || notice) && (
-        <div className={`${compact ? 'absolute z-10 mt-1 w-80' : 'mt-2'} rounded-md border border-border bg-card p-3 text-left text-xs shadow-lg`}>
+        <div className={`${compact ? 'absolute right-0 z-20 mt-1 w-[min(20rem,calc(100vw-2rem))]' : 'mt-2'} rounded-md border border-border bg-card p-3 text-left text-xs shadow-lg`}>
           {notice ? (
             <p className="text-warning">{notice}</p>
           ) : (

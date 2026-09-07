@@ -2,19 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Light theme is the base; .dark (set on <html> before first paint by
+ * the theme script in app/layout.tsx) swaps only these tokens. Every
+ * component reads tokens, never a raw colour, so both themes are one code path. */
+:root {
+  color-scheme: light;
+
+  --background: 0 0% 98%;            /* #fafafa  page                      */
+  --card: 0 0% 100%;                 /* #ffffff  panels                    */
+  --elevated: 240 5% 94%;            /* #eeeef0  raised rows / hover        */
+  --muted: 240 5% 96%;               /* #f4f4f5  subtle surface             */
+  --muted-foreground: 240 4% 32%;    /* #4b4b52  body copy                  */
+  --faint: 240 4% 50%;               /* #7a7a82  captions / metadata        */
+  --foreground: 240 10% 6%;          /* #0d0d10  headings / strong text     */
+
+  --border: 240 6% 86%;              /* #d9d9de  visible borders            */
+  --border-subtle: 240 5% 92%;       /* #e9e9ec  hairlines                  */
+
+  --primary: 348 97% 47%;            /* #ED0331  Masai red                  */
+  --primary-hover: 347 77% 45%;      /* rose, a touch darker on white       */
+  --primary-foreground: 0 0% 100%;
+
+  --destructive: 348 97% 47%;
+  --success: 160 84% 30%;            /* emerald-700 for contrast on white   */
+  --warning: 32 95% 38%;             /* amber-700                           */
+  --info: 221 83% 45%;               /* blue-700                            */
+
+  --ring: 348 97% 47%;
+  --radius-card: 8px;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /*
- * Design tokens — taken from masaischool.com's computed styles, not
+ * Dark tokens — taken from masaischool.com's computed styles, not
  * approximated: near-black zinc background, flat and border-led with almost
  * no shadow, warm-white headings in Outfit 700–800, light zinc-400 body
  * copy, and Masai red (#ED0331 / rose #E11D48) as the single accent.
  */
-:root {
+.dark {
   color-scheme: dark;
 
   --background: 240 6% 4%;          /* #09090b  page                      */
   --card: 240 6% 7%;                /* #111113  panels                    */
-  --elevated: 240 6% 13%;           /* #1f1f23  raised rows / hover — must
-                                        read as a visible lift off --card    */
+  --elevated: 240 6% 13%;           /* #1f1f23  raised rows / hover        */
   --muted: 240 5% 10%;              /* #18181b  subtle surface            */
   --muted-foreground: 240 5% 65%;   /* #a1a1aa  body copy                 */
   --faint: 240 4% 46%;              /* #71717a  captions / metadata       */
@@ -23,18 +53,10 @@
   --border: 240 4% 16%;             /* #27272a  visible borders           */
   --border-subtle: 240 5% 10%;      /* #18181b  hairlines                 */
 
-  --primary: 348 97% 47%;           /* #ED0331  Masai red                 */
   --primary-hover: 347 77% 50%;     /* #E11D48  rose                      */
-  --primary-foreground: 0 0% 100%;
-
-  --destructive: 348 97% 47%;
   --success: 160 64% 52%;           /* emerald-400                        */
   --warning: 43 96% 56%;            /* amber-400                          */
   --info: 213 94% 68%;              /* blue-400                           */
-
-  --ring: 348 97% 47%;
-  --radius-card: 8px;
-  --ease: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @layer base {

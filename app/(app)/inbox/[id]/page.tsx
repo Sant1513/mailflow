@@ -173,7 +173,7 @@ export default function ConversationPage() {
   ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-full min-h-[calc(100dvh-3.5rem)] lg:min-h-0 flex-col">
       {/* Header */}
       <div className="border-b bg-card px-4 py-3">
         <Link href="/inbox" className="text-xs text-muted-foreground hover:text-foreground">← Inbox</Link>
@@ -242,7 +242,7 @@ export default function ConversationPage() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Timeline */}
         <div className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-muted/30 p-4">
           <div className="mx-auto w-full max-w-3xl space-y-3">
@@ -354,7 +354,7 @@ export default function ConversationPage() {
         </div>
 
         {/* RIGHT: notes + follow-ups */}
-        <aside className="w-72 shrink-0 overflow-y-auto border-l bg-card p-3">
+        <aside className="w-full shrink-0 overflow-y-auto border-t bg-card p-3 lg:w-72 lg:border-l lg:border-t-0">
           <AiSummaryCard
             conversationId={c.id}
             currentStatus={c.status}

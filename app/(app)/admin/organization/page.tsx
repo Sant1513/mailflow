@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { requireSuperAdminPage } from '@/lib/auth/adminGuard';
 import { prisma } from '@/lib/db/client';
 import {
+  approvalStats,
   campaignPerformance,
   dailySeries,
   orgCounts,
@@ -9,7 +10,7 @@ import {
   totals,
   userActivity,
 } from '@/lib/analytics/metrics';
-import { DailyAreaChart, FailureRateChart } from '@/components/analytics/Charts';
+import { ApprovalsChart, DailyAreaChart, FailureRateChart } from '@/components/analytics/Charts';
 import { ViewWorkspaceButton } from '@/components/admin/ViewWorkspaceButton';
 
 export const dynamic = 'force-dynamic';
@@ -27,13 +28,14 @@ export default async function AdminOrganizationPage({
   const days = parseDays(searchParams.days);
   const scope = { organizationId };
 
-  const [org, counts, t, series, campaigns, users] = await Promise.all([
+  const [org, counts, t, series, campaigns, users, approvals] = await Promise.all([
     prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true } }),
     orgCounts(organizationId, days),
     totals(scope),
     dailySeries(scope, days),
     campaignPerformance(scope, 10),
     userActivity(organizationId, days),
+    approvalStats(scope, days),
   ]);
 
   const stats = [
@@ -85,6 +87,12 @@ export default async function AdminOrganizationPage({
         </ChartCard>
         <ChartCard title="Replies by day" hint={`${series.repliesByDay.reduce((a, p) => a + p.value, 0)} human replies in ${days} days`}>
           <DailyAreaChart series={series.repliesByDay} label="Replies" color="info" />
+        </ChartCard>
+        <ChartCard
+          title="Campaign approvals"
+          hint={`${approvals.pending} pending · ${approvals.approved} approved · ${approvals.rejected} rejected${approvals.medianWaitHours !== null ? ` · median wait ${approvals.medianWaitHours} h` : ''}`}
+        >
+          <ApprovalsChart series={approvals.byDay} />
         </ChartCard>
         <ChartCard
           title="Failure rate"

@@ -93,7 +93,7 @@ export default function InboxPage() {
   }
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-full min-h-[calc(100dvh-3.5rem)] lg:min-h-0">
       {/* LEFT: filters */}
       <aside className="w-56 shrink-0 border-r bg-card p-3">
         <div className="mb-3 flex items-center justify-between">

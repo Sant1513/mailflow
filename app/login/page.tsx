@@ -1,5 +1,6 @@
 import { LoginButton } from './LoginButton';
 import { allowedDomain } from '@/lib/auth/options';
+import { ThemeToggle } from '@/components/theme/ThemeToggle';
 
 const PILLARS = [
   { title: 'Campaigns', body: 'Personalised sends to any batch, with dry runs and approvals before anything goes out.' },
@@ -24,7 +25,10 @@ export default function LoginPage() {
         <div className="font-heading text-2xl font-bold leading-none tracking-tight text-foreground">
           masai<span className="text-primary">.</span>
         </div>
-        <div className="eyebrow">Internal · MailFlow</div>
+        <div className="flex items-center gap-3">
+          <div className="eyebrow hidden sm:block">Internal · MailFlow</div>
+          <ThemeToggle compact />
+        </div>
       </header>
 
       <main className="relative z-10 flex flex-1 items-center px-6 py-10 sm:px-10">

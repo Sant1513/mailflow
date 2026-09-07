@@ -441,6 +441,16 @@ model Campaign {
   approvedById      String?
   approvedAt        DateTime?
   rejectionReason   String?
+  // Approval workflow (§36) — request/decision emails live in one Gmail thread.
+  submittedAt              DateTime?
+  rejectedAt               DateTime?
+  reviewedById             String?
+  approvalRemarks          String?  @db.Text
+  approvalRequestAccountId String?
+  approvalRequestMessageId String?
+  approvalRequestThreadId  String?
+  approvalRequestEmail     String?  // SENT | SKIPPED: <why> | FAILED: <why>
+  approvalDecisionEmail    String?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 

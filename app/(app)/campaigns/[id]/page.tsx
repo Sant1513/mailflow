@@ -112,12 +112,20 @@ export default function CampaignDetailPage() {
     toast.success(`Simulation complete — ${json.simulation.wouldSend} would send. No emails were sent.`);
   }
 
-  async function approvalAction(action: string, reason?: string) {
+  const [decision, setDecision] = useState<'APPROVE' | 'REJECT' | null>(null);
+  const [decisionReason, setDecisionReason] = useState('');
+  const [decisionRemarks, setDecisionRemarks] = useState('');
+
+  async function approvalAction(action: string, reason?: string, remarks?: string) {
+    if (action === 'REJECT' && !reason?.trim()) {
+      toast.error('A reason is required — the requester will see it.');
+      return;
+    }
     setBusy(action);
     const res = await fetch(`/api/campaigns/${params.id}/approval`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, reason }),
+      body: JSON.stringify({ action, reason: reason?.trim() || undefined, remarks: remarks?.trim() || undefined }),
     });
     setBusy(null);
     const json = await res.json();
@@ -125,7 +133,11 @@ export default function CampaignDetailPage() {
       toast.error(json.error ?? 'Action failed');
       return;
     }
-    toast.success(`Campaign ${json.campaign.status.replace(/_/g, ' ').toLowerCase()}`);
+    const email = json.emailStatus ? ` · email: ${json.emailStatus}` : '';
+    toast.success(`Campaign ${json.campaign.status.replace(/_/g, ' ').toLowerCase()}${email}`, { duration: 8000 });
+    setDecision(null);
+    setDecisionReason('');
+    setDecisionRemarks('');
     load();
   }
 
@@ -226,21 +238,17 @@ export default function CampaignDetailPage() {
             Submit for approval
           </button>
         ) : null}
-        {campaign.status === 'PENDING_APPROVAL' && canApprove && !data.viewerIsCreator ? (
+        {campaign.status === 'PENDING_APPROVAL' && canApprove && (!data.viewerIsCreator || data.viewerRole === 'SUPER_ADMIN') ? (
           <>
-            <button onClick={() => approvalAction('APPROVE')} disabled={!!busy} className="btn-primary">
+            <button onClick={() => setDecision('APPROVE')} disabled={!!busy} className="btn-primary">
               Approve
             </button>
-            <button
-              onClick={() => approvalAction('REJECT', prompt('Reason for rejection?') ?? undefined)}
-              disabled={!!busy}
-              className="btn-secondary"
-            >
+            <button onClick={() => setDecision('REJECT')} disabled={!!busy} className="btn-secondary">
               Reject
             </button>
           </>
         ) : null}
-        {campaign.status === 'PENDING_APPROVAL' && data.viewerIsCreator && (
+        {campaign.status === 'PENDING_APPROVAL' && data.viewerIsCreator && data.viewerRole !== 'SUPER_ADMIN' && (
           <span className="self-center text-xs text-muted-foreground">
             Awaiting approval — you cannot approve your own campaign.
           </span>
@@ -291,9 +299,44 @@ export default function CampaignDetailPage() {
         </div>
       )}
 
-      {campaign.rejectionReason && (
-        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-primary">
-          <strong>Rejected:</strong> {campaign.rejectionReason}
+      {(campaign.submittedAt || campaign.rejectionReason || campaign.approvedAt) && (
+        <div className="mb-4 rounded-md border border-border-subtle bg-elevated/30 p-3 text-xs">
+          <div className="mb-1 font-semibold uppercase tracking-wider text-muted-foreground">Approval</div>
+          <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+            {campaign.submittedAt && <div><dt className="text-faint">Submitted</dt><dd>{new Date(campaign.submittedAt).toLocaleString('en-IN')}</dd></div>}
+            {campaign.approvedAt && <div><dt className="text-faint">Approved</dt><dd className="text-success">{new Date(campaign.approvedAt).toLocaleString('en-IN')}</dd></div>}
+            {campaign.rejectedAt && <div><dt className="text-faint">Rejected</dt><dd className="text-primary">{new Date(campaign.rejectedAt).toLocaleString('en-IN')}</dd></div>}
+            {campaign.approvalRequestEmail && <div><dt className="text-faint">Request email</dt><dd>{campaign.approvalRequestEmail}</dd></div>}
+            {campaign.approvalDecisionEmail && <div><dt className="text-faint">Decision email</dt><dd>{campaign.approvalDecisionEmail}</dd></div>}
+            {campaign.rejectionReason && <div className="sm:col-span-2"><dt className="text-faint">Reason</dt><dd className="text-primary">{campaign.rejectionReason}</dd></div>}
+            {isAdmin && campaign.approvalRemarks && <div className="sm:col-span-2"><dt className="text-faint">Reviewer remarks (internal)</dt><dd>{campaign.approvalRemarks}</dd></div>}
+          </dl>
+        </div>
+      )}
+
+      {decision && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center" onClick={() => !busy && setDecision(null)}>
+          <div className="panel w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="eyebrow mb-2">{decision === 'APPROVE' ? 'Approve' : 'Reject'}</div>
+            <h2 className="font-heading text-lg font-bold">{campaign.name}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">The requester is emailed in the same thread as their approval request.</p>
+            {decision === 'REJECT' && (
+              <label className="mt-4 block text-xs">
+                <span className="font-medium">Reason <span className="text-primary">*</span> <span className="text-faint">— sent to the requester</span></span>
+                <textarea value={decisionReason} onChange={(e) => setDecisionReason(e.target.value)} rows={3} className="mt-1 w-full text-sm" />
+              </label>
+            )}
+            <label className="mt-3 block text-xs">
+              <span className="font-medium">Remarks <span className="text-faint">— internal</span></span>
+              <textarea value={decisionRemarks} onChange={(e) => setDecisionRemarks(e.target.value)} rows={2} className="mt-1 w-full text-sm" />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setDecision(null)} disabled={!!busy} className="btn-secondary">Cancel</button>
+              <button onClick={() => approvalAction(decision, decisionReason, decisionRemarks)} disabled={!!busy} className="btn-primary">
+                {busy ? 'Saving…' : decision === 'APPROVE' ? 'Approve campaign' : 'Reject campaign'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

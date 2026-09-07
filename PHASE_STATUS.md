@@ -6,11 +6,11 @@
 - **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
 - **Repo:** https://github.com/Sant1513/mailflow
 
-## Verification status (last run: 7 Sep 2026, after the grid completion)
+## Verification status (last run: 7 Sep 2026, after feedback round 1)
 
 | Suite | Count | Result |
 | --- | --- | --- |
-| Unit tests (`npm test`) | 365 | ✅ pass |
+| Unit tests (`npm test`) | 384 | ✅ pass |
 | Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
 | Send pipeline, live DB + fake provider (`scripts/smoke-test-send.ts`) | 35 | ✅ pass |
 | Automation engine, live DB (`scripts/smoke-test-automation.ts`) | 28 | ✅ pass |
@@ -20,6 +20,7 @@
 | Super Admin view-as / analytics / retention HTTP, real session (`scripts/smoke-test-admin-http.ts`) | 37 | ✅ pass |
 | AI assistant, real session + **real Gemini** (`scripts/smoke-test-ai.ts`) | 34 | ✅ pass |
 | Grid: views / filter / sort / group / columns / bulk HTTP, real session (`scripts/smoke-test-grid-http.ts`) | 36 | ✅ pass |
+| Campaign approvals: submit / list / search / approve / reject / audit / charts HTTP (`scripts/smoke-test-approvals-http.ts`) | 27 | ✅ pass |
 | Deployment verification (`scripts/verify-deployment.ts`) | 19 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
@@ -146,6 +147,16 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] System Settings page: retention UI + read-only view of runtime env (sign-in restriction, rate limit, AI key presence)
 - [ ] Workspace management actions (create / rename / disable / move users) — listing exists, mutations not yet
 - [ ] Retention enforcement (deliberately deferred, see above)
+
+## Feedback round 1 — approvals, themes, responsive, editor (7 Sep 2026) — done
+Spec: docs/requests/2026-09-07-approvals-theme-ux.md
+- [x] **Approvals page** (/approvals) for ADMIN + SUPER_ADMIN: Pending / Approved / Rejected / All tabs, search by campaign, requester or workspace, approve and reject with a required **reason** (sent to the requester) and optional **remarks** (internal), waiting time, reviewer, email outcome per request. Pending badge in the nav. SUPER_ADMIN sees the organisation; ADMIN sees their own workspace plus workspaces where they hold an ADMIN membership (lib/permissions/reviewer.ts)
+- [x] **Request email** on submit from the requester's Gmail to every SUPER_ADMIN + the workspace's ADMINs, requester in Cc; **decision email in the same thread** (In-Reply-To / References; same Gmail thread id when the same mailbox sends both) from the reviewer's mailbox, falling back to the requester's. Best effort: no mailbox or a Gmail failure never blocks the decision — the outcome is stored on the campaign (approvalRequestEmail / approvalDecisionEmail) and shown. The live send is the same GmailProvider path verified in Phase 5; fixture users have no mailbox, so the smoke suite asserts the recorded SKIPPED outcomes
+- [x] **Reports**: requests / approvals / rejections by day with pending, approved, rejected, median wait and oldest-pending on the Dashboard (workspace) and Organization page (org)
+- [x] **Light / dark / system theme**: tokens restructured (light is :root, .dark swaps), pre-paint script (no flash), toggle in the sidebar, mobile bar and login; charts read CSS tokens
+- [x] **Responsive**: sidebar becomes a top bar + drawer below lg; conversation page stacks; template editor becomes Settings / Code / Preview tabs; popovers clamp to the viewport; full-height pages use the shell height
+- [x] **Template formatting**: HTML pretty-printer (lib/templates/format.ts) applied to every AI insert plus a Format button; adds only whitespace between block elements — a test proves the rendered structure is unchanged
+- [x] **Template editor sizing**: draggable dividers between the three panes (remembered per browser) and a 320–1200px preview width slider alongside the desktop/mobile presets
 
 ## Phase 7 — Gemini AI — done (6 Sep 2026)
 - [x] §83 `AIProvider` abstraction (`lib/ai/types.ts`) with `GeminiProvider` (`lib/ai/gemini.ts`): REST `generateContent`, JSON response schemas (typed output, no prose parsing), 30s timeout, 2 retries with backoff + Retry-After, 429 → `RATE_LIMITED`, safety blocks and malformed JSON surfaced as their own kinds. Key in a header, never a URL. Configurable via `GEMINI_API_KEY` / `GEMINI_MODEL` (default `gemini-3.6-flash`; verified live)

@@ -9,6 +9,8 @@ import { EmailPreview } from '@/components/email-preview/EmailPreview';
 import { HealthCheckPanel, type HealthCheckResult } from '@/components/email-editor/HealthCheckPanel';
 import { VariableMenu } from '@/components/email-editor/VariableMenu';
 import { AiWriter } from '@/components/ai/AiWriter';
+import { formatHtml } from '@/lib/templates/format';
+import { PaneDivider, usePaneWidths } from '@/components/email-editor/PaneDivider';
 
 // CodeMirror touches `document` on load, so it must not be server-rendered.
 const CodeEditor = dynamic(() => import('@/components/email-editor/CodeEditor').then((m) => m.CodeEditor), {
@@ -48,6 +50,11 @@ export default function TemplateEditorPage() {
   const [css, setCss] = useState('');
   const [tab, setTab] = useState<'html' | 'css'>('html');
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
+  /** Exact preview width from the slider; null = follow the desktop/mobile preset. */
+  const [previewWidth, setPreviewWidth] = useState<number | null>(null);
+  /** Which pane is visible below lg (§133). */
+  const [mobilePane, setMobilePane] = useState<'settings' | 'code' | 'preview'>('code');
+  const panes = usePaneWidths('mailflow.template.panes', { left: 272, right: 520 });
   const [preview, setPreview] = useState<{ subject: string; html: string; missingVariables: string[]; resolved: Record<string, string>; recordLabel: string | null } | null>(null);
   const [health, setHealth] = useState<HealthCheckResult | null>(null);
   const [saving, setSaving] = useState(false);
@@ -178,7 +185,7 @@ export default function TemplateEditorPage() {
   if (!template) return <div className="p-6 text-sm text-muted-foreground">Template not found.</div>;
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-full min-h-[calc(100dvh-3.5rem)] lg:min-h-0 flex-col">
       {/* Header */}
       <div className="flex items-center justify-between border-b bg-card px-4 py-2">
         <div className="flex items-center gap-3">
@@ -193,7 +200,17 @@ export default function TemplateEditorPage() {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => {
+              setHtml(formatHtml(html));
+              toast.success('HTML formatted — rendering is unchanged');
+            }}
+            className="btn-secondary"
+            title="Pretty-print the HTML (adds only whitespace between block elements)"
+          >
+            Format
+          </button>
           <button onClick={runHealthCheck} className="btn-secondary">
             Run health check
           </button>
@@ -207,9 +224,25 @@ export default function TemplateEditorPage() {
         </div>
       </div>
 
+      {/* Below lg the three panes become tabs (§133). */}
+      <div className="flex border-b bg-card px-2 lg:hidden">
+        {(['settings', 'code', 'preview'] as const).map((p) => (
+          <button
+            key={p}
+            onClick={() => setMobilePane(p)}
+            className={`min-h-[40px] flex-1 border-b-2 text-xs font-medium capitalize ${mobilePane === p ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground'}`}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+
       <div className="flex min-h-0 flex-1">
         {/* LEFT: settings */}
-        <aside className="w-64 shrink-0 overflow-y-auto border-r bg-card p-3">
+        <aside
+          className={`${mobilePane === 'settings' ? 'flex' : 'hidden'} w-full shrink-0 flex-col overflow-y-auto border-r bg-card p-3 lg:flex lg:w-[var(--pane-left)]`}
+          style={{ ['--pane-left' as string]: `${panes.widths.left}px` }}
+        >
           <h2 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Settings</h2>
 
           <label className="mb-1 block text-xs font-medium">Subject</label>
@@ -257,7 +290,7 @@ export default function TemplateEditorPage() {
             variables={datasetColumns}
             onApply={(patch) => {
               if (patch.subject !== undefined) setSubject(patch.subject);
-              if (patch.html !== undefined) setHtml(patch.html);
+              if (patch.html !== undefined) setHtml(formatHtml(patch.html));
             }}
           />
 
@@ -282,9 +315,10 @@ export default function TemplateEditorPage() {
             </div>
           )}
         </aside>
+        <PaneDivider onDrag={(dx) => panes.resize('left', dx)} />
 
         {/* CENTER: code editor */}
-        <div className="flex min-w-0 flex-1 flex-col border-r">
+        <div className={`${mobilePane === 'code' ? 'flex' : 'hidden'} min-w-0 flex-1 flex-col border-r lg:flex`}>
           <div className="flex items-center gap-1 border-b bg-muted px-2 py-1">
             {(['html', 'css'] as const).map((t) => (
               <button
@@ -305,8 +339,13 @@ export default function TemplateEditorPage() {
           </div>
         </div>
 
+        <PaneDivider onDrag={(dx) => panes.resize('right', -dx)} />
+
         {/* RIGHT: live preview */}
-        <div className="flex w-[46%] min-w-0 flex-col">
+        <div
+          className={`${mobilePane === 'preview' ? 'flex' : 'hidden'} w-full min-w-0 flex-col lg:flex lg:w-[var(--pane-right)]`}
+          style={{ ['--pane-right' as string]: `${panes.widths.right}px` }}
+        >
           <div className="flex items-center justify-between border-b bg-muted px-2 py-1">
             <div className="truncate text-xs">
               <span className="text-muted-foreground">Subject: </span>
@@ -315,20 +354,36 @@ export default function TemplateEditorPage() {
                 <span className="ml-2 rounded bg-card px-1.5 py-0.5 text-[10px]">as {preview.recordLabel}</span>
               )}
             </div>
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1">
               {(['desktop', 'mobile'] as const).map((m) => (
                 <button
                   key={m}
-                  onClick={() => setPreviewMode(m)}
-                  className={`rounded px-2 py-1 text-xs ${previewMode === m ? 'bg-card font-medium shadow-sm' : 'text-muted-foreground'}`}
+                  onClick={() => {
+                    setPreviewMode(m);
+                    setPreviewWidth(null);
+                  }}
+                  className={`rounded px-2 py-1 text-xs ${previewMode === m && previewWidth === null ? 'bg-card font-medium shadow-sm' : 'text-muted-foreground'}`}
                 >
                   {m}
                 </button>
               ))}
+              <label className="ml-2 flex items-center gap-1 text-[11px] text-muted-foreground" title="Preview width">
+                <input
+                  type="range"
+                  min={320}
+                  max={1200}
+                  step={10}
+                  value={previewWidth ?? (previewMode === 'mobile' ? 375 : 700)}
+                  onChange={(e) => setPreviewWidth(Number(e.target.value))}
+                  className="w-24 accent-[hsl(var(--primary))] sm:w-32"
+                  aria-label="Preview width"
+                />
+                <span className="w-12 tabular-nums">{previewWidth ?? (previewMode === 'mobile' ? 375 : 700)}px</span>
+              </label>
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-auto">
-            <EmailPreview html={preview?.html ?? ''} mode={previewMode} />
+            <EmailPreview html={preview?.html ?? ''} mode={previewMode} width={previewWidth} />
           </div>
           {health && <HealthCheckPanel result={health} onClose={() => setHealth(null)} />}
         </div>

@@ -2,8 +2,8 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getOptionalSession } from '@/lib/auth/session';
 import { prisma } from '@/lib/db/client';
-import { dailySeries, totals } from '@/lib/analytics/metrics';
-import { DailyAreaChart } from '@/components/analytics/Charts';
+import { approvalStats, dailySeries, totals } from '@/lib/analytics/metrics';
+import { ApprovalsChart, DailyAreaChart } from '@/components/analytics/Charts';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +34,7 @@ export default async function DashboardPage() {
   }
 
   const scope = { workspaceId };
-  const [t, series, batches, conversations, activity] = await Promise.all([
+  const [t, series, batches, conversations, activity, approvals] = await Promise.all([
     totals(scope),
     dailySeries(scope, 30),
     prisma.batch.findMany({
@@ -64,6 +64,7 @@ export default async function DashboardPage() {
       take: 8,
       select: { id: true, action: true, targetType: true, createdAt: true, actor: { select: { name: true } } },
     }),
+    approvalStats(scope, 30),
   ]);
 
   const stats = [
@@ -123,6 +124,19 @@ export default async function DashboardPage() {
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <div className="panel p-4 lg:col-span-3">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <div className="font-heading text-sm font-semibold">Campaign approvals · last 30 days</div>
+            <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+              <span><span className="font-semibold text-warning">{approvals.pending}</span> pending{approvals.oldestPendingHours !== null ? ` (oldest ${approvals.oldestPendingHours} h)` : ''}</span>
+              <span><span className="font-semibold text-success">{approvals.approved}</span> approved</span>
+              <span><span className="font-semibold text-primary">{approvals.rejected}</span> rejected</span>
+              {approvals.medianWaitHours !== null && <span>median wait {approvals.medianWaitHours} h</span>}
+              {(session.role === 'ADMIN' || session.role === 'SUPER_ADMIN') && <Link href="/approvals" className="text-primary hover:underline">Open approvals</Link>}
+            </div>
+          </div>
+          <ApprovalsChart series={approvals.byDay} height={160} />
+        </div>
         <Card title="Recent batches" href="/batches">
           {batches.length === 0 ? (
             <Empty>No batches yet — send a campaign to see them here.</Empty>

@@ -2,35 +2,32 @@ import type { Metadata } from 'next';
 import { Outfit, Poppins } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
+import { THEME_INIT_SCRIPT } from '@/components/theme/ThemeToggle';
 
-// The reference site sets Outfit on headings and body copy and Poppins on
-// controls. next/font self-hosts both, so there is no render-blocking
-// request to Google Fonts and no layout shift while they load.
-const outfit = Outfit({
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700', '800'],
-  variable: '--font-outfit',
-  display: 'swap',
-});
-
-const poppins = Poppins({
-  subsets: ['latin'],
-  weight: ['400', '500', '600'],
-  variable: '--font-poppins',
-  display: 'swap',
-});
+const outfit = Outfit({ subsets: ['latin'], weight: ['300', '400', '500', '600', '700', '800'], variable: '--font-outfit', display: 'swap' });
+const poppins = Poppins({ subsets: ['latin'], weight: ['400', '500', '600'], variable: '--font-poppins', display: 'swap' });
 
 export const metadata: Metadata = {
   title: 'MailFlow — Masai School',
-  description: 'Internal communication, automation and CRM platform',
+  description: 'Internal email communication, automation and CRM platform for Masai School.',
+};
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#fafafa' },
+    { media: '(prefers-color-scheme: dark)', color: '#09090b' },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // `dark` matches tailwind's darkMode:'class'; the palette itself is dark
-    // by design (globals.css), so this is for any dark: variants we add later.
-    <html lang="en" className={`dark ${outfit.variable} ${poppins.variable}`}>
+    // suppressHydrationWarning: the theme script adds the `dark` class before
+    // React hydrates, which is intentional and must not be "fixed" by React.
+    <html lang="en" className={`${outfit.variable} ${poppins.variable}`} suppressHydrationWarning>
       <body className="min-h-screen font-sans antialiased">
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <Providers>{children}</Providers>
       </body>
     </html>
