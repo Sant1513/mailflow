@@ -21,6 +21,7 @@
 | AI assistant, real session + **real Gemini** (`scripts/smoke-test-ai.ts`) | 34 | ✅ pass |
 | Grid: views / filter / sort / group / columns / bulk HTTP, real session (`scripts/smoke-test-grid-http.ts`) | 36 | ✅ pass |
 | Campaign approvals: submit / list / search / approve / reject / audit / charts HTTP (`scripts/smoke-test-approvals-http.ts`) | 27 | ✅ pass |
+| Batches / History / All Conversations pages + "no placeholders" sweep (`scripts/smoke-test-pages-http.ts`) | 26 | ✅ pass |
 | Deployment verification (`scripts/verify-deployment.ts`) | 19 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
@@ -157,6 +158,7 @@ Spec: docs/requests/2026-09-07-approvals-theme-ux.md
 - [x] **Responsive**: sidebar becomes a top bar + drawer below lg; conversation page stacks; template editor becomes Settings / Code / Preview tabs; popovers clamp to the viewport; full-height pages use the shell height
 - [x] **Template formatting**: HTML pretty-printer (lib/templates/format.ts) applied to every AI insert plus a Format button; adds only whitespace between block elements — a test proves the rendered structure is unchanged
 - [x] **Template editor sizing**: draggable dividers between the three panes (remembered per browser) and a 320–1200px preview width slider alongside the desktop/mobile presets
+- [x] **Last placeholders replaced** (7 Sep): **Batches** (`/batches`, `GET /api/batches` — every batch in the workspace with live progress, queued count, pause / resume / process queue / retry failed / cancel, auto-refresh while in flight), **History** (`/history`, `GET /api/history?direction=sent|received` — every EmailJob outcome and every inbound message with its classification, search + status filters, "Why?" per send), **All Conversations** (`/admin/conversations`, SUPER_ADMIN, org-wide with workspace / status / search filters, audited). The template editor's From box now shows the connected mailbox. `PendingFeature` is deleted; a smoke check asserts no "not yet implemented" copy on any main page (`scripts/smoke-test-pages-http.ts`, 26 checks)
 
 ## Phase 7 — Gemini AI — done (6 Sep 2026)
 - [x] §83 `AIProvider` abstraction (`lib/ai/types.ts`) with `GeminiProvider` (`lib/ai/gemini.ts`): REST `generateContent`, JSON response schemas (typed output, no prose parsing), 30s timeout, 2 retries with backoff + Retry-After, 429 → `RATE_LIMITED`, safety blocks and malformed JSON surfaced as their own kinds. Key in a header, never a URL. Configurable via `GEMINI_API_KEY` / `GEMINI_MODEL` (default `gemini-3.6-flash`; verified live)

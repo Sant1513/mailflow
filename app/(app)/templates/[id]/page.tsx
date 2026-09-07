@@ -55,6 +55,13 @@ export default function TemplateEditorPage() {
   /** Which pane is visible below lg (§133). */
   const [mobilePane, setMobilePane] = useState<'settings' | 'code' | 'preview'>('code');
   const panes = usePaneWidths('mailflow.template.panes', { left: 272, right: 520 });
+  const [mailbox, setMailbox] = useState<{ emailAddress: string; status: string } | null | undefined>(undefined);
+  useEffect(() => {
+    fetch('/api/gmail/status')
+      .then((r) => (r.ok ? r.json() : { account: null }))
+      .then((j) => setMailbox(j.account ?? null))
+      .catch(() => setMailbox(null));
+  }, []);
   const [preview, setPreview] = useState<{ subject: string; html: string; missingVariables: string[]; resolved: Record<string, string>; recordLabel: string | null } | null>(null);
   const [health, setHealth] = useState<HealthCheckResult | null>(null);
   const [saving, setSaving] = useState(false);
@@ -255,8 +262,21 @@ export default function TemplateEditorPage() {
 
           <label className="mb-1 block text-xs font-medium">From</label>
           <div className="mb-3 rounded-md border bg-muted px-2 py-1.5 text-xs text-muted-foreground">
-            Your connected Gmail account
-            <div className="mt-0.5 text-[11px]">Set up in Settings (Phase 3)</div>
+            {mailbox === undefined ? (
+              'Checking your Gmail connection…'
+            ) : mailbox && mailbox.status === 'CONNECTED' ? (
+              <>
+                <span className="text-foreground">{mailbox.emailAddress}</span>
+                <div className="mt-0.5 text-[11px] text-success">Connected — campaigns send from this address</div>
+              </>
+            ) : (
+              <>
+                No Gmail connected
+                <div className="mt-0.5 text-[11px]">
+                  <Link href="/settings" className="text-primary hover:underline">Connect in Settings</Link> before sending.
+                </div>
+              </>
+            )}
           </div>
 
           <label className="mb-1 block text-xs font-medium">Preview as</label>
