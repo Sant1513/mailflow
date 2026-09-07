@@ -6,11 +6,11 @@
 - **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
 - **Repo:** https://github.com/Sant1513/mailflow
 
-## Verification status (last run: 6 Sep 2026, after Phase 7)
+## Verification status (last run: 7 Sep 2026, after the grid completion)
 
 | Suite | Count | Result |
 | --- | --- | --- |
-| Unit tests (`npm test`) | 347 | ✅ pass |
+| Unit tests (`npm test`) | 365 | ✅ pass |
 | Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
 | Send pipeline, live DB + fake provider (`scripts/smoke-test-send.ts`) | 35 | ✅ pass |
 | Automation engine, live DB (`scripts/smoke-test-automation.ts`) | 28 | ✅ pass |
@@ -19,6 +19,7 @@
 | HTTP integration (`scripts/smoke-test-http.ts`) | 37 | ✅ pass |
 | Super Admin view-as / analytics / retention HTTP, real session (`scripts/smoke-test-admin-http.ts`) | 37 | ✅ pass |
 | AI assistant, real session + **real Gemini** (`scripts/smoke-test-ai.ts`) | 34 | ✅ pass |
+| Grid: views / filter / sort / group / columns / bulk HTTP, real session (`scripts/smoke-test-grid-http.ts`) | 36 | ✅ pass |
 | Deployment verification (`scripts/verify-deployment.ts`) | 19 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
@@ -59,8 +60,12 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] Audit logging framework (`lib/audit/log.ts`) wired into every mutation
 - [x] Admin: Users (role/status management), Audit Logs, Organization stats, Workspaces list, All Data — real queries
 - [x] Deployed to Vercel against a live Neon Postgres, with integration tests run against the deployed instance
-- [ ] Column reorder/resize/hide UI, saved views, filter/sort/group UI, bulk select/update, freeze columns, virtualization — grid backend (hidden/order/width columns) exists in schema; UI controls not built yet
-- [ ] "View as" banner + Exit View UX (server-side access + audit already enforced)
+- [x] Grid (7 Sep 2026): server-side **filter** (same AND/OR condition engine as automations, incl. `__emailStatus`-style system fields), **search** across all columns, **sort** by header click (up to 3 keys, empties always last), **group** with counts, **pagination** (25–200/page; the browser only ever gets one page, §135) — `lib/records/query.ts`, `GET /api/datasets/[id]?filter&sort&search&groupBy&page&viewId`
+- [x] **Saved views** (`SavedView`): create / update / save-as / delete, applied via `?viewId=`, explicit params override the view; audited
+- [x] **Columns**: show/hide, rename, delete, reorder (`PATCH /api/datasets/[id]/columns` with the full id order), resize by dragging the header edge (persisted width), freeze first column
+- [x] **Bulk select → bulk set value / bulk delete** (`POST /api/datasets/[id]/records/bulk`, ≤1000 ids, only ids inside the dataset): per-record change history, contact re-link, RECORD_UPDATED automations evaluate per record, audited with counts. **Duplicate row**
+- [ ] Virtualization — datasets above 5,000 rows are filtered over the first 5,000 (the page says so); a virtualized body is a Phase 8 item
+- [x] "View as" banner + Exit View UX — shipped in Phase 6 (signed cookie, read-only, audited)
 
 ## Phase 2 — Templates ✅ done
 - [x] Template CRUD + duplicate + archive (`/api/templates*`), workspace-scoped and RBAC-enforced
@@ -164,5 +169,5 @@ test. Nothing is marked done on UI alone (§139/§140).
 1. ~~Connect a real Gmail account and verify the Google round-trip~~ — **done**: real send, real inbound sync (scan + history paths), real in-thread reply, all against the live mailbox.
 2. ~~Phase 6: organization analytics, the "view as" banner, retention policy~~ — **done** (retention enforcement and workspace mutations deferred, see Phase 6).
 3. ~~Phase 7: `AIProvider` + `GeminiProvider` with per-user/org rate limits; reply suggestion, summary, classification behind the header-first classifier~~ — **done**, verified against real Gemini.
-4. Close out Phase 1: saved views, filter/sort/group, bulk edit on the grid.
+4. ~~Close out Phase 1: saved views, filter/sort/group, bulk edit on the grid~~ — **done** (virtualization deferred to Phase 8).
 5. Scheduling dispatcher (Phase 3) and the `WAIT` action / `SCHEDULED` trigger (Phase 4) — both need the delayed queue.

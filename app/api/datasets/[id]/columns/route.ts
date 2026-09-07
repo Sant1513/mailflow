@@ -49,3 +49,36 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
 
   return NextResponse.json({ column }, { status: 201 });
 });
+
+const reorderSchema = z.object({
+  /** Every column id of the dataset, in the desired display order. */
+  order: z.array(z.string().min(1)).min(1).max(500),
+});
+
+/** §12 reorder columns: the client sends the full id order; ids not in the dataset are rejected. */
+export const PATCH = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
+  const session = await requireSession();
+  requireCanWrite(session);
+
+  const dataset = await prisma.dataset.findUnique({ where: { id: params.id } });
+  if (!dataset) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (dataset.workspaceId !== session.workspaceId && session.role !== Role.SUPER_ADMIN) {
+    throw new ForbiddenError();
+  }
+
+  const body = reorderSchema.parse(await req.json());
+  const existing = await prisma.datasetColumn.findMany({ where: { datasetId: dataset.id }, select: { id: true } });
+  const known = new Set(existing.map((c) => c.id));
+  const unknown = body.order.filter((id) => !known.has(id));
+  if (unknown.length > 0) {
+    return NextResponse.json({ error: `Unknown column id(s): ${unknown.join(', ')}` }, { status: 400 });
+  }
+
+  await prisma.$transaction(
+    body.order.map((id, index) => prisma.datasetColumn.update({ where: { id }, data: { order: index } }))
+  );
+  await audit(session, 'DATASET_COLUMN_REORDER', { targetType: 'Dataset', targetId: dataset.id, metadata: { count: body.order.length } });
+
+  const columns = await prisma.datasetColumn.findMany({ where: { datasetId: dataset.id }, orderBy: { order: 'asc' } });
+  return NextResponse.json({ columns });
+});
