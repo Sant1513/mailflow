@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { NotificationBell } from '@/components/nav/NotificationBell';
 
 const MAIN_ITEMS = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -109,6 +110,9 @@ export function AppNav({
           <div className="truncate text-faint">{user.email}</div>
         </div>
       </div>
+      <div className="mb-2">
+        <NotificationBell />
+      </div>
       <div className="mb-3">
         <ThemeToggle />
       </div>
@@ -142,6 +146,7 @@ export function AppNav({
           masai<span className="text-primary">.</span>
         </Link>
         <div className="flex items-center gap-2">
+          <NotificationBell compact />
           <ThemeToggle compact />
           <button
             onClick={() => setOpen(true)}

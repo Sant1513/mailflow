@@ -23,7 +23,14 @@ const replySchema = z.object({
    * A new thread is a deliberate choice — it must never happen by accident.
    */
   newThread: z.boolean().default(false),
+  /** Files as base64; 10 MB total (Gmail allows 25 MB, the request body is the real ceiling). */
+  attachments: z
+    .array(z.object({ filename: z.string().min(1).max(200), mimeType: z.string().min(1).max(120), base64: z.string().min(1) }))
+    .max(10)
+    .default([]),
 });
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 /**
  * §53 reply from the app, in the same Gmail thread as the student's message.
@@ -38,6 +45,12 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = replySchema.parse(await req.json());
+  // Header-safe filenames: no CR/LF/quotes can reach the MIME headers.
+  const files = body.attachments.map((a) => ({ filename: a.filename.replace(/[\r\n"]/g, '_'), mimeType: a.mimeType, content: Buffer.from(a.base64, 'base64') }));
+  const totalBytes = files.reduce((n, f) => n + f.content.length, 0);
+  if (totalBytes > MAX_ATTACHMENT_BYTES) {
+    return NextResponse.json({ error: `Attachments total ${(totalBytes / 1048576).toFixed(1)} MB; the limit is 10 MB.` }, { status: 400 });
+  }
 
   // Reply from the caller's OWN mailbox, not the conversation's original
   // account — a SUPER_ADMIN viewing another workspace cannot send as them.
@@ -86,6 +99,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       subject,
       html: body.html,
       plainText: body.plainText,
+      attachments: files.length ? files : undefined,
       threadId,
       inReplyTo,
       references,
@@ -147,8 +161,14 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
         sentAt: now,
         status: 'SENT',
         isRead: true,
+        hasAttachments: files.length > 0,
       },
     });
+    if (files.length) {
+      await tx.attachment.createMany({
+        data: files.map((a) => ({ conversationMessageId: message.id, filename: a.filename, mimeType: a.mimeType, size: a.content.length })),
+      });
+    }
 
     await tx.conversation.update({
       where: { id: target.id },

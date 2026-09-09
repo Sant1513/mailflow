@@ -6,11 +6,11 @@
 - **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
 - **Repo:** https://github.com/Sant1513/mailflow
 
-## Verification status (last run: 7 Sep 2026, after feedback round 1)
+## Verification status (last run: 9 Sep 2026, after feedback round 2)
 
 | Suite | Count | Result |
 | --- | --- | --- |
-| Unit tests (`npm test`) | 384 | ✅ pass |
+| Unit tests (`npm test`) | 402 | ✅ pass |
 | Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
 | Send pipeline, live DB + fake provider (`scripts/smoke-test-send.ts`) | 35 | ✅ pass |
 | Automation engine, live DB (`scripts/smoke-test-automation.ts`) | 28 | ✅ pass |
@@ -22,6 +22,7 @@
 | Grid: views / filter / sort / group / columns / bulk HTTP, real session (`scripts/smoke-test-grid-http.ts`) | 36 | ✅ pass |
 | Campaign approvals: submit / list / search / approve / reject / audit / charts HTTP (`scripts/smoke-test-approvals-http.ts`) | 27 | ✅ pass |
 | Batches / History / All Conversations pages + "no placeholders" sweep (`scripts/smoke-test-pages-http.ts`) | 26 | ✅ pass |
+| Inbox composer / rendering / assignment + resolution notifications (**real Slack thread**) / snippets / bell / follow-up cron (`scripts/smoke-test-inbox-notify-http.ts`) | 39 | ✅ pass |
 | Deployment verification (`scripts/verify-deployment.ts`) | 19 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
@@ -148,6 +149,18 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] System Settings page: retention UI + read-only view of runtime env (sign-in restriction, rate limit, AI key presence)
 - [ ] Workspace management actions (create / rename / disable / move users) — listing exists, mutations not yet
 - [ ] Retention enforcement (deliberately deferred, see above)
+
+## Feedback round 2 — composer, rendering, Slack + email notifications, CRM extras (9 Sep 2026) — done
+Spec: docs/requests/2026-09-09-inbox-composer-notifications.md
+- [x] **Reply composer** (components/inbox/ReplyComposer.tsx): Write (rich text: bold / italic / underline / lists / link / clear), HTML (code editor + Format), Preview (exact email, From + subject, 320–1200 px width slider + Desktop/Mobile). Insert link, Insert snippet, AI suggest reply, **attachments** (10 MB total; real MIME parts via the Gmail path; stored as Attachment rows on the outbound message). Plain-text alternative generated from the HTML
+- [x] **Message rendering**: every message shows its sanitised HTML by default in a self-sizing frame (no inner scrollbar, no script: sandbox without allow-scripts); plain-text messages get paragraphs + clickable links; **quoted history collapsed** (Gmail / Outlook / Apple Mail / Yahoo / Thunderbird markers and "On … wrote:" / ">" lines) behind "Show quoted text"; split happens server-side, raw HTML never reaches the browser
+- [x] **Assignment → email + Slack + bell**; **resolution → same email thread + same Slack thread** (In-Reply-To/References; Slack thread_ts + ✅ reaction). Email from the assigner's Gmail (fallback: the conversation's mailbox), Slack mention by the user's Slack member ID. Best effort with recorded outcomes (returned in the PATCH response, shown in the toast, audited as CONVERSATION_NOTIFY). Thread ids stored on the conversation
+- [x] **Slack settings** on System Settings: channel ID, bot + channel status, Send test message, switches for assignments / resolutions / follow-ups (IntegrationSettings). Token is SLACK_BOT_TOKEN in the environment only
+- [x] **Slack member ID per user**: Users page (super admin) and each person's own Settings page (/api/me)
+- [x] **Saved replies** (ReplySnippet, /api/snippets): per workspace, {{Name}} / {{FirstName}} / {{Email}} / {{Sender}} / dataset columns resolved for the conversation's student at insert time, unknown variables kept visible; managed in Settings
+- [x] **Notification bell** (§87): unread count, list, mark read, in the sidebar and the mobile bar; polls every 60 s
+- [x] **Follow-up reminders**: /api/cron/follow-ups every 15 min (vercel.json, CRON_SECRET) → one in-app notification + one Slack thread reply per due follow-up (remindedAt guarantees once)
+- [ ] Later: SLA highlighting for threads waiting > 48 h, @mentions in notes, per-student do-not-contact flag, CSV export of grid views, inbox keyboard shortcuts
 
 ## Feedback round 1 — approvals, themes, responsive, editor (7 Sep 2026) — done
 Spec: docs/requests/2026-09-07-approvals-theme-ux.md

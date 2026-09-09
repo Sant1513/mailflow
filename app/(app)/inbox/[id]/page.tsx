@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { AiSummaryCard, ReplyAssistant } from '@/components/ai/ReplyAssistant';
-import { EmailPreview } from '@/components/email-preview/EmailPreview';
+import { AiSummaryCard } from '@/components/ai/ReplyAssistant';
+import { MessageBody } from '@/components/inbox/MessageBody';
+import { ReplyComposer, type ComposerPayload } from '@/components/inbox/ReplyComposer';
 
 const STATUSES = ['OPEN', 'IN_PROGRESS', 'WAITING_FOR_STUDENT', 'RESOLVED', 'CLOSED'];
 
@@ -15,14 +16,10 @@ export default function ConversationPage() {
   const [data, setData] = useState<any>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const [reply, setReply] = useState('');
-  const [replyCc, setReplyCc] = useState('');
-  const [newThread, setNewThread] = useState(false);
   const [note, setNote] = useState('');
   const [tagInput, setTagInput] = useState('');
   const [followUpDate, setFollowUpDate] = useState('');
   const [followUpNote, setFollowUpNote] = useState('');
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/conversations/${params.id}`);
@@ -55,38 +52,36 @@ export default function ConversationPage() {
       toast.error(json.error ?? `Failed to ${label}`);
       return;
     }
+    // §57/§87: say what was notified (email + Slack) so nobody wonders whether it went out.
+    const n = json.notify?.assignment ?? json.notify?.resolution;
+    if (n) {
+      const part = (k: string, v: string) => `${k}: ${String(v).startsWith('SENT') ? 'sent' : String(v).replace(/^SKIPPED: |^FAILED: /, '')}`;
+      toast.success(`${label === 'change status' ? 'Status updated' : 'Assigned'} · ${part('email', n.email)} · ${part('Slack', n.slack)}`, { duration: 8000 });
+    }
     load();
   }
 
-  async function sendReply() {
-    if (!reply.trim()) return;
-    if (!confirm(newThread ? 'Send as a NEW email thread?' : 'Send this reply in the existing thread?')) return;
+  async function sendReply(payload: ComposerPayload): Promise<boolean> {
+    if (!confirm(payload.newThread ? 'Send as a NEW email thread?' : 'Send this reply in the existing thread?')) return false;
     setBusy('reply');
     const res = await fetch(`/api/conversations/${params.id}/reply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        html: reply.split('\n').map((l) => `<p>${l.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>`).join(''),
-        plainText: reply,
-        cc: replyCc.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean),
-        newThread,
-      }),
+      body: JSON.stringify(payload),
     });
     setBusy(null);
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
     if (!res.ok) {
       toast.error(json.error ?? 'Failed to send');
-      return;
+      return false;
     }
-    toast.success(newThread ? 'New email sent' : 'Reply sent in the same thread');
-    setReply('');
-    setReplyCc('');
-    setNewThread(false);
+    toast.success(payload.newThread ? 'New email sent' : 'Reply sent in the same thread');
     if (json.newThread && json.conversationId !== params.id) {
       window.location.href = `/inbox/${json.conversationId}`;
-      return;
+      return true;
     }
     load();
+    return true;
   }
 
   async function addNote() {
@@ -276,33 +271,15 @@ export default function ConversationPage() {
                     </span>
                     <span>{new Date(item.sentAt ?? item.receivedAt).toLocaleString()}</span>
                   </div>
-                  {expanded[item.id] ? (
-                    <>
-                      {item.htmlBody ? (
-                        <div className="rounded border">
-                          <EmailPreview html={item.htmlBody} mode="desktop" />
-                        </div>
-                      ) : (
-                        <pre className="whitespace-pre-wrap font-sans">{item.plainTextBody}</pre>
-                      )}
-                      {item.attachments?.length > 0 && (
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          Attachments: {item.attachments.map((a: any) => `${a.filename} (${Math.round(a.size / 1024)}KB)`).join(', ')}
-                        </div>
-                      )}
-                      <button onClick={() => setExpanded((e) => ({ ...e, [item.id]: false }))} className="mt-2 text-xs text-primary hover:underline">
-                        Collapse
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <div className="whitespace-pre-wrap">{item.plainTextBody?.trim() || item.snippet || '(no text)'}</div>
-                      {item.htmlBody && (
-                        <button onClick={() => setExpanded((e) => ({ ...e, [item.id]: true }))} className="mt-1 text-xs text-primary hover:underline">
-                          Show formatted
-                        </button>
-                      )}
-                    </>
+                  <MessageBody main={item.bodyMain ?? '<p><em>(no text)</em></p>'} quoted={item.bodyQuoted ?? null} />
+                  {item.attachments?.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1 text-[11px]">
+                      {item.attachments.map((a: any) => (
+                        <span key={a.id} className="badge badge-neutral !normal-case !tracking-normal" title={a.mimeType}>
+                          📎 {a.filename} <span className="text-faint">({Math.max(1, Math.round(a.size / 1024))} KB)</span>
+                        </span>
+                      ))}
+                    </div>
                   )}
                 </div>
               )
@@ -310,47 +287,16 @@ export default function ConversationPage() {
             {timeline.length === 0 && <div className="text-sm text-muted-foreground">No messages yet.</div>}
           </div>
 
-          {/* Reply composer (§53/§54) */}
-          <div className="mx-auto mt-4 w-full max-w-3xl rounded-lg border bg-card p-3">
-            <div className="mb-2 flex items-center justify-between text-xs">
-              <span className="font-semibold">
-                {newThread ? 'New email' : 'Reply'}{' '}
-                <span className="font-normal text-muted-foreground">
-                  to {c.recipientEmail} · from {c.account.emailAddress}
-                </span>
-              </span>
-              <label className="flex items-center gap-1 text-muted-foreground">
-                <input type="checkbox" checked={newThread} onChange={(e) => setNewThread(e.target.checked)} />
-                Start a new thread
-              </label>
-            </div>
-            <input
-              value={replyCc}
-              onChange={(e) => setReplyCc(e.target.value)}
-              placeholder="CC (optional)"
-              className="mb-2 w-full rounded border px-2 py-1 text-xs"
-            />
-            <ReplyAssistant conversationId={c.id} onInsert={(text) => setReply(text)} />
-            <textarea
-              value={reply}
-              onChange={(e) => setReply(e.target.value)}
-              rows={5}
-              placeholder="Write your reply…"
-              className="w-full rounded border px-2 py-1.5 text-sm"
-            />
-            <div className="mt-2 flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground">
-                {newThread ? 'Creates a separate Gmail thread.' : 'Stays in the same Gmail thread.'}
-              </span>
-              <button
-                onClick={sendReply}
-                disabled={busy === 'reply' || !reply.trim()}
-                className="btn-primary"
-              >
-                {busy === 'reply' ? 'Sending…' : newThread ? 'Send new email' : 'Send reply'}
-              </button>
-            </div>
-          </div>
+          {/* Reply composer (§53/§54): rich text / HTML / preview, attachments, snippets */}
+          <ReplyComposer
+            conversationId={c.id}
+            recipientEmail={c.recipientEmail}
+            fromEmail={c.account.emailAddress}
+            fromName={c.account.displayName ?? ''}
+            subject={c.subject}
+            busy={busy === 'reply'}
+            onSend={sendReply}
+          />
         </div>
 
         {/* RIGHT: notes + follow-ups */}

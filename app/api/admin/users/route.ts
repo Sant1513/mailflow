@@ -28,6 +28,7 @@ export const GET = withErrorHandling(async () => {
       role: u.role,
       status: u.status,
       lastLoginAt: u.lastLoginAt,
+      slackUserId: u.slackUserId,
       workspace: u.ownedWorkspaces[0]
         ? {
             id: u.ownedWorkspaces[0].id,

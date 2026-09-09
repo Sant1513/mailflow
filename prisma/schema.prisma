@@ -43,6 +43,7 @@ model Organization {
   contacts    Contact[]
   aiUsage     AiUsage[]
   retentionPolicy RetentionPolicy?
+  integrationSettings IntegrationSettings?
 }
 
 model User {
@@ -63,6 +64,8 @@ model User {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   lastLoginAt     DateTime?
+  // Slack member id (U…): mentions in assignment / resolution notifications.
+  slackUserId     String?
 
   organization       Organization         @relation(fields: [organizationId], references: [id])
   ownedWorkspaces     Workspace[]          @relation("WorkspaceOwner")
@@ -664,6 +667,12 @@ model Conversation {
   lastMessageAt          DateTime?
   messageCount           Int      @default(0)
   unread                 Boolean  @default(false)
+  // Assignment notification threads (email + Slack), continued on resolution.
+  notifyEmailAccountId   String?
+  notifyEmailMessageId   String?
+  notifyEmailThreadId    String?
+  notifySlackChannelId   String?
+  notifySlackThreadTs    String?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
@@ -776,6 +785,7 @@ model FollowUp {
   dueDate        DateTime
   note           String?
   completed      Boolean   @default(false)
+  remindedAt     DateTime?
   createdAt      DateTime  @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -893,4 +903,38 @@ model RetentionPolicy {
   updatedAt                 DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// INTEGRATIONS / SNIPPETS
+// ─────────────────────────────────────────────────────────────────────────
+
+// Per-organisation Slack settings. The bot token itself is SLACK_BOT_TOKEN in
+// the environment and never stored here.
+model IntegrationSettings {
+  id                       String   @id @default(cuid())
+  organizationId           String   @unique
+  slackChannelId           String?
+  slackNotifyAssignments   Boolean  @default(true)
+  slackNotifyResolutions   Boolean  @default(true)
+  slackNotifyFollowUps     Boolean  @default(true)
+  updatedById              String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+}
+
+// Saved replies for the inbox composer; {{Name}}-style variables resolve
+// against the conversation's contact and record.
+model ReplySnippet {
+  id          String   @id @default(cuid())
+  workspaceId String
+  createdById String
+  name        String
+  html        String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId])
 }

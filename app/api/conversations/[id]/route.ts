@@ -6,6 +6,8 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { loadConversationForSession } from '@/lib/conversations/access';
+import { splitMessageBody } from '@/lib/conversations/messageView';
+import { notifyAssignment, notifyResolution } from '@/lib/conversations/notify';
 import { ConversationStatus } from '@prisma/client';
 
 export const GET = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
@@ -24,7 +26,14 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
     orderBy: { name: 'asc' },
   });
 
-  return NextResponse.json({ conversation, members, viewerId: session.userId });
+  // §50: bodies are split server-side (sanitised HTML, quoted history apart)
+  // so the browser never runs the sanitiser and never sees raw inbound HTML.
+  const messages = (conversation as any).messages?.map((m: any) => {
+    const split = splitMessageBody({ htmlBody: m.htmlBody, plainTextBody: m.plainTextBody, snippet: m.snippet });
+    return { ...m, htmlBody: undefined, bodyMain: split.main, bodyQuoted: split.quoted };
+  });
+
+  return NextResponse.json({ conversation: { ...conversation, messages }, members, viewerId: session.userId });
 });
 
 const patchSchema = z.object({
@@ -41,6 +50,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = patchSchema.parse(await req.json());
+  const notify: Record<string, unknown> = {};
 
   if (body.assigneeId) {
     const assignee = await prisma.user.findFirst({
@@ -71,6 +81,10 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
         refId: conversation.id,
       },
     });
+    // §57/§87: closure goes to the assignee in the same email + Slack threads.
+    if (body.status === ConversationStatus.RESOLVED || body.status === ConversationStatus.CLOSED) {
+      notify.resolution = await notifyResolution(conversation.id, body.status, session);
+    }
   }
 
   if (body.assigneeId !== undefined && body.assigneeId !== conversation.assigneeId) {
@@ -80,18 +94,10 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       metadata: { from: conversation.assigneeId, to: body.assigneeId },
     });
     if (body.assigneeId && body.assigneeId !== session.userId) {
-      await prisma.notification.create({
-        data: {
-          workspaceId: conversation.workspaceId,
-          userId: body.assigneeId,
-          type: 'ASSIGNMENT',
-          title: `${session.name} assigned you a conversation`,
-          body: conversation.subject,
-          link: `/inbox/${conversation.id}`,
-        },
-      });
+      // §57/§87: in-app + email + Slack, all recorded; never blocks the assignment.
+      notify.assignment = await notifyAssignment(conversation.id, body.assigneeId, session);
     }
   }
 
-  return NextResponse.json({ conversation: updated });
+  return NextResponse.json({ conversation: updated, notify });
 });
