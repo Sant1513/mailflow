@@ -159,7 +159,7 @@ Spec: docs/requests/2026-09-09-inbox-composer-notifications.md
 - [x] **Slack member ID per user**: Users page (super admin) and each person's own Settings page (/api/me)
 - [x] **Saved replies** (ReplySnippet, /api/snippets): per workspace, {{Name}} / {{FirstName}} / {{Email}} / {{Sender}} / dataset columns resolved for the conversation's student at insert time, unknown variables kept visible; managed in Settings
 - [x] **Notification bell** (§87): unread count, list, mark read, in the sidebar and the mobile bar; polls every 60 s
-- [x] **Follow-up reminders**: /api/cron/follow-ups every 15 min (vercel.json, CRON_SECRET) → one in-app notification + one Slack thread reply per due follow-up (remindedAt guarantees once)
+- [x] **Follow-up reminders**: /api/cron/follow-ups (CRON_SECRET) → one in-app notification + one Slack thread reply per due follow-up (remindedAt guarantees once). Scheduled every 15 min by GitHub Actions (.github/workflows/follow-up-reminders.yml) with a daily Vercel cron backstop at 09:00 IST, since Vercel Hobby allows only daily crons
 - [ ] Later: SLA highlighting for threads waiting > 48 h, @mentions in notes, per-student do-not-contact flag, CSV export of grid views, inbox keyboard shortcuts
 
 ## Feedback round 1 — approvals, themes, responsive, editor (7 Sep 2026) — done
