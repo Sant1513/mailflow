@@ -23,14 +23,14 @@ const replySchema = z.object({
    * A new thread is a deliberate choice — it must never happen by accident.
    */
   newThread: z.boolean().default(false),
-  /** Files as base64; 10 MB total (Gmail allows 25 MB, the request body is the real ceiling). */
+  /** Files as base64; 4 MB total — Vercel serverless functions reject bodies over ~4.5 MB before the route runs. */
   attachments: z
     .array(z.object({ filename: z.string().min(1).max(200), mimeType: z.string().min(1).max(120), base64: z.string().min(1) }))
     .max(10)
     .default([]),
 });
 
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 
 /**
  * §53 reply from the app, in the same Gmail thread as the student's message.
@@ -49,7 +49,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   const files = body.attachments.map((a) => ({ filename: a.filename.replace(/[\r\n"]/g, '_'), mimeType: a.mimeType, content: Buffer.from(a.base64, 'base64') }));
   const totalBytes = files.reduce((n, f) => n + f.content.length, 0);
   if (totalBytes > MAX_ATTACHMENT_BYTES) {
-    return NextResponse.json({ error: `Attachments total ${(totalBytes / 1048576).toFixed(1)} MB; the limit is 10 MB.` }, { status: 400 });
+    return NextResponse.json({ error: `Attachments total ${(totalBytes / 1048576).toFixed(1)} MB; the limit is 4 MB per reply.` }, { status: 400 });
   }
 
   // Reply from the caller's OWN mailbox, not the conversation's original

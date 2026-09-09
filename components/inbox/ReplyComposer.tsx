@@ -33,7 +33,7 @@ interface Snippet {
   missing: string[];
 }
 
-const MAX_TOTAL = 10 * 1024 * 1024;
+const MAX_TOTAL = 4 * 1024 * 1024;
 const MODES = ['write', 'html', 'preview'] as const;
 type Mode = (typeof MODES)[number];
 
@@ -151,7 +151,7 @@ export function ReplyComposer({
     }
     const total = next.reduce((n, a) => n + a.size, 0);
     if (total > MAX_TOTAL) {
-      toast.error(`Attachments total ${(total / 1048576).toFixed(1)} MB; the limit is 10 MB.`);
+      toast.error(`Attachments total ${(total / 1048576).toFixed(1)} MB; the limit is 4 MB per reply.`);
       return;
     }
     setAttachments(next);
@@ -240,7 +240,7 @@ export function ReplyComposer({
             )}
           </>
         )}
-        <label className="btn-secondary !px-2 !py-0.5 text-[11px] normal-case tracking-normal cursor-pointer" title="Attach files (10 MB total)">
+        <label className="btn-secondary !px-2 !py-0.5 text-[11px] normal-case tracking-normal cursor-pointer" title="Attach files (4 MB total per reply)">
           📎 Attach
           <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
         </label>
@@ -294,7 +294,7 @@ export function ReplyComposer({
               <button onClick={() => setAttachments((x) => x.filter((_, j) => j !== i))} className="ml-1 text-muted-foreground hover:text-destructive" title="Remove">✕</button>
             </span>
           ))}
-          <span className="text-faint">{(totalSize / 1048576).toFixed(1)} / 10 MB</span>
+          <span className="text-faint">{(totalSize / 1048576).toFixed(1)} / 4 MB</span>
         </div>
       )}
 

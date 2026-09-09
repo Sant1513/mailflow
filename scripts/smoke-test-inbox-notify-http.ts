@@ -102,9 +102,10 @@ async function main() {
     check('conversation page renders', page.status === 200, page.status);
 
     console.log('-- §1 composer: reply route --');
-    const big = Buffer.alloc(11 * 1024 * 1024, 1).toString('base64');
+    const big = Buffer.alloc(5 * 1024 * 1024, 1).toString('base64');
     r = await call(`/api/conversations/${conversation.id}/reply`, owner.cookie, { method: 'POST', body: JSON.stringify({ html: '<p>hi</p>', attachments: [{ filename: 'big.bin', mimeType: 'application/octet-stream', base64: big }] }) });
-    check('attachments over 10 MB are refused (400)', r.status === 400 && /10 MB/.test(r.json?.error ?? ''), r.json);
+    // Locally the route answers 400; on Vercel the platform answers 413 before the route runs. Both refuse.
+    check('attachments over 4 MB are refused (400 from the app, or 413 from the platform)', (r.status === 400 && /4 MB/.test(r.json?.error ?? '')) || r.status === 413, { status: r.status, body: r.json });
     r = await call(`/api/conversations/${conversation.id}/reply`, owner.cookie, { method: 'POST', body: JSON.stringify({ html: '<p>hi <b>there</b></p>', attachments: [{ filename: 'note.txt', mimeType: 'text/plain', base64: Buffer.from('hello').toString('base64') }] }) });
     check('valid HTML + attachment reaches the mailbox check (no Gmail here → 400 connect)', r.status === 400 && /Gmail/.test(r.json?.error ?? ''), r.json);
     r = await call(`/api/conversations/${conversation.id}/reply`, viewer.cookie, { method: 'POST', body: JSON.stringify({ html: '<p>x</p>' }) });

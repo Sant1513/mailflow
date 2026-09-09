@@ -9,7 +9,7 @@ _Captured 9 Sep 2026 from product feedback. Each block is one deliverable with a
 **Build.**
 - Two editing modes with one source of truth: **Write** (rich text: bold, italic, underline, bullet and numbered lists, link, remove formatting) and **HTML** (the code editor, with Format). Switching modes never loses content.
 - **Insert link** (URL + text), **Insert snippet** (saved replies, §4.1), **AI suggest reply** (existing).
-- **Attach files**: multiple files, 10 MB total, shown as chips with size, removable. Sent as real MIME attachments through the same Gmail path as campaigns and stored on the outbound message.
+- **Attach files**: multiple files, 4 MB total per reply (the serverless request limit), shown as chips with size, removable. Sent as real MIME attachments through the same Gmail path as campaigns and stored on the outbound message.
 - **Preview** tab: the exact email as the student will see it (sanitised HTML, your From name, the thread subject), in a frame with the same **width slider** as the template editor (320–1200 px) plus Desktop / Mobile presets.
 - The plain-text alternative is generated from the HTML automatically.
 
@@ -49,4 +49,4 @@ _Captured 9 Sep 2026 from product feedback. Each block is one deliverable with a
 ### Assumptions
 - Slack messages go to one organisation channel (configurable), mentioning the person; DMs are not used so the team keeps visibility.
 - Notification emails are sent from the acting user's mailbox, so they read as coming from a colleague, not a system.
-- Attachments are limited to 10 MB per reply (Gmail allows 25 MB; the serverless request limit is the real ceiling).
+- Attachments are limited to 4 MB per reply: Gmail allows 25 MB, but Vercel rejects request bodies over ~4.5 MB before the app sees them.
