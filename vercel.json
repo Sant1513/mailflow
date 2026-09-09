@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/follow-ups",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/gmail-sync",
+      "schedule": "0 3 * * *"
     }
   ]
 }

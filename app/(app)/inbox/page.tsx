@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { useAutoSync } from '@/components/inbox/useAutoSync';
 
 interface InboxRow {
   id: string;
@@ -65,6 +66,9 @@ export default function InboxPage() {
     const t = setTimeout(load, q ? 250 : 0);
     return () => clearTimeout(t);
   }, [load, q]);
+
+  // §104: pull the mailbox on open, then refresh the list if anything arrived.
+  useAutoSync(() => load());
 
   useEffect(() => {
     fetch('/api/gmail/sync')

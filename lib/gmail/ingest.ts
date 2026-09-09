@@ -48,10 +48,53 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   const fromEmail = message.from?.email ?? '';
   const ownAddress = account.emailAddress.toLowerCase();
 
-  // Our own sent mail shows up in history too. Outbound is recorded at send
-  // time by processEmailJob, so a copy from the SENT label is not a reply.
+  // Our own sent mail shows up in history too. Sends made through MailFlow
+  // are recorded at send time (deduplicated above by gmailMessageId). A
+  // message the team sent straight from Gmail in a thread we know is stored
+  // as OUTBOUND so the conversation stays complete; it never counts as a
+  // reply, never notifies, never classifies (§50).
   if (fromEmail === ownAddress || message.labelIds.includes('SENT')) {
-    return { status: 'OUTBOUND_ALREADY_RECORDED' };
+    const thread = await prisma.conversation.findUnique({
+      where: { emailProviderAccountId_gmailThreadId: { emailProviderAccountId: account.id, gmailThreadId: message.gmailThreadId } },
+    });
+    if (!thread) return { status: 'OUTBOUND_ALREADY_RECORDED' };
+    const outbound = await prisma.$transaction(async (tx) => {
+      const stored = await tx.conversationMessage.create({
+        data: {
+          conversationId: thread.id,
+          gmailMessageId: message.gmailMessageId,
+          gmailThreadId: message.gmailThreadId,
+          direction: MessageDirection.OUTBOUND,
+          classification: 'UNKNOWN',
+          senderEmail: ownAddress,
+          senderName: message.from?.name ?? null,
+          recipientEmail: message.to[0]?.email ?? thread.recipientEmail,
+          cc: message.cc.map((a) => a.email),
+          bcc: [],
+          subject: message.subject,
+          messageIdHeader: message.messageIdHeader,
+          inReplyTo: message.inReplyTo,
+          references: message.references,
+          htmlBody: message.htmlBody,
+          plainTextBody: message.plainTextBody,
+          snippet: message.snippet,
+          sentAt: message.sentAt,
+          status: 'SENT',
+          isRead: true,
+          hasAttachments: message.attachments.length > 0,
+        },
+      });
+      await tx.conversation.update({
+        where: { id: thread.id },
+        data: { lastMessageAt: message.sentAt, messageCount: { increment: 1 } },
+      });
+      await tx.record.updateMany({ where: { contactId: thread.contactId }, data: { lastCommunicationAt: message.sentAt, lastCommunicationDirection: 'OUTBOUND' } });
+      await tx.recipientHistory.create({
+        data: { contactId: thread.contactId, type: 'MANUAL_REPLY', summary: `Replied from Gmail: "${message.subject.slice(0, 80)}"`, refId: stored.id, createdAt: message.sentAt },
+      });
+      return stored;
+    });
+    return { status: 'STORED', conversationId: thread.id, messageId: outbound.id, classification: 'OUTBOUND', created: false };
   }
 
   // ── Resolve the conversation this belongs to ──

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
-import { syncAccount } from '@/lib/gmail/sync';
+import { syncAccountToCompletion } from '@/lib/gmail/sync';
+
+export const maxDuration = 60;
 import { getQueue, QUEUE_NAMES } from '@/lib/queue/queues';
 
 /**
@@ -49,6 +51,6 @@ export const POST = async (req: Request) => {
     return NextResponse.json({ ok: true, queued: true });
   }
 
-  const result = await syncAccount(account);
+  const result = await syncAccountToCompletion(account, { totalBudgetMs: 40_000 });
   return NextResponse.json({ ok: true, queued: false, stored: result.stored, errors: result.errors.length });
 };

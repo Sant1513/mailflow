@@ -187,7 +187,13 @@ async function main() {
   const r6 = await ingestInboundMessage(account, parseGmailMessage(gmailMsg({
     id: `own-${stamp}`, threadId, from: user.email, to: studentEmail, subject: 'RPG', messageId: `<o-${stamp}@x>`, text: 'x', labels: ['SENT'],
   })));
-  check('our own outbound copy -> OUTBOUND_ALREADY_RECORDED', r6.status === 'OUTBOUND_ALREADY_RECORDED', r6);
+  check('our own Gmail reply in a known thread -> stored as OUTBOUND (no reply side effects)', r6.status === 'STORED' && (r6 as any).classification === 'OUTBOUND', r6);
+  const own = r6.status === 'STORED' ? await prisma.conversationMessage.findUnique({ where: { id: r6.messageId } }) : null;
+  check('…direction OUTBOUND, read, in the same conversation', own?.direction === 'OUTBOUND' && own?.isRead === true && own?.conversationId === (r6 as any).conversationId, own);
+  const r6b = await ingestInboundMessage(account, parseGmailMessage(gmailMsg({
+    id: `own-unknown-${stamp}`, threadId: `thread-unknown-${stamp}`, from: user.email, to: studentEmail, subject: 'Hello', messageId: `<o2-${stamp}@x>`, text: 'x', labels: ['SENT'],
+  })));
+  check('our own mail in an unknown thread -> OUTBOUND_ALREADY_RECORDED (ignored)', r6b.status === 'OUTBOUND_ALREADY_RECORDED', r6b);
   const r7 = await ingestInboundMessage(account, parseGmailMessage(gmailMsg({
     id: `unsolicited-${stamp}`, threadId: `thread-new-${stamp}`, from: studentEmail, to: user.email,
     subject: 'Question', messageId: `<q-${stamp}@example.com>`, text: 'Can I get an extension?',
@@ -199,8 +205,9 @@ async function main() {
   const fresh = await prisma.emailProviderAccount.update({ where: { id: account.id }, data: { gmailHistoryId: '1000' } });
   const m1 = gmailMsg({ id: `sync1-${stamp}`, threadId, from: studentEmail, to: user.email, subject: 'Re: RPG Clearance', messageId: `<s1-${stamp}@example.com>`, inReplyTo: ourMessageId, text: 'via sync' });
   const source: GmailSource = {
-    listHistory: async (start) => { check('history path used with stored cursor', start === '1000', start); return { messageIds: [m1.id!, 'gone-id'], historyId: '2000' }; },
-    listRecentInbox: async () => ({ messageIds: [], historyId: '9999' }),
+    listHistory: async (start) => { check('history path used with stored cursor', start === '1000', start); return { entries: [{ messageId: m1.id!, threadId, labelIds: ['INBOX'] }, { messageId: 'gone-id', threadId: 'thread-unknown', labelIds: ['INBOX'] }], historyId: '2000' }; },
+    listRecentInbox: async () => ({ entries: [], historyId: '9999' }),
+    getMessageMetadata: async () => null,
     getMessage: async (id) => (id === m1.id ? m1 : null),
     getProfileHistoryId: async () => '2000',
   };
@@ -213,7 +220,8 @@ async function main() {
 
   const goneSource: GmailSource = {
     listHistory: async () => { throw new GmailHistoryGone(); },
-    listRecentInbox: async () => ({ messageIds: [], historyId: '3000' }),
+    listRecentInbox: async () => ({ entries: [], historyId: '3000' }),
+    getMessageMetadata: async () => null,
     getMessage: async () => null,
     getProfileHistoryId: async () => '3000',
   };
@@ -240,6 +248,8 @@ async function main() {
   await prisma.emailProviderAccount.delete({ where: { id: account.id } });
   await prisma.auditLog.deleteMany({ where: { actorId: user.id } });
   await prisma.workspaceMember.deleteMany({ where: { userId: user.id } });
+  // Ingest logs AI classification attempts against the workspace (Phase 7).
+  await prisma.aiUsage.deleteMany({ where: { workspaceId: workspace.id } });
   await prisma.workspace.delete({ where: { id: workspace.id } });
   await prisma.user.delete({ where: { id: user.id } });
   console.log('  ✓ all inbox-test rows removed');

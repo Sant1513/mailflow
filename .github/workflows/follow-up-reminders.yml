@@ -1,16 +1,20 @@
-# Follow-up reminders every 15 minutes. Vercel Hobby only allows daily crons
-# (vercel.json keeps a daily backstop at 09:00 IST); this calls the same
-# secured endpoint on the cadence the product wants.
-name: follow-up-reminders
+# Scheduled jobs every 15 minutes. Vercel Hobby only allows daily crons
+# (vercel.json keeps daily backstops); this calls the same secured
+# endpoints on the cadence the product wants.
+name: scheduled-jobs
 on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
 jobs:
-  remind:
+  run:
     runs-on: ubuntu-latest
     steps:
-      - name: Call /api/cron/follow-ups
+      - name: Sync every connected Gmail mailbox
+        run: |
+          curl -fsS -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://mailflow-six-sooty.vercel.app/api/cron/gmail-sync"
+      - name: Follow-up reminders
         run: |
           curl -fsS -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "https://mailflow-six-sooty.vercel.app/api/cron/follow-ups"

@@ -67,7 +67,8 @@ Every user has their own **workspace** — their datasets, templates, campaigns 
 - Emails go out at the configured rate (default 20 per minute per mailbox) — a 300-student batch takes about 15 minutes. Gmail also enforces its own daily sending limit on your account.
 
 ### 3.7 Replies (Inbox)
-- Replies are synced from your Gmail into the Inbox, scoped to threads MailFlow started. Push delivery is not enabled yet: click **Sync now** (Inbox or Settings) to pull the latest.
+- Replies are synced from your Gmail into the Inbox, scoped to threads MailFlow started. The mailbox is pulled automatically when you open the Inbox or a conversation (if it has not been synced in the last 2 minutes) and every 15 minutes in the background; **Sync now** (Inbox or Settings) pulls immediately.
+- If you answer a student directly in Gmail instead of from MailFlow, that reply also appears in the thread here (marked as sent from Gmail) after the next sync.
 - Bounces, out-of-office and auto-replies are classified automatically and never count as "the student replied".
 - Open a conversation to: reply in the same thread, start a new thread, add an internal note, tag, assign, set a follow-up, change status. **AI suggest reply** drafts a reply you can Insert and edit; **Summarise** gives a summary and a suggested next action — you decide whether to apply it.
 - Every conversation is linked to the Contact and the record it came from.

@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { AiSummaryCard } from '@/components/ai/ReplyAssistant';
 import { MessageBody } from '@/components/inbox/MessageBody';
 import { ReplyComposer, type ComposerPayload } from '@/components/inbox/ReplyComposer';
+import { useAutoSync } from '@/components/inbox/useAutoSync';
 
 const STATUSES = ['OPEN', 'IN_PROGRESS', 'WAITING_FOR_STUDENT', 'RESOLVED', 'CLOSED'];
 
@@ -38,6 +39,9 @@ export default function ConversationPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // §104: pull the mailbox on open (student replies + our own Gmail replies), then refresh.
+  useAutoSync(() => load());
 
   async function patch(body: Record<string, unknown>, label: string) {
     setBusy(label);

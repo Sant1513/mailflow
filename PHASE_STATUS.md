@@ -6,7 +6,7 @@
 - **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
 - **Repo:** https://github.com/Sant1513/mailflow
 
-## Verification status (last run: 9 Sep 2026, after feedback round 2)
+## Verification status (last run: 10 Sep 2026, after the Gmail sync rework)
 
 | Suite | Count | Result |
 | --- | --- | --- |
@@ -14,7 +14,7 @@
 | Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
 | Send pipeline, live DB + fake provider (`scripts/smoke-test-send.ts`) | 35 | ✅ pass |
 | Automation engine, live DB (`scripts/smoke-test-automation.ts`) | 28 | ✅ pass |
-| Inbound ingestion + sync, live DB + fake Gmail (`scripts/smoke-test-inbox.ts`) | 32 | ✅ pass |
+| Inbound ingestion + sync, live DB + fake Gmail (`scripts/smoke-test-inbox.ts`) | 34 | ✅ pass |
 | Inbox/conversation HTTP, real session (`scripts/smoke-test-inbox-http.ts`) | 23 | ✅ pass |
 | HTTP integration (`scripts/smoke-test-http.ts`) | 37 | ✅ pass |
 | Super Admin view-as / analytics / retention HTTP, real session (`scripts/smoke-test-admin-http.ts`) | 37 | ✅ pass |
@@ -160,6 +160,9 @@ Spec: docs/requests/2026-09-09-inbox-composer-notifications.md
 - [x] **Saved replies** (ReplySnippet, /api/snippets): per workspace, {{Name}} / {{FirstName}} / {{Email}} / {{Sender}} / dataset columns resolved for the conversation's student at insert time, unknown variables kept visible; managed in Settings
 - [x] **Notification bell** (§87): unread count, list, mark read, in the sidebar and the mobile bar; polls every 60 s
 - [x] **Follow-up reminders**: /api/cron/follow-ups (CRON_SECRET) → one in-app notification + one Slack thread reply per due follow-up (remindedAt guarantees once). Scheduled every 15 min by GitHub Actions (.github/workflows/follow-up-reminders.yml) with a daily Vercel cron backstop at 09:00 IST, since Vercel Hobby allows only daily crons
+- [x] **Replies sent straight from Gmail now show in the thread** (10 Sep): the sync used to ingest only non-own INBOX messages, so a reply typed in Gmail (SENT label) never reached MailFlow. Now a message from the mailbox's own address in a known MailFlow thread is stored as OUTBOUND ("Replied from Gmail" in the student's history), and unknown threads stay untouched
+- [x] **Sync rework for busy mailboxes** (10 Sep, lib/gmail/sync.ts): the team mailbox sees ~900 new messages in two days, and fetching each in full took 15+ minutes and timed out on Vercel, so the cursor never advanced. The loop now triages from history.list's own thread + label data (drafts / spam / trash and already-stored ids dropped without a fetch, known threads fetched in full, own mail in unknown threads skipped), fetches only metadata (From / In-Reply-To / References) for the rest with six parallel calls, bulk-checks Contacts and sent Message-IDs per batch of 40, and runs under a wall-clock budget with the history cursor advanced to the last record fully processed, so a run that stops early resumes (`remaining` in the response; Sync Now / auto-sync / cron loop until drained). Measured: 925-message backlog drained in 68 s in two rounds, zero errors. Route `maxDuration = 60`
+- [x] **Auto-sync**: the Inbox list and every conversation page pull the mailbox on open when it was last synced more than 2 minutes ago (`POST /api/gmail/sync?ifStaleMinutes=2`, EmailProviderAccount.lastSyncAt); `/api/cron/gmail-sync` syncs every connected mailbox every 15 min from the GitHub Actions schedule (daily Vercel backstop). Sync Now still works as the explicit path
 - [ ] Later: SLA highlighting for threads waiting > 48 h, @mentions in notes, per-student do-not-contact flag, CSV export of grid views, inbox keyboard shortcuts
 
 ## Feedback round 1 — approvals, themes, responsive, editor (7 Sep 2026) — done

@@ -387,6 +387,7 @@ model EmailProviderAccount {
   gmailHistoryId  String?
   watchExpiresAt  DateTime?
   status          String   @default("CONNECTED") // CONNECTED | DISCONNECTED | EXPIRED
+  lastSyncAt      DateTime?
   lastVerifiedAt  DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
