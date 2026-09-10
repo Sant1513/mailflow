@@ -15,6 +15,10 @@ import crypto from 'node:crypto';
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:3000';
 const SESSION_COOKIE = BASE_URL.startsWith('https://') ? '__Secure-next-auth.session-token' : 'next-auth.session-token';
 const SLACK_TEST_CHANNEL = process.env.SLACK_TEST_CHANNEL ?? '';
+// The fixture reuses the real Masai organisation, so the channel under test is
+// whichever one that organisation has configured — SLACK_TEST_CHANNEL only
+// seeds one when it has none. Resolved after the seed below.
+let slackChannel = '';
 
 let pass = 0;
 let fail = 0;
@@ -67,6 +71,9 @@ async function main() {
   if (SLACK_TEST_CHANNEL) {
     await prisma.integrationSettings.upsert({ where: { organizationId: org.id }, create: { organizationId: org.id, slackChannelId: SLACK_TEST_CHANNEL }, update: { slackChannelId: SLACK_TEST_CHANNEL, slackNotifyAssignments: true, slackNotifyResolutions: true, slackNotifyFollowUps: true } });
   }
+
+  slackChannel = (await prisma.integrationSettings.findUnique({ where: { organizationId: org.id }, select: { slackChannelId: true, slackNotifyAssignments: true, slackNotifyResolutions: true } }).then((s) => (s?.slackNotifyAssignments && s?.slackNotifyResolutions ? s.slackChannelId : null))) ?? '';
+  console.log(slackChannel ? `Slack channel under test: ${slackChannel}` : 'No Slack channel configured for this organisation — asserting the skip path.');
 
   const account = await prisma.emailProviderAccount.create({
     data: { organizationId: org.id, workspaceId: owner.ws.id, userId: owner.u.id, provider: EmailProviderEnum.GMAIL, emailAddress: `nt-${stamp}@example.com`, status: 'DISCONNECTED' },
@@ -131,10 +138,10 @@ async function main() {
     const a = r.json?.notify?.assignment ?? {};
     check('in-app notification created for the assignee', a.inApp === 'SENT', a);
     check('email attempted; recorded as skipped (no connected Gmail in the fixture)', typeof a.email === 'string' && a.email.startsWith('SKIPPED'), a.email);
-    if (SLACK_TEST_CHANNEL) {
-      check('Slack channel message posted, mentioning the assignee', a.slack === `SENT to ${SLACK_TEST_CHANNEL}`, a.slack);
+    if (slackChannel) {
+      check('Slack channel message posted, mentioning the assignee', a.slack === `SENT to ${slackChannel}`, a.slack);
       const c1 = await prisma.conversation.findUnique({ where: { id: conversation.id }, select: { notifySlackThreadTs: true, notifySlackChannelId: true } });
-      check('Slack thread ts stored on the conversation', !!c1?.notifySlackThreadTs && c1.notifySlackChannelId === SLACK_TEST_CHANNEL, c1);
+      check('Slack thread ts stored on the conversation', !!c1?.notifySlackThreadTs && c1.notifySlackChannelId === slackChannel, c1);
     } else {
       check('Slack skipped with a reason when no channel is configured', String(a.slack).startsWith('SKIPPED'), a.slack);
     }
@@ -153,7 +160,7 @@ async function main() {
     check('resolve succeeds with notify outcomes', r.status === 200 && r.json?.notify?.resolution, r.json?.notify);
     const res = r.json?.notify?.resolution ?? {};
     check('assignee gets an in-app notification', res.inApp === 'SENT', res);
-    if (SLACK_TEST_CHANNEL) check('Slack reply lands in the assignment thread', res.slack === 'SENT (in the assignment thread)', res.slack);
+    if (slackChannel) check('Slack reply lands in the assignment thread', res.slack === 'SENT (in the assignment thread)', res.slack);
     r = await call('/api/notifications', assignee.cookie);
     check('bell shows the RESOLVED notification', r.json?.notifications?.some((n: any) => n.type === 'RESOLVED'), r.json?.notifications?.map((n: any) => n.type));
 

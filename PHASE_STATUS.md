@@ -22,7 +22,7 @@
 | Grid: views / filter / sort / group / columns / bulk HTTP, real session (`scripts/smoke-test-grid-http.ts`) | 36 | ✅ pass |
 | Campaign approvals: submit / list / search / approve / reject / audit / charts HTTP (`scripts/smoke-test-approvals-http.ts`) | 27 | ✅ pass |
 | Batches / History / All Conversations pages + "no placeholders" sweep (`scripts/smoke-test-pages-http.ts`) | 26 | ✅ pass |
-| Inbox composer / rendering / assignment + resolution notifications (**real Slack thread**) / snippets / bell / follow-up cron (`scripts/smoke-test-inbox-notify-http.ts`) | 39 | ✅ pass |
+| Inbox composer / rendering / assignment + resolution notifications (**real Slack thread**) / snippets / bell / follow-up cron (`scripts/smoke-test-inbox-notify-http.ts`) | 37 | ✅ pass |
 | Deployment verification (`scripts/verify-deployment.ts`) | 19 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
