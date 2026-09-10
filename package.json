@@ -12,7 +12,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm run lint && npm test && npm run build",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build:isolated",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "prisma generate",
@@ -22,7 +22,8 @@
     "db:studio": "prisma studio",
     "worker:email": "tsx workers/email-worker.ts",
     "worker:gmail-sync": "tsx workers/gmail-sync-worker.ts",
-    "worker:automation": "tsx workers/automation-worker.ts"
+    "worker:automation": "tsx workers/automation-worker.ts",
+    "build:isolated": "node scripts/build-isolated.mjs"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.7.4",

@@ -1,0 +1,443 @@
+<title>MailFlow Team Guide</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --ground: #f6f5f2;
+    --panel: #ffffff;
+    --ink: #17171c;
+    --muted: #64646c;
+    --line: #dedcd6;
+    --line-strong: #c9c7bf;
+    --accent: #ed0331;
+    --accent-ink: #b8001f;
+    --accent-soft: #fdeef1;
+    --good: #167a52;
+    --good-soft: #e6f5ee;
+    --warn: #8a5a00;
+    --warn-soft: #fff4d6;
+    --code-bg: #efeee9;
+    --shadow: 0 1px 0 rgba(23, 23, 28, 0.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground: #0c0c0f;
+      --panel: #151519;
+      --ink: #f2f1ec;
+      --muted: #a3a3ab;
+      --line: #26262c;
+      --line-strong: #36363d;
+      --accent: #ff3358;
+      --accent-ink: #ff5c7a;
+      --accent-soft: #2a1218;
+      --good: #4cc38a;
+      --good-soft: #10291d;
+      --warn: #f0b429;
+      --warn-soft: #2b2110;
+      --code-bg: #1d1d22;
+      --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #0c0c0f;
+    --panel: #151519;
+    --ink: #f2f1ec;
+    --muted: #a3a3ab;
+    --line: #26262c;
+    --line-strong: #36363d;
+    --accent: #ff3358;
+    --accent-ink: #ff5c7a;
+    --accent-soft: #2a1218;
+    --good: #4cc38a;
+    --good-soft: #10291d;
+    --warn: #f0b429;
+    --warn-soft: #2b2110;
+    --code-bg: #1d1d22;
+    --shadow: none;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 {
+    font-family: "Outfit", "IBM Plex Sans", system-ui, sans-serif;
+    color: var(--ink);
+    text-wrap: balance;
+    line-height: 1.15;
+    margin: 0;
+  }
+  a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  code, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.86em;
+    background: var(--code-bg);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+  }
+  .wrap {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 68ch);
+    gap: 56px;
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 40px 24px 96px;
+  }
+  @media (max-width: 960px) {
+    .wrap { grid-template-columns: minmax(0, 1fr); gap: 24px; padding: 24px 18px 72px; }
+    .rail { position: static !important; }
+    .rail nav { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 2px 16px; }
+  }
+
+  /* Rail */
+  .rail { position: sticky; top: 24px; align-self: start; font-size: 13.5px; }
+  .brand { font-family: "Outfit", sans-serif; font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 4px; }
+  .brand b { color: var(--accent); }
+  .eyebrow {
+    display: inline-block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    border: 1px solid var(--accent);
+    padding: 3px 8px;
+    border-radius: 3px;
+    margin-bottom: 20px;
+  }
+  .rail nav a {
+    display: block;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 5px 0 5px 12px;
+    border-left: 2px solid var(--line);
+  }
+  .rail nav a:hover { color: var(--ink); border-left-color: var(--line-strong); }
+  .rail nav a.here { color: var(--ink); border-left-color: var(--accent); }
+  .rail .meta { margin-top: 20px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+  .rail .meta a { word-break: break-all; }
+
+  /* Body */
+  header.top h1 { font-size: 40px; font-weight: 800; letter-spacing: -0.025em; }
+  header.top .lede { font-size: 18px; color: var(--muted); margin: 14px 0 0; max-width: 60ch; }
+  header.top .kv { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 22px; font-size: 13.5px; color: var(--muted); }
+  header.top .kv b { color: var(--ink); font-weight: 600; }
+
+  section { margin-top: 56px; scroll-margin-top: 24px; }
+  section > h2 {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line-strong);
+    margin-bottom: 18px;
+  }
+  section > h2 .n { color: var(--accent); font-family: "IBM Plex Mono", monospace; font-size: 13px; font-weight: 500; margin-right: 12px; vertical-align: 3px; }
+  h3 { font-size: 17px; font-weight: 700; margin: 26px 0 8px; }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 12px; padding-left: 22px; }
+  li { margin: 4px 0; }
+  li::marker { color: var(--muted); }
+  ol.steps { counter-reset: s; list-style: none; padding-left: 0; }
+  ol.steps li { counter-increment: s; position: relative; padding-left: 40px; margin: 10px 0; }
+  ol.steps li::before {
+    content: counter(s);
+    position: absolute; left: 0; top: 1px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--ink); color: var(--ground);
+    font-family: "Outfit", sans-serif; font-weight: 700; font-size: 13px;
+    display: grid; place-items: center;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; margin: 8px 0 16px; }
+  .tablewrap { overflow-x: auto; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 12px 16px;
+    border-radius: 0 6px 6px 0;
+    margin: 16px 0;
+    font-size: 15px;
+  }
+  .callout.good { border-left-color: var(--good); background: var(--good-soft); }
+  .callout.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .callout b { font-weight: 600; }
+
+  /* Checklist */
+  .check { list-style: none; padding: 0; margin: 12px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); }
+  .check li { margin: 0; border-top: 1px solid var(--line); }
+  .check li:first-child { border-top: 0; }
+  .check label { display: flex; gap: 12px; align-items: flex-start; padding: 11px 14px; cursor: pointer; }
+  .check input { margin-top: 5px; accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+  .check input:checked + span { color: var(--muted); text-decoration: line-through; }
+  .check-foot { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .check-foot button { font: inherit; color: var(--accent-ink); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
+
+  .pill { display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--line-strong); color: var(--muted); }
+  kbd.ui { font: 600 13px "IBM Plex Sans", sans-serif; color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; white-space: nowrap; }
+
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+  @media print { .rail { display: none; } .wrap { grid-template-columns: 1fr; } }
+</style>
+
+<div class="wrap">
+  <aside class="rail">
+    <div class="brand">masai<b>.</b></div>
+    <div class="eyebrow">MailFlow · Team guide</div>
+    <nav id="toc">
+      <a href="#setup">1 · Day-one setup</a>
+      <a href="#roles">2 · Roles</a>
+      <a href="#workflow">3 · The core workflow</a>
+      <a href="#automations">4 · Automations</a>
+      <a href="#admin">5 · Super Admin tools</a>
+      <a href="#checklist">6 · Before you send</a>
+      <a href="#limits">7 · Limits to know</a>
+      <a href="#trouble">8 · If something goes wrong</a>
+    </nav>
+    <div class="meta">
+      Live: <a href="https://mailflow-six-sooty.vercel.app">mailflow-six-sooty.vercel.app</a><br>
+      Rollout 7 Sep 2026<br>
+      Owner: Abhishesh Kumar
+    </div>
+  </aside>
+
+  <main>
+    <header class="top">
+      <h1>MailFlow, from first sign-in to first reply</h1>
+      <p class="lede">Email students from your own Gmail: import a batch, write one template, preview it per student, get it approved, send, and see every reply threaded back to the student it came from. Nothing goes out without a dry run and a human decision.</p>
+      <div class="kv">
+        <span><b>Sign in</b> with your Google account</span>
+        <span><b>Sends from</b> your own Gmail address</span>
+        <span><b>Approval</b> required before any campaign sends</span>
+      </div>
+    </header>
+
+    <section id="setup">
+      <h2><span class="n">01</span>Day-one setup</h2>
+      <p>Do these in order. The whole thing takes about five minutes.</p>
+      <ol class="steps">
+        <li><b>Sign in</b> at <a href="https://mailflow-six-sooty.vercel.app">mailflow-six-sooty.vercel.app</a> with <kbd class="ui">Continue with Google</kbd>.</li>
+        <li><b>Connect Gmail</b>: <kbd class="ui">Settings</kbd> → Gmail → <kbd class="ui">Connect</kbd>. Approve the two permissions (send, read). MailFlow sends <em>from your own address</em> and never as anyone else. If Google says "Gmail API has not been used", tell the super admin — it is enabled once for the project.</li>
+        <li><b>Check your role</b> in Settings → Profile. If it is wrong, a super admin changes it (see §2).</li>
+        <li><b>Pick a theme</b> at the bottom of the sidebar: System, Light or Dark. Remembered per browser.</li>
+        <li><b>Send yourself a test</b>: Templates → any template → <kbd class="ui">Send test email</kbd>. Confirm it lands before your first campaign.</li>
+      </ol>
+    </section>
+
+    <section id="roles">
+      <h2><span class="n">02</span>Roles</h2>
+      <div class="tablewrap">
+      <table>
+        <thead><tr><th>Role</th><th>Can do</th></tr></thead>
+        <tbody>
+          <tr><td>Viewer</td><td>Read everything in their workspace. Cannot edit, send or reply.</td></tr>
+          <tr><td>Operator</td><td>Import data, build templates and campaigns, run dry runs, submit for approval, send approved campaigns, reply in the Inbox, run automations.</td></tr>
+          <tr><td>Admin</td><td>Everything an Operator can, plus approve or reject campaigns in workspaces they belong to, and <em>Send without approval</em> for their own. Cannot approve their own campaign.</td></tr>
+          <tr><td>Super Admin</td><td>Everything, organisation-wide: Approvals for all workspaces, Users, Workspaces, All Data, All Conversations, Audit Logs, System Settings, Organization analytics, and read-only, audited <em>View workspace as</em>.</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Every person has their own <b>workspace</b>: their datasets, templates, campaigns and inbox. Nobody else's workspace is visible unless a super admin opens it with View As.</p>
+    </section>
+
+    <section id="workflow">
+      <h2><span class="n">03</span>The core workflow</h2>
+
+      <h3>3.1 Import data <span class="pill">Data</span></h3>
+      <ul>
+        <li><kbd class="ui">+ Dataset</kbd>, or <kbd class="ui">Import</kbd> → paste from Google Sheets or Excel, or upload CSV / XLSX.</li>
+        <li>The preview detects headers and types and flags duplicate emails: Keep first, Keep latest, or Import all.</li>
+        <li><b>Set the email column's type to EMAIL</b> (the small type selector under the column header). That is what makes a dataset sendable and links each row to a Contact.</li>
+      </ul>
+      <div class="callout good"><b>Importing never sends anything.</b> Neither do previews, dry runs or AI suggestions.</div>
+
+      <h3>3.2 Work the grid</h3>
+      <ul>
+        <li>Double-click a cell to edit. Click a header to sort; again for descending; again to clear. Drag a header edge to resize. <em>Freeze first column</em> keeps names in view.</li>
+        <li><kbd class="ui">Filter</kbd> builds conditions in the same language as automations (equals, contains, is empty…). System fields such as <em>Email Status</em> and <em>Reply Received</em> are available.</li>
+        <li><em>Group by</em> any column shows counts per value. <em>Search</em> matches every column.</li>
+        <li><kbd class="ui">Save view</kbd> keeps a filter, sort and grouping under a name for everyone using the dataset.</li>
+        <li><b>Bulk edit</b>: tick rows → <em>Set column… to value</em> → Apply. Each change is recorded per record; automations that trigger on updates will evaluate, and the confirmation says so.</li>
+        <li>Columns panel: show, hide, rename, reorder, delete. Rows: ⧉ duplicates, ✕ deletes.</li>
+      </ul>
+
+      <h3>3.3 Write a template <span class="pill">Templates</span></h3>
+      <ul>
+        <li>Subject and body use variables from the dataset: <code>{{Name}}</code>, <code>{{Deadline}}</code>. Insert them from <kbd class="ui">+ Insert variable</kbd> so the spelling matches the column.</li>
+        <li><em>Preview as</em> a real student shows resolved values; unresolved variables are listed in yellow. Check layout with the width slider or the Desktop / Mobile presets.</li>
+        <li><b>AI assistant</b> (left panel): describe the email → <kbd class="ui">Generate</kbd> → <kbd class="ui">Insert</kbd>. Improve, Shorten, More professional, Fix grammar and Translate rewrite the current body. Subject ideas and Check personalisation are advisory.</li>
+        <li><kbd class="ui">Format</kbd> pretty-prints the HTML without changing how it renders. <kbd class="ui">Run health check</kbd> before saving: it catches missing variables, a non-EMAIL recipient column, broken links and a missing mailbox.</li>
+        <li><kbd class="ui">Save new version</kbd>: every save is a new immutable version. Campaigns pin the version they were created with, so editing a template later never changes an email that already went out.</li>
+      </ul>
+
+      <h3>3.4 Build a campaign <span class="pill">Campaigns</span></h3>
+      <ol class="steps">
+        <li><kbd class="ui">+ Campaign</kbd>: name, dataset, template. The template version is pinned at this moment.</li>
+        <li><b>Sender settings</b>: From name, Reply-To, CC / BCC. CC and BCC go on <em>every</em> email in the campaign, so they are for supervisors and archives, not per student. The From address is always your connected Gmail.</li>
+        <li><kbd class="ui">Run simulation</kbd>: exactly who would receive, who is skipped and why (invalid email, duplicate, automation stop condition). No email is sent.</li>
+        <li><b>Review</b>: the exact headers and the rendered email per recipient. Read at least three.</li>
+        <li><kbd class="ui">Submit for approval</kbd>. Approvers get an email from your Gmail with you in CC. You cannot approve your own campaign.</li>
+        <li>After approval, <kbd class="ui">Send now</kbd>. Sending creates a batch.</li>
+      </ol>
+
+      <h3>3.5 Approve <span class="pill">Admins</span></h3>
+      <ul>
+        <li><kbd class="ui">Approvals</kbd> in the sidebar; the badge is the pending count. Tabs Pending, Approved, Rejected, All; search by campaign, requester or workspace.</li>
+        <li><kbd class="ui">Approve</kbd> takes optional internal remarks. <kbd class="ui">Reject</kbd> requires a reason, which the requester sees.</li>
+        <li>The decision is emailed back <b>in the same thread</b> as the request. If nobody has Gmail connected, the decision still happens and the row says why the email was skipped.</li>
+        <li>The campaign page shows the same buttons plus the full approval trail.</li>
+      </ul>
+
+      <h3>3.6 Watch the send <span class="pill">Batches</span></h3>
+      <ul>
+        <li>Every batch with live progress: sent, failed, skipped, and how many are still queued. It refreshes itself while anything is running.</li>
+        <li><kbd class="ui">Process queue</kbd> pushes queued emails through now. <kbd class="ui">Pause</kbd>, <kbd class="ui">Resume</kbd> and <kbd class="ui">Cancel</kbd> are immediate. <kbd class="ui">Retry failed</kbd> re-queues only the failures.</li>
+        <li>Emails leave at 20 per minute per mailbox by default, so a 300-student batch takes about 15 minutes. Gmail also enforces its own daily limit on your account.</li>
+      </ul>
+
+      <h3>3.7 Replies <span class="pill">Inbox</span></h3>
+      <ul>
+        <li>Replies are pulled from your Gmail into the Inbox, only for threads MailFlow started. Push delivery is not on yet: click <kbd class="ui">Sync now</kbd> to fetch the latest.</li>
+        <li>Bounces, out-of-office and auto-replies are classified automatically and never count as "the student replied".</li>
+        <li>In a conversation: reply in the same thread or start a new one, add an internal note, tag, assign, set a follow-up, change status. <kbd class="ui">AI suggest reply</kbd> drafts text you can Insert and edit; <kbd class="ui">Summarise</kbd> gives a summary and a suggested next action that you choose whether to apply.</li>
+        <li>Every conversation links to the Contact and the record it came from.</li>
+      </ul>
+
+      <h3>3.8 Contacts and History</h3>
+      <ul>
+        <li><b>Contacts</b>: a student's timeline across datasets — every email sent, every reply, notes and status changes.</li>
+        <li><b>History</b>: the immutable log. <em>Sent</em> lists every email with its outcome, reason and retries and a "Why?" explanation. <em>Received</em> lists every inbound message with its classification. Search and filter by status.</li>
+      </ul>
+
+      <h3>3.9 Dashboard</h3>
+      <p>Live numbers for your workspace: emails sent, pending, failed, replies, unread, open conversations, follow-ups due; a 30-day send chart; the approvals chart; recent batches, conversations and activity; quick actions.</p>
+    </section>
+
+    <section id="automations">
+      <h2><span class="n">04</span>Automations</h2>
+      <ul>
+        <li>An automation sends a template when a record matches conditions, for example <code>Trigger = 1 AND Status is empty</code>, on record created or updated, with a frequency policy and cooldown so nobody is emailed twice by mistake.</li>
+        <li><b>Stop conditions</b> such as <em>Reply Received = true</em> are checked first and always win.</li>
+        <li>Enabling shows how many records it would affect <em>right now</em> and asks you to acknowledge that number. Run <kbd class="ui">Preview</kbd> first.</li>
+        <li>Every run is listed with its result and a "Why?" explanation.</li>
+      </ul>
+    </section>
+
+    <section id="admin">
+      <h2><span class="n">05</span>Super Admin tools</h2>
+      <ul>
+        <li><b>Users</b>: roles, enable and disable. Role changes are audited.</li>
+        <li><b>Workspaces</b>: every user's workspace with counts. <kbd class="ui">View Workspace</kbd> opens it read-only under a red <em>VIEWING WORKSPACE AS</em> banner; <kbd class="ui">Exit View</kbd> leaves. Entry and exit are audited. This never grants access to someone else's Gmail.</li>
+        <li><b>All Data</b> and <b>All Conversations</b>: organisation-wide lists with search and filters. Every view is audited.</li>
+        <li><b>Organization</b>: users, workspaces, emails, replies, failure rate, campaign performance, approvals and user activity over 7, 30 or 90 days.</li>
+        <li><b>Audit Logs</b>: who did what, when.</li>
+        <li><b>System Settings</b>: retention policy (configuration and impact preview only; nothing is deleted automatically), AI provider status, limits and usage, sign-in restriction.</li>
+      </ul>
+    </section>
+
+    <section id="checklist">
+      <h2><span class="n">06</span>Before you send</h2>
+      <p>Tick these off for every campaign. Ticks are saved in this browser.</p>
+      <ul class="check" id="check">
+        <li><label><input type="checkbox" data-k="gmail"><span>Gmail connected and a <b>test email</b> received.</span></label></li>
+        <li><label><input type="checkbox" data-k="email"><span>Email column set to <b>EMAIL</b>; duplicates handled at import.</span></label></li>
+        <li><label><input type="checkbox" data-k="vars"><span>Every <code>{{variable}}</code> resolves in <b>Preview as</b> for at least three students.</span></label></li>
+        <li><label><input type="checkbox" data-k="health"><span><b>Health check</b> passes. Warnings are fine; failures are not.</span></label></li>
+        <li><label><input type="checkbox" data-k="dryrun"><span><b>Dry run</b> count matches what you expect, and every skip reason makes sense.</span></label></li>
+        <li><label><input type="checkbox" data-k="sender"><span>From name, Reply-To and CC / BCC are right. CC and BCC go on <em>every</em> email.</span></label></li>
+        <li><label><input type="checkbox" data-k="review"><span>Read the rendered email in <b>Review</b>.</span></label></li>
+        <li><label><input type="checkbox" data-k="approval"><span>Submitted for approval, and the approver has opened the Review page.</span></label></li>
+        <li><label><input type="checkbox" data-k="batch"><span>After sending: watched the batch to completion in <b>Batches</b> and checked failures in <b>History</b>.</span></label></li>
+      </ul>
+      <div class="check-foot"><span id="check-count"></span><button type="button" id="check-reset">Reset for the next campaign</button></div>
+    </section>
+
+    <section id="limits">
+      <h2><span class="n">07</span>Limits to know</h2>
+      <div class="callout"><b>Only four things send email:</b> <em>Send now</em> on an approved campaign, <em>Send without approval</em> by an admin, a reply you click Send on, and an enabled automation. Nothing else does.</div>
+      <ul>
+        <li><b>Gmail limits.</b> Google caps sends per account per day: typically 500 for an @gmail.com address and 2,000 for Workspace. MailFlow paces at 20 per minute; failures appear in History with the reason.</li>
+        <li><b>AI.</b> Gemini, 100 requests per person per day and 1,000 per organisation. On the free tier the provider sometimes rate-limits; the panel then says you can continue manually, and nothing else is affected.</li>
+        <li><b>Replies</b> are pulled, not pushed, for now: use <em>Sync now</em>. Attachments are listed but cannot be downloaded from MailFlow yet.</li>
+        <li><b>Grid.</b> Datasets over 5,000 rows are filtered over the first 5,000, and the page says so.</li>
+        <li><b>Approval emails</b> need a connected Gmail on the requester for the request, and on the reviewer or the requester for the decision.</li>
+        <li><b>Sign-in</b> is open to any Google account today. Ask the super admin to restrict it to @masaischool.com once everyone is onboarded.</li>
+      </ul>
+    </section>
+
+    <section id="trouble">
+      <h2><span class="n">08</span>If something goes wrong</h2>
+      <div class="tablewrap">
+      <table>
+        <thead><tr><th>Symptom</th><th>Do this</th></tr></thead>
+        <tbody>
+          <tr><td>Sign-in fails</td><td>Try again. "Not permitted" means the account was disabled: contact a super admin.</td></tr>
+          <tr><td>Gmail connect errors</td><td>Settings → Gmail → Connect again, choosing your own Masai account.</td></tr>
+          <tr><td>"Sender not connected"</td><td>Connect Gmail in Settings, then re-run the health check.</td></tr>
+          <tr><td>Batch stuck in Preparing or Queued</td><td>Batches → <em>Process queue</em>. If it keeps failing, open History for the error.</td></tr>
+          <tr><td>No replies appearing</td><td>Inbox → <em>Sync now</em>. Replies are only pulled for threads MailFlow started.</td></tr>
+          <tr><td>AI says unavailable or limit reached</td><td>Continue manually and try later. Admins see usage in System Settings.</td></tr>
+          <tr><td>Can't find Approve</td><td>Only Admins and Super Admins see Approvals, and you cannot approve your own campaign.</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p><b>Owner:</b> Abhishesh Kumar, abhishesh.kumar@masaischool.com. For bugs and requests, send the page URL and what you expected to happen.</p>
+    </section>
+  </main>
+</div>
+
+<script>
+  (function () {
+    var key = 'mailflow.guide.checklist';
+    var boxes = Array.prototype.slice.call(document.querySelectorAll('#check input'));
+    var count = document.getElementById('check-count');
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(key) || '{}'); } catch (e) { saved = {}; }
+    function render() {
+      var done = boxes.filter(function (b) { return b.checked; }).length;
+      count.textContent = done + ' of ' + boxes.length + ' done';
+    }
+    boxes.forEach(function (b) {
+      b.checked = !!saved[b.dataset.k];
+      b.addEventListener('change', function () {
+        saved[b.dataset.k] = b.checked;
+        try { localStorage.setItem(key, JSON.stringify(saved)); } catch (e) {}
+        render();
+      });
+    });
+    document.getElementById('check-reset').addEventListener('click', function () {
+      saved = {};
+      boxes.forEach(function (b) { b.checked = false; });
+      try { localStorage.removeItem(key); } catch (e) {}
+      render();
+    });
+    render();
+
+    // Highlight the current section in the rail.
+    var links = Array.prototype.slice.call(document.querySelectorAll('#toc a'));
+    var sections = links.map(function (a) { return document.querySelector(a.getAttribute('href')); });
+    if ('IntersectionObserver' in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) {
+            links.forEach(function (a) { a.classList.toggle('here', a.getAttribute('href') === '#' + e.target.id); });
+          }
+        });
+      }, { rootMargin: '-20% 0px -70% 0px' });
+      sections.forEach(function (s) { if (s) io.observe(s); });
+    }
+  })();
+</script>

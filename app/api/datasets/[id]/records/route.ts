@@ -15,7 +15,7 @@ const createSchema = z.object({
 
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
 
   const dataset = await prisma.dataset.findUnique({ where: { id: params.id } });
   if (!dataset) return NextResponse.json({ error: 'Not found' }, { status: 404 });

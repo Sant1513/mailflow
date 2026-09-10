@@ -159,6 +159,46 @@ export function toGmailRaw(rfc2822: string): string {
 }
 
 /**
+ * Builds a Gmail-style quoted-history block to append below the new reply
+ * text. We quote the last message in the thread — it already carries the
+ * previous chain as quoted content, so the full history propagates naturally.
+ *
+ * Pass `messages` in chronological order (oldest first); an empty array
+ * returns an empty string (no quote). Set `skipNewThread = true` to return
+ * an empty string for "start a new thread" replies.
+ */
+export function buildQuotedTrail(
+  messages: Array<{
+    senderName?: string | null;
+    senderEmail: string | null;
+    htmlBody?: string | null;
+    sentAt?: Date | null;
+    receivedAt?: Date | null;
+  }>,
+  { skipNewThread = false }: { skipNewThread?: boolean } = {}
+): string {
+  if (skipNewThread || messages.length === 0) return '';
+  const last = messages[messages.length - 1]!;
+  const date = last.sentAt ?? last.receivedAt ?? new Date();
+  // e.g. "Mon, Sep 7, 2026 at 9:38 AM"
+  const datePart = date.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+  const timePart = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const dateStr = `${datePart} at ${timePart}`;
+  const name = last.senderName ?? '';
+  const email = last.senderEmail ?? '';
+  const body = last.htmlBody ?? '<p>(no content)</p>';
+  return (
+    `<br><br>` +
+    `<div class="gmail_quote">` +
+    `<div dir="ltr" class="gmail_attr">On ${dateStr}, ${name} &lt;${email}&gt; wrote:<br></div>` +
+    `<blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">` +
+    `${body}` +
+    `</blockquote>` +
+    `</div>`
+  );
+}
+
+/**
  * Appends a Message-ID to an existing References chain, keeping order and
  * avoiding duplicates. RFC 5322 says References should list the whole
  * ancestry, oldest first.

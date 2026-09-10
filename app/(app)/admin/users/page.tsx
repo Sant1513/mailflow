@@ -12,6 +12,7 @@ interface AdminUser {
   role: string;
   status: string;
   lastLoginAt: string | null;
+  slackUserId: string | null;
   workspace: { id: string; name: string; contacts: number; campaigns: number } | null;
 }
 
@@ -51,6 +52,23 @@ export default function AdminUsersPage() {
     load();
   }
 
+  async function setSlackId(id: string, current: string | null) {
+    const value = prompt('Slack member ID (U…); leave empty to clear', current ?? '');
+    if (value === null) return;
+    const res = await fetch(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slackUserId: value.trim().toUpperCase() }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast.error(json.error ?? json.issues?.[0]?.message ?? 'Failed to update Slack ID');
+      return;
+    }
+    toast.success(value.trim() ? 'Slack ID saved' : 'Slack ID cleared');
+    load();
+  }
+
   async function toggleStatus(id: string, current: string) {
     const status = current === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
     const res = await fetch(`/api/admin/users/${id}`, {
@@ -82,6 +100,7 @@ export default function AdminUsersPage() {
                 <th className="px-4 py-2">Role</th>
                 <th className="px-4 py-2">Workspace</th>
                 <th className="px-4 py-2">Status</th>
+                <th className="px-4 py-2">Slack</th>
                 <th className="px-4 py-2">Last Login</th>
                 <th className="px-4 py-2" />
               </tr>
@@ -106,6 +125,11 @@ export default function AdminUsersPage() {
                     {u.workspace ? `${u.workspace.contacts} contacts · ${u.workspace.campaigns} campaigns` : '—'}
                   </td>
                   <td className="px-4 py-2">{u.status}</td>
+                  <td className="px-4 py-2">
+                    <button onClick={() => setSlackId(u.id, u.slackUserId)} className="font-mono text-xs text-muted-foreground hover:text-primary" title="Set Slack member ID">
+                      {u.slackUserId ?? '— set'}
+                    </button>
+                  </td>
                   <td className="px-4 py-2 text-muted-foreground">
                     {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : 'never'}
                   </td>

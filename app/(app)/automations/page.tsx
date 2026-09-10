@@ -61,7 +61,7 @@ export default function AutomationsPage() {
             When a record matches your conditions, run an action — automatically.
           </p>
         </div>
-        <button onClick={create} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90">
+        <button onClick={create} className="btn-primary">
           New automation
         </button>
       </div>
@@ -89,7 +89,7 @@ export default function AutomationsPage() {
                 const version = a.versions[0];
                 const actions = Array.isArray(version?.actions) ? version.actions : [];
                 return (
-                  <tr key={a.id} className="border-t hover:bg-muted/50">
+                  <tr key={a.id} className="border-t hover:bg-elevated/60">
                     <td className="px-4 py-2">
                       <Link href={`/automations/${a.id}`} className="font-medium text-primary hover:underline">
                         {a.name}
@@ -99,7 +99,7 @@ export default function AutomationsPage() {
                     <td className="px-4 py-2">
                       <span
                         className={`rounded px-1.5 py-0.5 text-xs ${
-                          a.enabled ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'
+                          a.enabled ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'
                         }`}
                       >
                         {a.enabled ? 'ON' : 'OFF'}

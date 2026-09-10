@@ -2,32 +2,227 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Light theme is the base; .dark (set on <html> before first paint by
+ * the theme script in app/layout.tsx) swaps only these tokens. Every
+ * component reads tokens, never a raw colour, so both themes are one code path. */
 :root {
-  --background: 0 0% 100%;
-  --foreground: 222 20% 12%;
-  --muted: 220 20% 96%;
-  --muted-foreground: 220 10% 45%;
-  --border: 220 15% 88%;
-  --primary: 222 60% 30%;
+  color-scheme: light;
+
+  --background: 0 0% 98%;            /* #fafafa  page                      */
+  --card: 0 0% 100%;                 /* #ffffff  panels                    */
+  --elevated: 240 5% 94%;            /* #eeeef0  raised rows / hover        */
+  --muted: 240 5% 96%;               /* #f4f4f5  subtle surface             */
+  --muted-foreground: 240 4% 32%;    /* #4b4b52  body copy                  */
+  --faint: 240 4% 50%;               /* #7a7a82  captions / metadata        */
+  --foreground: 240 10% 6%;          /* #0d0d10  headings / strong text     */
+
+  --border: 240 6% 86%;              /* #d9d9de  visible borders            */
+  --border-subtle: 240 5% 92%;       /* #e9e9ec  hairlines                  */
+
+  --primary: 348 97% 47%;            /* #ED0331  Masai red                  */
+  --primary-hover: 347 77% 45%;      /* rose, a touch darker on white       */
   --primary-foreground: 0 0% 100%;
-  --card: 0 0% 100%;
-  --destructive: 0 70% 50%;
+
+  --destructive: 348 97% 47%;
+  --success: 160 84% 30%;            /* emerald-700 for contrast on white   */
+  --warning: 32 95% 38%;             /* amber-700                           */
+  --info: 221 83% 45%;               /* blue-700                            */
+
+  --ring: 348 97% 47%;
+  --radius-card: 8px;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-* {
-  border-color: hsl(var(--border));
+/*
+ * Dark tokens — taken from masaischool.com's computed styles, not
+ * approximated: near-black zinc background, flat and border-led with almost
+ * no shadow, warm-white headings in Outfit 700–800, light zinc-400 body
+ * copy, and Masai red (#ED0331 / rose #E11D48) as the single accent.
+ */
+.dark {
+  color-scheme: dark;
+
+  --background: 240 6% 4%;          /* #09090b  page                      */
+  --card: 240 6% 7%;                /* #111113  panels                    */
+  --elevated: 240 6% 13%;           /* #1f1f23  raised rows / hover        */
+  --muted: 240 5% 10%;              /* #18181b  subtle surface            */
+  --muted-foreground: 240 5% 65%;   /* #a1a1aa  body copy                 */
+  --faint: 240 4% 46%;              /* #71717a  captions / metadata       */
+  --foreground: 60 5% 96%;          /* #f5f5f4  headings / strong text    */
+
+  --border: 240 4% 16%;             /* #27272a  visible borders           */
+  --border-subtle: 240 5% 10%;      /* #18181b  hairlines                 */
+
+  --primary-hover: 347 77% 50%;     /* #E11D48  rose                      */
+  --success: 160 64% 52%;           /* emerald-400                        */
+  --warning: 43 96% 56%;            /* amber-400                          */
+  --info: 213 94% 68%;              /* blue-400                           */
 }
 
-body {
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  html {
+    background: hsl(var(--background));
+  }
+
+  body {
+    background: hsl(var(--background));
+    color: hsl(var(--muted-foreground));
+    font-family: var(--font-outfit), var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    color: hsl(var(--foreground));
+    font-family: var(--font-outfit), var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+  }
+
+  strong, b, th, dt {
+    color: hsl(var(--foreground));
+  }
+
+  /* Every interactive element gets the site's 0.15–0.22s colour fade. */
+  a, button, input, select, textarea, summary, [role="button"] {
+    transition:
+      color 0.18s var(--ease),
+      background-color 0.18s var(--ease),
+      border-color 0.18s var(--ease),
+      box-shadow 0.18s var(--ease),
+      opacity 0.18s var(--ease),
+      transform 0.2s var(--ease);
+  }
+
+  a {
+    color: inherit;
+  }
+
+  /* Form controls: dark, hairline border, red focus ring. */
+  input, select, textarea {
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    border-color: hsl(var(--border));
+  }
+  input::placeholder, textarea::placeholder {
+    color: hsl(var(--faint));
+  }
+  input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring) / 0.7);
+  }
+  select option {
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+  }
+  input[type='checkbox'], input[type='radio'] {
+    accent-color: hsl(var(--primary));
+  }
+
+  /* Native date picker icon is black by default; invert it on dark. */
+  input[type='date']::-webkit-calendar-picker-indicator {
+    filter: invert(1) opacity(0.6);
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.35);
+    color: hsl(var(--foreground));
+  }
+
+  /* Thin, dark scrollbars like the reference site. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 8px; }
+  *::-webkit-scrollbar-thumb:hover { background: hsl(var(--faint)); }
 }
 
-.grid-cell {
-  @apply border-b border-r border-border px-2 py-1 text-sm whitespace-nowrap overflow-hidden text-ellipsis;
+@layer components {
+  /* Primary CTA — the "REGISTER NOW" pill: red, uppercase, tracked. */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold uppercase tracking-wider text-primary-foreground;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: hsl(var(--primary-hover));
+    transform: translateY(-1px);
+  }
+  .btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+  }
+  .btn-primary:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  /* Secondary — outlined pill, lights up on hover. */
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-border bg-transparent px-4 py-2 text-sm font-medium text-foreground;
+  }
+  .btn-secondary:hover:not(:disabled) {
+    @apply border-faint bg-elevated;
+  }
+  .btn-secondary:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  /* Eyebrow badge — "IN-PERSON · 20 WEEKS": uppercase, tracked, red-tinted. */
+  .eyebrow {
+    @apply inline-flex items-center gap-2 border border-primary/30 bg-primary/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground;
+  }
+
+  /* Status pills used across grids and lists. */
+  .badge {
+    @apply inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium;
+  }
+  .badge-neutral { @apply bg-muted text-muted-foreground; }
+  .badge-success { @apply bg-success/15 text-success; }
+  .badge-warning { @apply bg-warning/15 text-warning; }
+  .badge-danger  { @apply bg-destructive/15 text-primary; }
+  .badge-info    { @apply bg-info/15 text-info; }
+
+  /* Panels: flat, hairline border, no shadow — matches the reference. */
+  .panel {
+    @apply rounded-[var(--radius-card)] border border-border bg-card;
+  }
+
+  /* Data-grid cells. */
+  .grid-cell {
+    @apply whitespace-nowrap overflow-hidden text-ellipsis border-b border-r border-border px-2 py-1 text-sm;
+  }
+  .grid-cell input,
+  .grid-cell select {
+    @apply w-full border-0 bg-transparent p-0 outline-none;
+  }
 }
 
-.grid-cell input,
-.grid-cell select {
-  @apply w-full bg-transparent outline-none;
+@layer utilities {
+  /* Red emphasis word inside a heading, as in "fast, cheap," on the site. */
+  .accent { color: hsl(var(--primary)); }
+  .fade-in { animation: fade-in 0.3s var(--ease) both; }
+  .rise-in { animation: rise-in 0.35s var(--ease) both; }
 }
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Inbox rich-text composer (contenteditable) */
+.composer-rich:empty::before {
+  content: attr(data-placeholder);
+  color: hsl(var(--faint));
+}
+.composer-rich p { margin: 0 0 0.5em; }
+.composer-rich ul { list-style: disc; padding-left: 1.4em; margin: 0 0 0.5em; }
+.composer-rich ol { list-style: decimal; padding-left: 1.4em; margin: 0 0 0.5em; }
+.composer-rich a { color: hsl(var(--primary)); text-decoration: underline; }

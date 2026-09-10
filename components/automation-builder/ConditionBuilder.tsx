@@ -33,17 +33,19 @@ export function ConditionBuilder({
   label,
 }: {
   group: Group;
-  columns: string[];
+  /** Column keys, or { key, label } pairs when the display name differs from the key. */
+  columns: (string | { key: string; label: string })[];
   onChange: (next: Group) => void;
   label: string;
 }) {
+  const options = columns.map((c) => (typeof c === 'string' ? { key: c, label: c } : c));
   function update(index: number, patch: Partial<Rule>) {
     const rules = group.rules.map((r, i) => (i === index ? { ...r, ...patch } : r));
     onChange({ ...group, rules });
   }
 
   function addRule() {
-    onChange({ ...group, rules: [...group.rules, { field: columns[0] ?? '', operator: 'equals', value: '' }] });
+    onChange({ ...group, rules: [...group.rules, { field: options[0]?.key ?? '', operator: 'equals', value: '' }] });
   }
 
   function removeRule(index: number) {
@@ -81,8 +83,8 @@ export function ConditionBuilder({
                 className="rounded border px-1.5 py-1 text-xs"
               >
                 <option value="">field…</option>
-                {columns.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                {options.map((c) => (
+                  <option key={c.key} value={c.key}>{c.label}</option>
                 ))}
               </select>
               <select
@@ -110,7 +112,7 @@ export function ConditionBuilder({
         </div>
       )}
 
-      <button onClick={addRule} className="mt-2 rounded border px-2 py-1 text-xs hover:bg-muted">
+      <button onClick={addRule} className="mt-2 rounded border px-2 py-1 text-xs hover:bg-elevated">
         + Add condition
       </button>
     </div>

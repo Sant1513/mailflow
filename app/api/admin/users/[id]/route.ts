@@ -9,6 +9,8 @@ import { Role, UserStatus } from '@prisma/client';
 const patchSchema = z.object({
   role: z.nativeEnum(Role).optional(),
   status: z.nativeEnum(UserStatus).optional(),
+  /** Slack member id (U…); empty string clears it. */
+  slackUserId: z.string().trim().max(40).regex(/^(U|W)[A-Z0-9]{6,}$|^$/, 'Slack member ids look like U04ABCDEF').optional(),
 });
 
 // §128: role/status changes are SUPER_ADMIN-only and always audited.
@@ -24,7 +26,10 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     return NextResponse.json({ error: 'Cannot demote yourself' }, { status: 400 });
   }
 
-  const updated = await prisma.user.update({ where: { id: target.id }, data: body });
+  const updated = await prisma.user.update({
+    where: { id: target.id },
+    data: { ...body, ...(body.slackUserId !== undefined ? { slackUserId: body.slackUserId || null } : {}) },
+  });
 
   await audit(session, body.role ? 'ROLE_CHANGE' : 'USER_STATUS_CHANGE', {
     targetType: 'User',

@@ -76,7 +76,7 @@ const createSchema = z.object({
  */
 export const POST = withErrorHandling(async (req) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const body = createSchema.parse(await req.json());
   const workspaceId = await resolveWorkspaceId(session, body.workspaceId);
 

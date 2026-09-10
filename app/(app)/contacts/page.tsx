@@ -37,7 +37,7 @@ export default function ContactsPage() {
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="Search by name or email…"
-        className="mb-4 w-full max-w-sm rounded-md border px-3 py-1.5 text-sm"
+        className="mb-4 w-full max-w-sm btn-secondary"
       />
 
       {loading ? (
@@ -60,7 +60,7 @@ export default function ContactsPage() {
             </thead>
             <tbody>
               {contacts.map((c) => (
-                <tr key={c.id} className="border-t hover:bg-muted/50">
+                <tr key={c.id} className="border-t hover:bg-elevated/60">
                   <td className="px-4 py-2">
                     <Link href={`/contacts/${c.id}`} className="font-medium text-primary hover:underline">
                       {c.name || '—'}

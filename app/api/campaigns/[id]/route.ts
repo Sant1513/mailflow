@@ -27,15 +27,39 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
   });
 });
 
+/** Accepts a comma/semicolon/newline separated list or an array. */
+const emailListSchema = z
+  .union([z.string(), z.array(z.string())])
+  .transform((value) =>
+    (Array.isArray(value) ? value : value.split(/[,;\n]/))
+      .map((e) => e.trim())
+      .filter(Boolean)
+  )
+  .refine((list) => list.every((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)), {
+    message: 'One or more addresses are not valid email addresses.',
+  })
+  .refine((list) => list.length <= 25, { message: 'At most 25 addresses.' });
+
 const patchSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(2000).nullable().optional(),
   scheduledAt: z.string().datetime().nullable().optional(),
+  // §22. Note there is deliberately no fromEmail: the From address is
+  // pinned to the connected mailbox so a campaign cannot spoof a sender.
+  fromName: z.string().max(200).nullable().optional(),
+  replyTo: z
+    .string()
+    .email('Reply-To must be a valid email address.')
+    .nullable()
+    .optional()
+    .or(z.literal('').transform(() => null)),
+  ccEmails: emailListSchema.optional(),
+  bccEmails: emailListSchema.optional(),
 });
 
 export const PATCH = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const campaign = await loadCampaignForSession(session, params.id);
   if (!campaign) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -57,6 +81,10 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     data: {
       ...(body.name !== undefined ? { name: body.name } : {}),
       ...(body.description !== undefined ? { description: body.description } : {}),
+      ...(body.fromName !== undefined ? { fromName: body.fromName } : {}),
+      ...(body.replyTo !== undefined ? { replyTo: body.replyTo } : {}),
+      ...(body.ccEmails !== undefined ? { ccEmails: body.ccEmails } : {}),
+      ...(body.bccEmails !== undefined ? { bccEmails: body.bccEmails } : {}),
       ...(body.scheduledAt !== undefined
         ? {
             scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : null,
@@ -73,7 +101,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
 
 export const DELETE = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const campaign = await loadCampaignForSession(session, params.id);
   if (!campaign) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

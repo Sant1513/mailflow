@@ -1,10 +1,38 @@
 import type { NextAuthOptions } from 'next-auth';
+import type { Adapter, AdapterUser } from 'next-auth/adapters';
 import GoogleProvider from 'next-auth/providers/google';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from '@/lib/db/client';
 import { Role } from '@prisma/client';
 
-const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN ?? 'masaischool.com';
+/**
+ * Optional sign-up allowlist.
+ *
+ * When ALLOWED_EMAIL_DOMAIN is set (e.g. "masaischool.com"), only that
+ * domain may sign in. When it is unset or empty, ANY Google account may
+ * sign in — which is what open signup means: anyone who finds the URL can
+ * create a workspace and send mail from their own Gmail.
+ *
+ * The mechanism is kept rather than deleted so the restriction can be
+ * restored with one env var before real student data is loaded.
+ */
+export function allowedDomain(): string | null {
+  const configured = process.env.ALLOWED_EMAIL_DOMAIN?.trim();
+  return configured ? configured.toLowerCase() : null;
+}
+
+export function isEmailAllowed(email: string | null | undefined): boolean {
+  const normalized = email?.trim().toLowerCase() ?? '';
+  // An address is still required — open signup is not "no identity".
+  if (!normalized || !normalized.includes('@')) return false;
+
+  const restriction = allowedDomain();
+  if (!restriction) return true;
+
+  // Compare the full domain, never a suffix: "masaischool.com.evil.com"
+  // must not pass a check for "masaischool.com".
+  return normalized.split('@')[1] === restriction;
+}
 
 /**
  * Resolves the session-signing secret, accepting either the NextAuth v4
@@ -25,12 +53,103 @@ function authSecret(): string | undefined {
 }
 
 /**
+ * Organization.allowedDomain is a unique column, so open signup still needs
+ * a stable key for the single shared organization. "*" reads as "any
+ * domain" and cannot collide with a real domain.
+ */
+const OPEN_SIGNUP_ORG_KEY = '*';
+
+/**
+ * Resolves the organization a signing-in user belongs to.
+ *
+ * With a domain restriction, the organization is keyed by that domain. With
+ * open signup, everyone shares one organization — and crucially it reuses
+ * whichever organization already exists, so lifting the restriction does
+ * not strand existing users and their workspaces in a separate tenant from
+ * everyone who signs up afterwards.
+ */
+async function resolveOrganization() {
+  const restriction = allowedDomain();
+  if (restriction) {
+    return prisma.organization.upsert({
+      where: { allowedDomain: restriction },
+      update: {},
+      create: { name: 'Masai School', allowedDomain: restriction },
+    });
+  }
+
+  const existing = await prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
+  if (existing) return existing;
+
+  return prisma.organization.create({
+    data: { name: 'MailFlow', allowedDomain: OPEN_SIGNUP_ORG_KEY },
+  });
+}
+
+/**
+ * PrismaAdapter, extended to fill in the fields it cannot know about.
+ *
+ * The stock adapter only supplies email/name/image/emailVerified, but every
+ * User here also needs an organization, a role, and a personal workspace.
+ * Doing that work HERE — inside createUser — rather than in the signIn
+ * callback is what keeps the OAuth Account row linked to the User: NextAuth
+ * creates the user and links the account as one flow, and intercepting it
+ * by pre-creating the user breaks that link (OAuthAccountNotLinked).
+ */
+function mailflowAdapter(): Adapter {
+  const base = PrismaAdapter(prisma) as Adapter;
+
+  return {
+    ...base,
+    async createUser(data: AdapterUser) {
+      const org = await resolveOrganization();
+      const email = data.email.toLowerCase();
+      // `name` is required in our schema but optional in NextAuth's, so fall
+      // back to the local part of the address rather than storing null.
+      const name = data.name?.trim() || email.split('@')[0] || email;
+
+      const user = await prisma.user.create({
+        data: {
+          organizationId: org.id,
+          email,
+          name,
+          image: data.image ?? null,
+          emailVerified: data.emailVerified ?? null,
+          role: Role.OPERATOR,
+          lastLoginAt: new Date(),
+        },
+      });
+
+      await prisma.workspace.create({
+        data: {
+          organizationId: org.id,
+          ownerId: user.id,
+          name: `${name}'s Workspace`,
+          members: { create: { userId: user.id, role: Role.OPERATOR } },
+        },
+      });
+
+      return {
+        id: user.id,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        name: user.name,
+        image: user.image,
+      };
+    },
+  };
+}
+
+/**
  * Login-only Google OAuth (identity, not Gmail send/read access — see
  * lib/gmail/oauth.ts for the separate, incremental-consent Gmail connection
- * flow). §5 of the spec: only @masaischool.com may sign in.
+ * flow).
+ *
+ * Sign-up is open by default; set ALLOWED_EMAIL_DOMAIN to restrict it back
+ * to a single domain (see isEmailAllowed above).
  */
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
+  adapter: mailflowAdapter(),
   session: { strategy: 'database' },
   // Set explicitly rather than relying on NextAuth picking up an env var by
   // name. NextAuth v4 only auto-reads NEXTAUTH_SECRET; AUTH_SECRET is the
@@ -44,6 +163,15 @@ export const authOptions: NextAuthOptions = {
       clientId: process.env.GOOGLE_CLIENT_ID ?? '',
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
       authorization: { params: { scope: 'openid email profile' } },
+      // Before redirecting to Google, NextAuth fetches Google's OpenID
+      // discovery document server-side. openid-client caps that at 3500ms,
+      // which is too tight: a cold Next.js route compile stalls the event
+      // loop long enough to blow the budget even on a fast connection
+      // (measured ~150ms to accounts.google.com from this machine). The
+      // timeout surfaced as ?error=OAuthSignin — a Sign in button that
+      // simply did nothing. 10s tolerates the stall without hanging a user
+      // on a genuinely unreachable network.
+      httpOptions: { timeout: 10_000 },
       profile(profile) {
         return {
           id: profile.sub,
@@ -57,50 +185,44 @@ export const authOptions: NextAuthOptions = {
   pages: {
     error: '/login/error',
   },
-  callbacks: {
+  events: {
+    /**
+     * Runs after the account is linked, so the Google subject is available.
+     * Kept out of the signIn callback deliberately — see the note there.
+     */
     async signIn({ user, account }) {
+      if (!user.email) return;
+      await prisma.user
+        .update({
+          where: { email: user.email.toLowerCase() },
+          data: {
+            lastLoginAt: new Date(),
+            ...(account?.providerAccountId ? { googleId: account.providerAccountId } : {}),
+          },
+        })
+        .catch((err) => {
+          // Never fail a successful login over bookkeeping.
+          console.error('[auth] could not record sign-in metadata', err);
+        });
+    },
+  },
+  callbacks: {
+    /**
+     * Gate only. User/workspace provisioning belongs to the adapter's
+     * createUser (see mailflowAdapter): creating the User here left it with
+     * no linked Account row, and NextAuth then refused to link the OAuth
+     * identity to it — surfacing as "To confirm your identity, sign in with
+     * the same account you used originally" (OAuthAccountNotLinked).
+     */
+    async signIn({ user }) {
       const email = user.email?.toLowerCase() ?? '';
-      const domain = email.split('@')[1];
-      if (domain !== ALLOWED_DOMAIN) {
+      if (!isEmailAllowed(email)) {
         // Rejected — NextAuth redirects to /login/error?error=AccessDenied
         return false;
       }
 
-      // Ensure the Organization exists, and every allowed-domain user gets
-      // an Organization + personal Workspace on first sign-in.
-      const org = await prisma.organization.upsert({
-        where: { allowedDomain: ALLOWED_DOMAIN },
-        update: {},
-        create: { name: 'Masai School', allowedDomain: ALLOWED_DOMAIN },
-      });
-
       const existing = await prisma.user.findUnique({ where: { email } });
-      if (!existing) {
-        const created = await prisma.user.create({
-          data: {
-            organizationId: org.id,
-            googleId: account?.providerAccountId ?? user.id,
-            email,
-            name: user.name ?? email,
-            profileImage: user.image ?? undefined,
-            role: Role.OPERATOR,
-          },
-        });
-        await prisma.workspace.create({
-          data: {
-            organizationId: org.id,
-            ownerId: created.id,
-            name: `${created.name}'s Workspace`,
-            members: { create: { userId: created.id, role: Role.OPERATOR } },
-          },
-        });
-      } else {
-        if (existing.status === 'DISABLED') return false;
-        await prisma.user.update({
-          where: { id: existing.id },
-          data: { lastLoginAt: new Date() },
-        });
-      }
+      if (existing?.status === 'DISABLED') return false;
 
       return true;
     },

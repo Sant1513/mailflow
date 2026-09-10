@@ -62,11 +62,35 @@ forgetting `NEXTAUTH_SECRET` takes the whole site down.
 
 ### Google OAuth (login)
 
-Create an OAuth 2.0 Client ID in Google Cloud Console (Web application),
-authorized redirect URI `http://localhost:3000/api/auth/callback/google`.
-Put the client id/secret in `.env`. Only `@masaischool.com` accounts (or
-whatever you set `ALLOWED_EMAIL_DOMAIN` to) can sign in — see
-`lib/auth/options.ts`.
+Create an OAuth 2.0 Client ID in Google Cloud Console (Web application) and
+add **all** of these as Authorized redirect URIs:
+
+```
+http://localhost:3000/api/auth/callback/google
+http://localhost:3000/api/gmail/callback
+https://<your-deployment>/api/auth/callback/google
+https://<your-deployment>/api/gmail/callback
+```
+
+Login and Gmail-connect are separate OAuth flows with separate callbacks, so
+both are required — and the URIs are origin-specific, which is why local dev
+is pinned to port 3000 (`.claude/launch.json`, `autoPort: false`).
+
+Put the client id/secret in `.env`.
+
+### Who can sign up
+
+`ALLOWED_EMAIL_DOMAIN` controls this:
+
+| Value | Effect |
+| --- | --- |
+| unset / empty | **Open signup** — any Google account can create a workspace |
+| `masaischool.com` | Only `@masaischool.com` accounts can sign in |
+
+It is currently **open**. Note what that means operationally: anyone who
+finds the URL can sign up, connect their own Gmail, and send from it. Set
+`ALLOWED_EMAIL_DOMAIN` before loading real student data. Disabled accounts
+are rejected in either mode. See `isEmailAllowed()` in `lib/auth/options.ts`.
 
 ### First run
 

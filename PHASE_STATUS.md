@@ -6,46 +6,71 @@
 - **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
 - **Repo:** https://github.com/Sant1513/mailflow
 
-## Verification status (last run: 4 Sep 2026, after Phase 4)
+## Verification status (last run: 10 Sep 2026, after the Gmail sync rework)
 
 | Suite | Count | Result |
 | --- | --- | --- |
-| Unit tests (`npm test`) | 205 | ✅ pass |
+| Unit tests (`npm test`) | 402 | ✅ pass |
 | Live-DB integration (`scripts/smoke-test-db.ts`) | 19 | ✅ pass |
 | Send pipeline, live DB + fake provider (`scripts/smoke-test-send.ts`) | 35 | ✅ pass |
 | Automation engine, live DB (`scripts/smoke-test-automation.ts`) | 28 | ✅ pass |
+| Inbound ingestion + sync, live DB + fake Gmail (`scripts/smoke-test-inbox.ts`) | 34 | ✅ pass |
+| Inbox/conversation HTTP, real session (`scripts/smoke-test-inbox-http.ts`) | 23 | ✅ pass |
 | HTTP integration (`scripts/smoke-test-http.ts`) | 37 | ✅ pass |
+| Super Admin view-as / analytics / retention HTTP, real session (`scripts/smoke-test-admin-http.ts`) | 37 | ✅ pass |
+| AI assistant, real session + **real Gemini** (`scripts/smoke-test-ai.ts`) | 34 | ✅ pass |
+| Grid: views / filter / sort / group / columns / bulk HTTP, real session (`scripts/smoke-test-grid-http.ts`) | 36 | ✅ pass |
+| Campaign approvals: submit / list / search / approve / reject / audit / charts HTTP (`scripts/smoke-test-approvals-http.ts`) | 27 | ✅ pass |
+| Batches / History / All Conversations pages + "no placeholders" sweep (`scripts/smoke-test-pages-http.ts`) | 26 | ✅ pass |
+| Inbox composer / rendering / assignment + resolution notifications (**real Slack thread**) / snippets / bell / follow-up cron (`scripts/smoke-test-inbox-notify-http.ts`) | 37 | ✅ pass |
 | Deployment verification (`scripts/verify-deployment.ts`) | 19 | ✅ pass |
 | `tsc --noEmit` / ESLint / `next build` | — | ✅ clean |
 
-Google OAuth is configured and verified as far as it can be without a real
-account: the authorization request is accepted by Google (correct client_id,
-registered redirect URI, PKCE). The final "click through Google's consent
-screen with a real @masaischool.com account" step needs a human with such an
-account — it is **not** yet confirmed end-to-end.
+**The full loop is verified against real Gmail** (5 Sep 2026, mailbox
+`abhishesh.kumar@masaischool.com`): a campaign email was sent through the
+real pipeline (Gmail id `1a0739611a8fe148`), the recipient's real reply was
+synced into the Inbox (scan path on the first run, then the `history.list`
+path with a persisted cursor on the second, both against the live mailbox),
+and an in-thread reply was sent from the app's composer with a correct
+three-message `References` chain. Scope held on a real mailbox: 1 of 100
+recent messages ingested, 99 ignored.
 
+That round-trip exposed one real bug the fake provider had hidden: **Gmail
+replaces the MIME `Message-ID` on send** with its own `<…@mail.gmail.com>`
+value, so we were storing an ID no reply would ever cite. Threading survived
+only via the thread-id match. `GmailProvider` now reads the assigned
+Message-Id back after every send (`tests/email/gmailProvider.test.ts`), and
+the one pre-fix message was backfilled.
+
+Not yet exercised live: Pub/Sub push delivery (`GMAIL_PUBSUB_TOPIC` unset;
+Sync Now and the webhook path are tested with a fake source), and attachment
+byte download.
 
 Honest, current status of the spec's §138 phases. "Done" means: real DB-backed
 API route + UI calling it + server-side authorization + (where practical) a
 test. Nothing is marked done on UI alone (§139/§140).
 
 ## Phase 1 — Foundation ✅ mostly done
-- [x] Google OAuth login restricted to `@masaischool.com` (`lib/auth/options.ts`)
+- [x] Google OAuth login (`lib/auth/options.ts`); sign-up is open by default and lockable to one domain via `ALLOWED_EMAIL_DOMAIN`
 - [x] Organization / Workspace / User / WorkspaceMember schema, RBAC roles
 - [x] Role enforcement in `lib/auth/session.ts` (`requireSession`, `requireRole`) — server-side, not just hidden nav
 - [x] Super Admin cross-workspace read path (`lib/permissions/workspace.ts`) + audit on admin view
 - [x] Postgres schema for the full domain model (`prisma/schema.prisma`)
-- [x] Airtable-style data table: inline edit, add/delete row, add column (`components/data-grid/DataGrid.tsx`)
-- [x] Paste / CSV / XLSX import with preview → type inference → duplicate handling → commit (`lib/imports/parse.ts`, `/api/datasets/import*`) — **import never sends email**
-- [x] Contacts as a first-class entity, resolved by email at import/edit time (`lib/records/contactLink.ts`)
+- [x] Airtable-style data table: inline edit, add/delete row, add column, **change column type** (`components/data-grid/DataGrid.tsx`)
+- [x] Paste / CSV / XLSX import with preview → type inference → duplicate handling → commit (`lib/imports/parse.ts`, `/api/datasets/import*`) — **import never sends email**; bulk insert, so large imports do not time out
+- [x] Contacts as a first-class entity, resolved by email at import/edit time, with a bulk backfill when a column is retyped to EMAIL (`lib/records/contactLink.ts`)
 - [x] Record change history on manual edits (`RecordChangeHistory`)
-- [x] Audit logging framework (`lib/audit/log.ts`) wired into every mutation so far
+- [x] Audit logging framework (`lib/audit/log.ts`) wired into every mutation
 - [x] Admin: Users (role/status management), Audit Logs, Organization stats, Workspaces list, All Data — real queries
 - [x] Deployed to Vercel against a live Neon Postgres, with integration tests run against the deployed instance
-- [ ] Column reorder/resize/hide UI, saved views, filter/sort/group UI, bulk select/update, freeze columns, virtualization — grid backend (hidden/order/width columns) exists in schema; UI controls not built yet
-- [ ] "View as" banner + Exit View UX (server-side access + audit already enforced)
+- [x] Grid (7 Sep 2026): server-side **filter** (same AND/OR condition engine as automations, incl. `__emailStatus`-style system fields), **search** across all columns, **sort** by header click (up to 3 keys, empties always last), **group** with counts, **pagination** (25–200/page; the browser only ever gets one page, §135) — `lib/records/query.ts`, `GET /api/datasets/[id]?filter&sort&search&groupBy&page&viewId`
+- [x] **Saved views** (`SavedView`): create / update / save-as / delete, applied via `?viewId=`, explicit params override the view; audited
+- [x] **Columns**: show/hide, rename, delete, reorder (`PATCH /api/datasets/[id]/columns` with the full id order), resize by dragging the header edge (persisted width), freeze first column
+- [x] **Bulk select → bulk set value / bulk delete** (`POST /api/datasets/[id]/records/bulk`, ≤1000 ids, only ids inside the dataset): per-record change history, contact re-link, RECORD_UPDATED automations evaluate per record, audited with counts. **Duplicate row**
+- [ ] Virtualization — datasets above 5,000 rows are filtered over the first 5,000 (the page says so); a virtualized body is a Phase 8 item
+- [x] "View as" banner + Exit View UX — shipped in Phase 6 (signed cookie, read-only, audited)
 
-## Phase 2 — Templates ✅ mostly done
+## Phase 2 — Templates ✅ done
 - [x] Template CRUD + duplicate + archive (`/api/templates*`), workspace-scoped and RBAC-enforced
 - [x] Delete is refused when a campaign references the template — it archives instead, so historical campaigns keep their content (§21/§126)
 - [x] **Versioning**: every save creates a new immutable `TemplateVersion`; identical content is a no-op instead of inflating version numbers; old versions are never mutated
@@ -55,7 +80,7 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] **XSS-safe preview**: values are HTML-escaped on substitution, template HTML is sanitized server-side, and the result renders in an iframe with an empty `sandbox` (no scripts) — 12 attack vectors covered by tests
 - [x] **Email health check** (§27): subject, body, variable validity against the dataset, recipient column, sender connection, brace typos, links, images, plain-text alternative, Gmail's ~102KB clipping threshold. Fails block; warnings don't.
 - [x] Plain-text alternative auto-generated from HTML when not supplied
-- [ ] **Send test email** — deliberately deferred: it needs a connected Gmail account, which is Phase 3. The health check already reports "Sender connected: fail" until then, rather than offering a button that can't work.
+- [x] Send test email (§26) — lives in Phase 3 below, since it needs a connected mailbox
 - [ ] Rich-text (WYSIWYG) editing mode — HTML/CSS editing works; a visual drag-and-drop builder is a later refinement.
 
 ## Phase 3 — Gmail + Campaigns + Queue ✅ mostly done
@@ -64,10 +89,12 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] `EmailProvider` abstraction + `GmailProvider`; nothing outside `lib/email/*` and `lib/gmail/*` touches the Gmail SDK
 - [x] RFC 2822 MIME builder: multipart/alternative, attachments, RFC 2047 headers, and **In-Reply-To / References threading** (§46) — plus CRLF stripping so a template variable can't inject headers
 - [x] Campaign CRUD, with the template version **pinned at creation** (§21/§126)
+- [x] **Pre-send review** (§113): exact headers, per-recipient outcome with reasons, rendered personalized email per recipient, template cross-check, health check — read-only, sends nothing
+- [x] **From name, Reply-To, CC, BCC** on campaigns (§22); the From *address* is deliberately locked to the connected mailbox (§28); CC/BCC volume multiplier shown explicitly
 - [x] **Dry run** sharing one pure evaluator with the real send, so the simulation genuinely predicts the send; every record gets a reason
 - [x] "Why was this sent" recorded on every job; never blank (§35)
-- [x] Approval workflow — server-enforced: only ADMIN/SUPER_ADMIN approve, nobody approves their own campaign
-- [x] Batches + one immutable `EmailJob` snapshot per recipient (rendered body + sender identity)
+- [x] Approval workflow — server-enforced: only ADMIN/SUPER_ADMIN approve, nobody approves their own campaign (SUPER_ADMIN excepted)
+- [x] Batches + one immutable `EmailJob` snapshot per recipient (rendered body + sender identity + Reply-To)
 - [x] Duplicate protection enforced by a **DB unique constraint** on (campaign, record, templateVersion), not just app logic
 - [x] Pause / resume / cancel, re-checked immediately before each send
 - [x] Retry that classifies failures — permanent ones (invalid recipient, revoked auth) are never retried
@@ -75,7 +102,7 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] BullMQ + Redis worker (`npm run worker:email`) **and** a bounded drain endpoint for deployments without Redis — both call the same `processEmailJob`
 - [x] Test email (§26) — exactly one message, clearly marked, never to campaign recipients
 - [ ] Scheduling: `scheduledAt` is stored and shown, but no scheduler process dispatches it yet — a scheduled campaign still needs Send pressed
-- [ ] CC/BCC and attachments on campaigns (the MIME builder supports both; the campaign UI does not expose them yet)
+- [ ] Attachments on campaigns (the MIME builder supports them; the campaign UI does not expose them yet)
 
 ## Phase 4 — Automation builder ✅ mostly done
 - [x] Condition engine: AND/OR trees, 8 operators, with type-loose comparison so `Trigger = 1` matches the string `"1"` people actually type
@@ -91,24 +118,85 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [ ] WAIT action — recorded as not-implemented in the run log rather than faked; needs the delayed queue
 - [ ] SCHEDULED trigger — stored but no cron process runs it yet
 
-## Phase 5 — Threading / inbound sync / Inbox — not started
-Schema exists (`Conversation`, `ConversationMessage`, `InternalNote`, `Tag`,
-`FollowUp`, `RecipientHistory`). No Pub/Sub webhook, no sync worker, no Inbox
-UI (shows an honest "not yet implemented" panel today).
+## Phase 5 — Threading / inbound sync / Inbox ✅ mostly done
+- [x] Gmail message parser (`lib/gmail/parseMessage.ts`): base64url bodies, nested multipart, attachments, address lists, threading headers — pure, 19 tests
+- [x] **Header-first classification** (`lib/conversations/classify.ts`, §55): bounce / delivery-failure / out-of-office / auto-reply / human, by RFC 3464/3834 signals before subject heuristics — 22 tests. Only a human reply counts as "the student replied".
+- [x] **Ingestion** (`lib/gmail/ingest.ts`): conversation identity is `(mailbox, gmailThreadId)` — never subject, never address alone (§45). Replies match to what we sent via `In-Reply-To`/`References` against our stored `Message-ID`s (§46).
+- [x] **Scoped sync** (§104): only mail tied to a MailFlow thread, a Message-ID we sent, or a known contact is ingested — the rest of the mailbox is left alone
+- [x] **Idempotent** on `gmailMessageId` (§48): a redelivered notification stores nothing twice
+- [x] Inbound updates record system fields only (`replyReceived`, `unreadReply`, `lastReplyAt`, thread id) — business columns untouched (§14); bounces update nothing
+- [x] **History-based sync** (`lib/gmail/sync.ts`): `users.history.list` from the stored cursor, with a bounded recent-INBOX scan fallback when history has expired (§105); cursor advances only after the window is processed
+- [x] **Pub/Sub webhook** (`/api/webhooks/gmail`): token-verified, acks fast, queues the sync (or runs it inline without Redis)
+- [x] **Sync Now** (§104) for environments without push
+- [x] **Inbox** (§51/§109): filter rail with live counts (unread / mine / open / waiting / resolved / all), search across name, address, subject, message text and thread id (§64)
+- [x] **Conversation view** (§50/§110): one chronological timeline of messages *and* internal notes, formatted-body toggle in a sandboxed iframe, attachment listing
+- [x] **Reply from the app** (§53) in the same Gmail thread with correct `In-Reply-To`/`References`; **"start a new thread"** is an explicit opt-in (§54); replies from the caller's *own* mailbox only
+- [x] Read state (§52) kept in sync between the inbox badge and the record grid
+- [x] Internal notes in their own table — no code path can send one (§58)
+- [x] Tags, status, assignment (with notification), follow-ups (with record flag) — all audited (§56/§57/§59/§60)
+- [x] **Recipient timeline** (§61) on the contact page: campaign sends, replies, automated mail, notes, status changes, follow-ups, in order
+- [x] NEW_REPLY / ASSIGNMENT notifications (§87)
+- [ ] Gmail `users.watch` renewal worker — push subscriptions expire after 7 days and are not yet re-armed automatically (manual Sync Now still works)
+- [ ] `gmail-sync` BullMQ worker process (the webhook queues to it when Redis is present; without Redis it syncs inline)
+- [ ] Attachment *download* — metadata is stored; fetching the bytes via `attachments.get` is not wired yet
 
-## Phase 6 — Super Admin analytics/org management — partially started
-Users, Workspaces, Organization overview, Audit Logs, All Data are real
-today. Charts, retention policy config, and the "view as" banner are not.
+## Phase 6 — Super Admin analytics/org management — done (6 Sep 2026)
+- [x] §127 Organization analytics: Users / Active users / Workspaces / Contacts / Datasets / Campaigns / Emails sent / Failed / Replies / Open / Resolved / AI calls, all live counts (`lib/analytics/metrics.ts`)
+- [x] Charts: Emails by day, Replies by day, Failure rate (null, not 0, on days with nothing attempted), Campaign performance table, User activity table; 7/30/90-day window, bucketed in IST
+- [x] §86 Dashboard: Emails sent / Pending / Failed / Replies / Unread / Open conversations / Follow-ups due, 30-day chart, recent batches, recent conversations, recent activity, quick actions
+- [x] §9 "VIEWING WORKSPACE AS … [ Exit View ]": signed HttpOnly cookie resolved inside `requireSession` so every page and API route is scoped identically; org membership re-checked on every request; entry and exit audited; **read-only** — `requireCanWrite(session)` refuses every mutation while viewing (§10: never touches the owner's Gmail)
+- [x] §130 Retention policy: per-org config (message bodies / sent-email snapshots / audit rows, ≥30 days or keep forever), live "would affect N rows" preview, audited with a before/after diff. **No enforcement job exists** — saving a policy deletes nothing, by design ("do not delete historical communication accidentally"); enforcement is a future explicit, audited action
+- [x] System Settings page: retention UI + read-only view of runtime env (sign-in restriction, rate limit, AI key presence)
+- [ ] Workspace management actions (create / rename / disable / move users) — listing exists, mutations not yet
+- [ ] Retention enforcement (deliberately deferred, see above)
 
-## Phase 7 — Gemini AI — not started
-`AiUsage` table exists. No `AIProvider`/`GeminiProvider` implementation yet.
+## Feedback round 2 — composer, rendering, Slack + email notifications, CRM extras (9 Sep 2026) — done
+Spec: docs/requests/2026-09-09-inbox-composer-notifications.md
+- [x] **Reply composer** (components/inbox/ReplyComposer.tsx): Write (rich text: bold / italic / underline / lists / link / clear), HTML (code editor + Format), Preview (exact email, From + subject, 320–1200 px width slider + Desktop/Mobile). Insert link, Insert snippet, AI suggest reply, **attachments** (4 MB total per reply — the serverless body limit; real MIME parts via the Gmail path; stored as Attachment rows on the outbound message). Plain-text alternative generated from the HTML
+- [x] **Message rendering**: every message shows its sanitised HTML by default in a self-sizing frame (no inner scrollbar, no script: sandbox without allow-scripts); plain-text messages get paragraphs + clickable links; **quoted history collapsed** (Gmail / Outlook / Apple Mail / Yahoo / Thunderbird markers and "On … wrote:" / ">" lines) behind "Show quoted text"; split happens server-side, raw HTML never reaches the browser
+- [x] **Assignment → email + Slack + bell**; **resolution → same email thread + same Slack thread** (In-Reply-To/References; Slack thread_ts + ✅ reaction). Email from the assigner's Gmail (fallback: the conversation's mailbox), Slack mention by the user's Slack member ID. Best effort with recorded outcomes (returned in the PATCH response, shown in the toast, audited as CONVERSATION_NOTIFY). Thread ids stored on the conversation
+- [x] **Slack settings** on System Settings: channel ID, bot + channel status, Send test message, switches for assignments / resolutions / follow-ups (IntegrationSettings). Token is SLACK_BOT_TOKEN in the environment only
+- [x] **Slack member ID per user**: Users page (super admin) and each person's own Settings page (/api/me)
+- [x] **Saved replies** (ReplySnippet, /api/snippets): per workspace, {{Name}} / {{FirstName}} / {{Email}} / {{Sender}} / dataset columns resolved for the conversation's student at insert time, unknown variables kept visible; managed in Settings
+- [x] **Notification bell** (§87): unread count, list, mark read, in the sidebar and the mobile bar; polls every 60 s
+- [x] **Follow-up reminders**: /api/cron/follow-ups (CRON_SECRET) → one in-app notification + one Slack thread reply per due follow-up (remindedAt guarantees once). Scheduled every 15 min by GitHub Actions (.github/workflows/follow-up-reminders.yml) with a daily Vercel cron backstop at 09:00 IST, since Vercel Hobby allows only daily crons
+- [x] **Replies sent straight from Gmail now show in the thread** (10 Sep): the sync used to ingest only non-own INBOX messages, so a reply typed in Gmail (SENT label) never reached MailFlow. Now a message from the mailbox's own address in a known MailFlow thread is stored as OUTBOUND ("Replied from Gmail" in the student's history), and unknown threads stay untouched
+- [x] **Sync rework for busy mailboxes** (10 Sep, lib/gmail/sync.ts): the team mailbox sees ~900 new messages in two days, and fetching each in full took 15+ minutes and timed out on Vercel, so the cursor never advanced. The loop now triages from history.list's own thread + label data (drafts / spam / trash and already-stored ids dropped without a fetch, known threads fetched in full, own mail in unknown threads skipped), fetches only metadata (From / In-Reply-To / References) for the rest with six parallel calls, bulk-checks Contacts and sent Message-IDs per batch of 40, and runs under a wall-clock budget with the history cursor advanced to the last record fully processed, so a run that stops early resumes (`remaining` in the response; Sync Now / auto-sync / cron loop until drained). Measured: 925-message backlog drained in 68 s in two rounds, zero errors. Route `maxDuration = 60`
+- [x] **Auto-sync**: the Inbox list and every conversation page pull the mailbox on open when it was last synced more than 2 minutes ago (`POST /api/gmail/sync?ifStaleMinutes=2`, EmailProviderAccount.lastSyncAt); `/api/cron/gmail-sync` syncs every connected mailbox every 15 min from the GitHub Actions schedule (daily Vercel backstop). Sync Now still works as the explicit path
+- [ ] Later: SLA highlighting for threads waiting > 48 h, @mentions in notes, per-student do-not-contact flag, CSV export of grid views, inbox keyboard shortcuts
+
+## Feedback round 1 — approvals, themes, responsive, editor (7 Sep 2026) — done
+Spec: docs/requests/2026-09-07-approvals-theme-ux.md
+- [x] **Approvals page** (/approvals) for ADMIN + SUPER_ADMIN: Pending / Approved / Rejected / All tabs, search by campaign, requester or workspace, approve and reject with a required **reason** (sent to the requester) and optional **remarks** (internal), waiting time, reviewer, email outcome per request. Pending badge in the nav. SUPER_ADMIN sees the organisation; ADMIN sees their own workspace plus workspaces where they hold an ADMIN membership (lib/permissions/reviewer.ts)
+- [x] **Request email** on submit from the requester's Gmail to every SUPER_ADMIN + the workspace's ADMINs, requester in Cc; **decision email in the same thread** (In-Reply-To / References; same Gmail thread id when the same mailbox sends both) from the reviewer's mailbox, falling back to the requester's. Best effort: no mailbox or a Gmail failure never blocks the decision — the outcome is stored on the campaign (approvalRequestEmail / approvalDecisionEmail) and shown. The live send is the same GmailProvider path verified in Phase 5; fixture users have no mailbox, so the smoke suite asserts the recorded SKIPPED outcomes
+- [x] **Reports**: requests / approvals / rejections by day with pending, approved, rejected, median wait and oldest-pending on the Dashboard (workspace) and Organization page (org)
+- [x] **Light / dark / system theme**: tokens restructured (light is :root, .dark swaps), pre-paint script (no flash), toggle in the sidebar, mobile bar and login; charts read CSS tokens
+- [x] **Responsive**: sidebar becomes a top bar + drawer below lg; conversation page stacks; template editor becomes Settings / Code / Preview tabs; popovers clamp to the viewport; full-height pages use the shell height
+- [x] **Template formatting**: HTML pretty-printer (lib/templates/format.ts) applied to every AI insert plus a Format button; adds only whitespace between block elements — a test proves the rendered structure is unchanged
+- [x] **Template editor sizing**: draggable dividers between the three panes (remembered per browser) and a 320–1200px preview width slider alongside the desktop/mobile presets
+- [x] **Last placeholders replaced** (7 Sep): **Batches** (`/batches`, `GET /api/batches` — every batch in the workspace with live progress, queued count, pause / resume / process queue / retry failed / cancel, auto-refresh while in flight), **History** (`/history`, `GET /api/history?direction=sent|received` — every EmailJob outcome and every inbound message with its classification, search + status filters, "Why?" per send), **All Conversations** (`/admin/conversations`, SUPER_ADMIN, org-wide with workspace / status / search filters, audited). The template editor's From box now shows the connected mailbox. `PendingFeature` is deleted; a smoke check asserts no "not yet implemented" copy on any main page (`scripts/smoke-test-pages-http.ts`, 26 checks)
+
+## Phase 7 — Gemini AI — done (6 Sep 2026)
+- [x] §83 `AIProvider` abstraction (`lib/ai/types.ts`) with `GeminiProvider` (`lib/ai/gemini.ts`): REST `generateContent`, JSON response schemas (typed output, no prose parsing), 30s timeout, 2 retries with backoff + Retry-After, 429 → `RATE_LIMITED`, safety blocks and malformed JSON surfaced as their own kinds. Key in a header, never a URL. Configurable via `GEMINI_API_KEY` / `GEMINI_MODEL` (default `gemini-3.6-flash`; verified live)
+- [x] §81/§82 policy in one place (`lib/ai/service.ts`): `AI_ENABLED`, per-user and per-org daily limits (`AI_USER_DAILY_LIMIT` 100 / `AI_ORG_DAILY_LIMIT` 1000, IST days), every call logged to `AiUsage` (feature, success, tokens, latency, error reason), every failure mapped to a graceful "you can continue manually" outcome — the AI being down never fails a page or a sync
+- [x] §81 context minimisation (`lib/ai/prompts.ts`): last 8 turns only, quoted tails and signatures stripped, email addresses and phone numbers redacted, per-message cap; first names only. Tokens/secrets are never in scope
+- [x] §76/§77 template editor assistant: generate email (subject, preview, text, HTML) → Insert / Regenerate / Make shorter / More professional; improve current body (improve, shorten, professional, friendly, grammar, CTA, rewrite, translate); subject ideas; personalisation check (missing variables computed locally, quality judged by AI)
+- [x] §78 reply assistant in the conversation: AI suggest reply → Insert / Regenerate / Make shorter / More formal. Sending stays the human-only button
+- [x] §79 conversation summary + suggested next action + suggested status shown as a button the human presses; never applied automatically
+- [x] §80 reply intent (COMPLETED / QUESTION / REQUEST / COMPLAINT / ACKNOWLEDGEMENT / NEEDS_ACTION / OUT_OF_OFFICE / AUTO_REPLY / UNKNOWN) with confidence, stored on the message **beside** the header-first classification (`aiIntent*` columns, migration); ingest annotates human replies best-effort with a 12s cap; no record or status is ever changed by the AI
+- [x] §76 items 18–20: campaign summary, "Why?" per sent job (from the immutable send snapshot + `sendReason`), "Why?" per automation run
+- [x] "AI usage today: N / limit" on every panel; System Settings shows provider, model, enabled flag, limits and org-wide usage
+- [x] `/api/ai`: one endpoint, discriminated actions, workspace ownership checked per row, read-only under "view as" (no annotation written)
+- [ ] Translate targets other than Hindi in the UI (API accepts any language)
+- [ ] Per-org AI on/off in the database (today it is the `AI_ENABLED` env flag)
 
 ## Phase 8 — Advanced analytics / integrations — not started
 
 ---
 
 ### Immediate next steps (in order)
-1. **Gmail OAuth connect + `EmailProvider`/`GmailProvider` abstraction** (Phase 3) — the single biggest unlock: it turns on test-sends, campaigns, and everything downstream.
-2. Campaign model + dry run + approval + batches + BullMQ `email-send` worker (rest of Phase 3).
-3. Saved views + filter/sort/bulk-edit UI on the data grid (closes out Phase 1).
-4. Automation builder (Phase 4).
+1. ~~Connect a real Gmail account and verify the Google round-trip~~ — **done**: real send, real inbound sync (scan + history paths), real in-thread reply, all against the live mailbox.
+2. ~~Phase 6: organization analytics, the "view as" banner, retention policy~~ — **done** (retention enforcement and workspace mutations deferred, see Phase 6).
+3. ~~Phase 7: `AIProvider` + `GeminiProvider` with per-user/org rate limits; reply suggestion, summary, classification behind the header-first classifier~~ — **done**, verified against real Gemini.
+4. ~~Close out Phase 1: saved views, filter/sort/group, bulk edit on the grid~~ — **done** (virtualization deferred to Phase 8).
+5. Scheduling dispatcher (Phase 3) and the `WAIT` action / `SCHEDULED` trigger (Phase 4) — both need the delayed queue.

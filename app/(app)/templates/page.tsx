@@ -98,7 +98,7 @@ export default function TemplatesPage() {
           <button
             onClick={createTemplate}
             disabled={creating}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            className="btn-primary"
           >
             {creating ? 'Creating…' : 'New template'}
           </button>
@@ -125,7 +125,7 @@ export default function TemplatesPage() {
             </thead>
             <tbody>
               {templates.map((t) => (
-                <tr key={t.id} className="border-t hover:bg-muted/50">
+                <tr key={t.id} className="border-t hover:bg-elevated/60">
                   <td className="px-4 py-2">
                     <Link href={`/templates/${t.id}`} className="font-medium text-primary hover:underline">
                       {t.name}

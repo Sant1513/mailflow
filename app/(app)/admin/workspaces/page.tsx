@@ -1,6 +1,6 @@
 import { requireSuperAdminPage } from '@/lib/auth/adminGuard';
 import { prisma } from '@/lib/db/client';
-import Link from 'next/link';
+import { ViewWorkspaceButton } from '@/components/admin/ViewWorkspaceButton';
 
 export default async function AdminWorkspacesPage() {
   const user = await requireSuperAdminPage();
@@ -42,9 +42,7 @@ export default async function AdminWorkspacesPage() {
                 <td className="px-4 py-2">{w._count.contacts}</td>
                 <td className="px-4 py-2">{w._count.campaigns}</td>
                 <td className="px-4 py-2">
-                  <Link href={`/data?workspaceId=${w.id}`} className="text-xs text-primary hover:underline">
-                    View Workspace
-                  </Link>
+                  <ViewWorkspaceButton workspaceId={w.id} />
                 </td>
               </tr>
             ))}
@@ -52,8 +50,7 @@ export default async function AdminWorkspacesPage() {
         </table>
       </div>
       <p className="mt-4 text-xs text-muted-foreground">
-        The &quot;VIEWING WORKSPACE AS …&quot; banner + Exit View (§9) is a Phase 6 UI polish item; the
-        underlying access check and audit logging are already enforced server-side.
+        Viewing opens the workspace read-only under a &quot;VIEWING WORKSPACE AS&quot; banner; entering and exiting are both audited (§9).
       </p>
     </div>
   );

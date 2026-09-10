@@ -13,7 +13,7 @@ import { loadTemplateForSession, latestVersionOf } from '@/lib/templates/access'
  */
 export const POST = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
-  requireCanWrite(session.role);
+  requireCanWrite(session);
   const template = await loadTemplateForSession(session, params.id);
   if (!template) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

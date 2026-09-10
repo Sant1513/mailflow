@@ -6,7 +6,9 @@ import { Role } from '@prisma/client';
 /**
  * Resolves the workspaceId a request is allowed to operate on.
  * - Normal users: only their own workspace (session.workspaceId).
- * - SUPER_ADMIN: may pass an explicit `?workspaceId=` to view another
+ * - SUPER_ADMIN viewing as (§9): session.workspaceId is already the viewed
+ *   workspace, so the default path applies.
+ * - SUPER_ADMIN: may pass an explicit `?workspaceId=` to read another
  *   workspace, but every such access is audited by the caller (§9/§128).
  */
 export async function resolveWorkspaceId(
@@ -33,6 +35,18 @@ export function canWrite(role: Role): boolean {
   return role === Role.SUPER_ADMIN || role === Role.ADMIN || role === Role.OPERATOR;
 }
 
-export function requireCanWrite(role: Role) {
+/**
+ * Gate for every mutation. Accepts the whole session so that "view as"
+ * (§9) is read-only: a SUPER_ADMIN inspecting someone else's workspace can
+ * look at everything but change nothing — inspection is not impersonation,
+ * and nothing they do can be mistaken for the workspace owner's action.
+ */
+export function requireCanWrite(sessionOrRole: AppSession | Role) {
+  const role = typeof sessionOrRole === 'string' ? sessionOrRole : sessionOrRole.role;
   if (!canWrite(role)) throw new ForbiddenError('Viewers cannot make changes');
+  if (typeof sessionOrRole !== 'string' && sessionOrRole.viewingAs) {
+    throw new ForbiddenError(
+      'Read-only while viewing another workspace — exit the view to make changes'
+    );
+  }
 }

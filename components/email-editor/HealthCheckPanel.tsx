@@ -16,9 +16,9 @@ export interface HealthCheckResult {
 
 const ICON = { pass: '✓', warn: '!', fail: '✕' } as const;
 const COLOR = {
-  pass: 'text-green-700',
-  warn: 'text-amber-700',
-  fail: 'text-red-700',
+  pass: 'text-success',
+  warn: 'text-warning',
+  fail: 'text-primary',
 } as const;
 
 /** §27 Email Health Check results. A `fail` blocks the send (§33). */
@@ -34,7 +34,7 @@ export function HealthCheckPanel({ result, onClose }: { result: HealthCheckResul
 
       <div
         className={`mb-2 rounded-md px-2 py-1.5 text-xs ${
-          result.blocked ? 'bg-red-50 text-red-800' : result.warnCount > 0 ? 'bg-amber-50 text-amber-900' : 'bg-green-50 text-green-800'
+          result.blocked ? 'bg-destructive/10 text-primary' : result.warnCount > 0 ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'
         }`}
       >
         {result.blocked

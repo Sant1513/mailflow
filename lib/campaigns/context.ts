@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db/client';
+import { canReviewWorkspace } from '@/lib/permissions/reviewer';
 import { ForbiddenError, type AppSession } from '@/lib/auth/session';
 import { ColumnType, Role, EmailJobStatus, EmailProvider as EmailProviderEnum } from '@prisma/client';
 import type { EvaluableRecord, EvaluationContext } from './evaluate';
@@ -21,7 +22,10 @@ export async function loadCampaignForSession(session: AppSession, campaignId: st
   });
   if (!campaign) return null;
   if (campaign.workspaceId !== session.workspaceId && session.role !== Role.SUPER_ADMIN) {
-    throw new ForbiddenError('Not your workspace');
+    // §36: an ADMIN who is a member of the campaign's workspace may review it.
+    if (!(await canReviewWorkspace(session, campaign.workspaceId))) {
+      throw new ForbiddenError('Not your workspace');
+    }
   }
   return campaign;
 }

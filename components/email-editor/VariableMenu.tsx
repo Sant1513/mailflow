@@ -16,7 +16,7 @@ export function VariableMenu({
     <div className="mt-3">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full rounded-md border px-2 py-1.5 text-xs hover:bg-muted"
+        className="w-full rounded-md border px-2 py-1.5 text-xs hover:bg-elevated"
       >
         + Insert variable
       </button>
@@ -34,7 +34,7 @@ export function VariableMenu({
                   onInsert(c);
                   setOpen(false);
                 }}
-                className="block w-full rounded px-2 py-1 text-left font-mono text-[11px] hover:bg-muted"
+                className="block w-full rounded px-2 py-1 text-left font-mono text-[11px] hover:bg-elevated"
               >
                 {`{{${c}}}`}
               </button>
