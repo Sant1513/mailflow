@@ -8,7 +8,7 @@ import { audit } from '@/lib/audit/log';
 import { loadConversationForSession } from '@/lib/conversations/access';
 import { GmailProvider } from '@/lib/email/gmail';
 import { SendEmailError } from '@/lib/email/provider';
-import { buildReferences } from '@/lib/email/mime';
+import { buildReferences, buildQuotedTrail } from '@/lib/email/mime';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 import { MessageDirection, EmailProvider as EmailProviderEnum } from '@prisma/client';
 
@@ -88,6 +88,15 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   const subject = body.subject?.trim() || (body.newThread ? baseSubject : `Re: ${baseSubject}`);
   const fromName = sender.displayName ?? session.name;
 
+  // §116: append the previous thread as a Gmail-style quoted block so the
+  // recipient sees the full conversation history. We quote only the last
+  // message — it already carries the accumulated chain from earlier messages.
+  // The full HTML (including quoted trail) is stored in htmlBody so that
+  // future replies naturally inherit the full chain, and splitMessageBody
+  // correctly separates the new text from the quoted section for inbox display.
+  const quotedTrail = buildQuotedTrail(conversation.messages, { skipNewThread: body.newThread });
+  const htmlToSend = quotedTrail ? body.html + quotedTrail : body.html;
+
   let result;
   try {
     const provider = new GmailProvider(sender);
@@ -97,7 +106,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       fromName,
       fromEmail: sender.emailAddress,
       subject,
-      html: body.html,
+      html: htmlToSend,
       plainText: body.plainText,
       attachments: files.length ? files : undefined,
       threadId,
@@ -154,9 +163,12 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
         messageIdHeader: result.messageIdHeader,
         inReplyTo,
         references: buildReferences(references, result.messageIdHeader),
-        // §89 immutable snapshot of exactly what was sent.
-        htmlBody: body.html,
+        // §89 immutable snapshot of exactly what was sent (including quoted trail
+        // so future replies quote the full chain, and the inbox splits it correctly).
+        htmlBody: htmlToSend,
         plainTextBody: body.plainText ?? null,
+        // The snippet is derived from only the new text (not the quoted trail) to
+        // keep inbox previews meaningful.
         snippet: sanitizeEmailHtml(body.html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200),
         sentAt: now,
         status: 'SENT',
