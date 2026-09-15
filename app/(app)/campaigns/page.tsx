@@ -16,6 +16,7 @@ interface CampaignRow {
   createdBy: { name: string; email: string };
   batches: { id: string; label: string; status: string; sentCount: number; failedCount: number; total: number }[];
   _count?: { documents: number };
+  tracking?: { opens: number; clicks: number; openRate: number | null; clickRate: number | null };
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -262,6 +263,8 @@ export default function CampaignsPage() {
                 <th className="px-4 py-2">Dataset</th>
                 <th className="px-4 py-2">Template</th>
                 <th className="px-4 py-2">Progress</th>
+                <th className="px-4 py-2 text-right">Opens</th>
+                <th className="px-4 py-2 text-right">Clicks</th>
                 <th className="px-4 py-2"></th>
               </tr>
             </thead>
@@ -299,6 +302,22 @@ export default function CampaignsPage() {
                       <td className="px-4 py-2 text-xs">
                         {batch ? `${batch.sentCount} sent · ${batch.failedCount} failed of ${batch.total}` : '—'}
                       </td>
+                      <td className="px-4 py-2 text-right text-xs text-muted-foreground">
+                        {c.tracking && c.tracking.opens > 0 ? (
+                          <span title={`${c.tracking.openRate ?? 0}% open rate`}>
+                            {c.tracking.opens}
+                            {c.tracking.openRate !== null && <span className="ml-1 text-faint">{c.tracking.openRate}%</span>}
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="px-4 py-2 text-right text-xs text-muted-foreground">
+                        {c.tracking && c.tracking.clicks > 0 ? (
+                          <span title={`${c.tracking.clickRate ?? 0}% click rate`}>
+                            {c.tracking.clicks}
+                            {c.tracking.clickRate !== null && <span className="ml-1 text-faint">{c.tracking.clickRate}%</span>}
+                          </span>
+                        ) : '—'}
+                      </td>
                       <td className="px-4 py-2">
                         {isDraft && (
                           <div className="flex items-center gap-1">
@@ -323,7 +342,7 @@ export default function CampaignsPage() {
                     </tr>
                     {isEditingThis && (
                       <tr key={`${c.id}-edit`} className="border-t bg-elevated/30">
-                        <td colSpan={6} className="px-4 py-3">
+                        <td colSpan={8} className="px-4 py-3">
                           <div className="flex flex-wrap items-end gap-3">
                             <div>
                               <label className="mb-1 block text-xs font-medium">Dataset</label>

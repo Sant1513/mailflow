@@ -151,6 +151,10 @@ export interface CampaignPerformanceRow {
   failed: number;
   skipped: number;
   failurePct: number | null;
+  opens: number;
+  clicks: number;
+  openRate: number | null;
+  clickRate: number | null;
   updatedAt: Date;
 }
 
@@ -165,17 +169,29 @@ export async function campaignPerformance(scope: Scope, limit = 10): Promise<Cam
   });
   if (campaigns.length === 0) return [];
 
-  const grouped = await prisma.emailJob.groupBy({
-    by: ['campaignId', 'status'],
-    where: { campaignId: { in: campaigns.map((c) => c.id) } },
-    _count: { _all: true },
-  });
+  const ids = campaigns.map((c) => c.id);
+  const [grouped, trackingGroups] = await Promise.all([
+    prisma.emailJob.groupBy({
+      by: ['campaignId', 'status'],
+      where: { campaignId: { in: ids } },
+      _count: { _all: true },
+    }),
+    prisma.emailTrackingEvent.groupBy({
+      by: ['campaignId', 'type'],
+      where: { campaignId: { in: ids } },
+      _count: { _all: true },
+    }),
+  ]);
   const count = (id: string, status: EmailJobStatus) =>
     grouped.find((g) => g.campaignId === id && g.status === status)?._count._all ?? 0;
+  const countTracking = (id: string, type: string) =>
+    trackingGroups.find((g) => g.campaignId === id && g.type === type)?._count._all ?? 0;
 
   return campaigns.map((c) => {
     const sent = count(c.id, EmailJobStatus.SENT);
     const failed = count(c.id, EmailJobStatus.FAILED);
+    const opens = countTracking(c.id, 'OPEN');
+    const clicks = countTracking(c.id, 'CLICK');
     return {
       id: c.id,
       name: c.name,
@@ -185,9 +201,71 @@ export async function campaignPerformance(scope: Scope, limit = 10): Promise<Cam
       failed,
       skipped: count(c.id, EmailJobStatus.SKIPPED),
       failurePct: overallFailurePct(sent, failed),
+      opens,
+      clicks,
+      openRate: sent > 0 ? Math.round((opens / sent) * 100) : null,
+      clickRate: sent > 0 ? Math.round((clicks / sent) * 100) : null,
       updatedAt: c.updatedAt,
     };
   });
+}
+
+// ── Tracking engagement stats ─────────────────────────────────────────────
+
+export interface TrackingStats {
+  uniqueOpens: number;
+  uniqueClicks: number;
+  unsubscribes: number;
+  openRate: number | null;
+  clickRate: number | null;
+}
+
+/** Workspace- or org-scoped email engagement aggregate (unique openers / clickers). */
+export async function trackingStats(scope: Scope, since?: Date): Promise<TrackingStats> {
+  const scopeWhere = 'workspaceId' in scope
+    ? { workspaceId: scope.workspaceId }
+    : { organizationId: scope.organizationId };
+
+  const campaignIds = await prisma.campaign
+    .findMany({ where: scopeWhere, select: { id: true } })
+    .then((rows) => rows.map((r) => r.id));
+
+  if (campaignIds.length === 0) {
+    return { uniqueOpens: 0, uniqueClicks: 0, unsubscribes: 0, openRate: null, clickRate: null };
+  }
+
+  const dateFilter = since ? { createdAt: { gte: since } } : {};
+  const suppressionWhere =
+    'workspaceId' in scope
+      ? { workspaceId: scope.workspaceId, ...dateFilter }
+      : { workspace: { organizationId: scope.organizationId }, ...dateFilter };
+
+  const [openRows, clickRows, unsubscribes, sent] = await Promise.all([
+    prisma.emailTrackingEvent.findMany({
+      where: { campaignId: { in: campaignIds }, type: 'OPEN', ...dateFilter },
+      distinct: ['email'],
+      select: { email: true },
+    }),
+    prisma.emailTrackingEvent.findMany({
+      where: { campaignId: { in: campaignIds }, type: 'CLICK', ...dateFilter },
+      distinct: ['email'],
+      select: { email: true },
+    }),
+    prisma.emailSuppression.count({ where: suppressionWhere }),
+    prisma.emailJob.count({
+      where: { ...jobScope(scope), status: EmailJobStatus.SENT, ...(since ? { sentAt: { gte: since } } : {}) },
+    }),
+  ]);
+
+  const uniqueOpens = openRows.length;
+  const uniqueClicks = clickRows.length;
+  return {
+    uniqueOpens,
+    uniqueClicks,
+    unsubscribes,
+    openRate: sent > 0 ? Math.round((uniqueOpens / sent) * 100) : null,
+    clickRate: sent > 0 ? Math.round((uniqueClicks / sent) * 100) : null,
+  };
 }
 
 export interface UserActivityRow {

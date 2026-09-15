@@ -9,6 +9,7 @@ import {
   parseDays,
   responseTimeMetrics,
   totals,
+  trackingStats,
 } from '@/lib/analytics/metrics';
 import { ApprovalsChart, DailyAreaChart } from '@/components/analytics/Charts';
 import { Suspense } from 'react';
@@ -63,7 +64,7 @@ export default async function DashboardPage({
   const scope = { workspaceId };
   const since = windowStart(days);
 
-  const [t, series, batches, conversations, activity, approvals, rt, campaigns] = await Promise.all([
+  const [t, series, batches, conversations, activity, approvals, rt, campaigns, tracking] = await Promise.all([
     totals(scope, new Date(), since),
     dailySeries(scope, days),
     prisma.batch.findMany({
@@ -96,6 +97,7 @@ export default async function DashboardPage({
     approvalStats(scope, days),
     responseTimeMetrics(scope, days),
     campaignPerformance(scope, 8),
+    trackingStats(scope, since),
   ]);
 
   const replyRate = t.emailsSent > 0 ? Math.round((t.replies / t.emailsSent) * 100) : null;
@@ -147,6 +149,36 @@ export default async function DashboardPage({
             <div className="mt-0.5 text-xs text-muted-foreground">{s.label}</div>
           </div>
         ))}
+      </div>
+
+      {/* Email engagement */}
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="panel p-4">
+          <div className="font-heading text-2xl font-bold text-primary">{tracking.uniqueOpens.toLocaleString('en-IN')}</div>
+          <div className="mt-0.5 text-xs text-muted-foreground">Unique opens</div>
+        </div>
+        <div className="panel p-4">
+          <div className="font-heading text-2xl font-bold text-primary">
+            {tracking.openRate !== null ? `${tracking.openRate}%` : '—'}
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">Open rate</div>
+        </div>
+        <div className="panel p-4">
+          <div className="font-heading text-2xl font-bold text-primary">{tracking.uniqueClicks.toLocaleString('en-IN')}</div>
+          <div className="mt-0.5 text-xs text-muted-foreground">Unique clicks</div>
+        </div>
+        <div className="panel p-4">
+          <div className="font-heading text-2xl font-bold text-primary">
+            {tracking.clickRate !== null ? `${tracking.clickRate}%` : '—'}
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">Click rate</div>
+        </div>
+        <div className="panel p-4">
+          <div className={`font-heading text-2xl font-bold ${tracking.unsubscribes > 0 ? 'text-warning' : 'text-foreground'}`}>
+            {tracking.unsubscribes.toLocaleString('en-IN')}
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">Unsubscribes</div>
+        </div>
       </div>
 
       {/* Response time KPIs */}
@@ -219,8 +251,9 @@ export default async function DashboardPage({
                     <th className="px-4 py-2">Campaign</th>
                     <th className="px-4 py-2">Status</th>
                     <th className="px-4 py-2 text-right">Sent</th>
+                    <th className="px-4 py-2 text-right">Opens</th>
+                    <th className="px-4 py-2 text-right">Clicks</th>
                     <th className="px-4 py-2 text-right">Failed</th>
-                    <th className="px-4 py-2 text-right">Skipped</th>
                     <th className="px-4 py-2 text-right">Failure %</th>
                   </tr>
                 </thead>
@@ -235,8 +268,23 @@ export default async function DashboardPage({
                         <span className={`badge ${STATUS_BADGE[c.status] ?? 'badge-neutral'}`}>{c.status}</span>
                       </td>
                       <td className="px-4 py-2 text-right">{c.sent.toLocaleString('en-IN')}</td>
+                      <td className="px-4 py-2 text-right text-muted-foreground">
+                        {c.opens > 0 ? (
+                          <span title={`${c.openRate ?? 0}% open rate`}>
+                            {c.opens.toLocaleString('en-IN')}
+                            {c.openRate !== null && <span className="ml-1 text-xs text-faint">{c.openRate}%</span>}
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="px-4 py-2 text-right text-muted-foreground">
+                        {c.clicks > 0 ? (
+                          <span title={`${c.clickRate ?? 0}% click rate`}>
+                            {c.clicks.toLocaleString('en-IN')}
+                            {c.clickRate !== null && <span className="ml-1 text-xs text-faint">{c.clickRate}%</span>}
+                          </span>
+                        ) : '—'}
+                      </td>
                       <td className={`px-4 py-2 text-right ${c.failed > 0 ? 'text-warning' : ''}`}>{c.failed}</td>
-                      <td className="px-4 py-2 text-right text-muted-foreground">{c.skipped}</td>
                       <td className={`px-4 py-2 text-right ${c.failurePct !== null && c.failurePct > 5 ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>
                         {c.failurePct !== null ? `${c.failurePct}%` : '—'}
                       </td>

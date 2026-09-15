@@ -28,7 +28,34 @@ export const GET = withErrorHandling(async (req) => {
     },
   });
 
-  return NextResponse.json({ campaigns });
+  const ids = campaigns.map((c) => c.id);
+  const trackingGroups = ids.length
+    ? await prisma.emailTrackingEvent.groupBy({
+        by: ['campaignId', 'type'],
+        where: { campaignId: { in: ids } },
+        _count: { _all: true },
+      })
+    : [];
+
+  const countTracking = (id: string, type: string) =>
+    trackingGroups.find((g) => g.campaignId === id && g.type === type)?._count._all ?? 0;
+
+  const enriched = campaigns.map((c) => {
+    const sent = c.batches.reduce((s, b) => s + b.sentCount, 0);
+    const opens = countTracking(c.id, 'OPEN');
+    const clicks = countTracking(c.id, 'CLICK');
+    return {
+      ...c,
+      tracking: {
+        opens,
+        clicks,
+        openRate: sent > 0 ? Math.round((opens / sent) * 100) : null,
+        clickRate: sent > 0 ? Math.round((clicks / sent) * 100) : null,
+      },
+    };
+  });
+
+  return NextResponse.json({ campaigns: enriched });
 });
 
 const createSchema = z.object({
