@@ -3,6 +3,7 @@ import { evaluateCondition, describeCondition, type Condition } from './conditio
 import { checkFrequency, checkStopConditions, type FrequencyPolicy } from './frequency';
 import { renderTemplate } from '@/lib/templates/variables';
 import { EmailJobStatus, BatchStatus, CampaignStatus, EmailProvider as EmailProviderEnum } from '@prisma/client';
+import { enqueueAutomationEval } from '@/lib/queue/queues';
 
 /**
  * §68-74 automation engine.
@@ -41,6 +42,16 @@ interface AutomationVersionShape {
   actions: unknown;
   stopConditions: unknown;
   frequencyPolicy: unknown;
+}
+
+function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
 }
 
 function asCondition(value: unknown): Condition | null {
@@ -95,8 +106,10 @@ export async function evaluateAutomationForRecord(opts: {
   triggerType: string;
   /** Set false during previews so nothing is actually sent. */
   performActions?: boolean;
+  /** When resuming after a WAIT step, skip actions before this index. */
+  startFromActionIndex?: number;
 }): Promise<EvaluateResult> {
-  const { automationId, recordId, triggerType, performActions = true } = opts;
+  const { automationId, recordId, triggerType, performActions = true, startFromActionIndex = 0 } = opts;
 
   const automation = await prisma.automation.findUnique({
     where: { id: automationId },
@@ -186,14 +199,17 @@ export async function evaluateAutomationForRecord(opts: {
   }
 
   // ── Perform actions (§70) ──
-  const actions = asActions(version.actions);
+  const allActions = asActions(version.actions);
+  // When resuming after a WAIT, only execute from the specified index onward.
+  const actions = startFromActionIndex > 0 ? allActions.slice(startFromActionIndex) : allActions;
   if (actions.length === 0) {
     return log({ result: 'SKIPPED', conditionsMet: true, actionTaken: null, reason: 'No actions configured.' });
   }
 
   const performed: string[] = [];
   try {
-    for (const action of actions) {
+    for (const [i, action] of actions.entries()) {
+      const absoluteIndex = startFromActionIndex + i;
       switch (action.type) {
         case 'SEND_EMAIL': {
           const outcome = await performSendEmail({
@@ -240,9 +256,32 @@ export async function evaluateAutomationForRecord(opts: {
           break;
         }
         case 'WAIT': {
-          // A real delay needs a scheduled queue; rather than pretend, this
-          // is recorded and skipped. Tracked in PHASE_STATUS.md.
-          performed.push(`WAIT(not yet implemented — requires the delayed queue)`);
+          const durationMs = Number(action.config.duration ?? 0);
+          if (durationMs > 0) {
+            const queued = await enqueueAutomationEval(
+              {
+                automationId: automation.id,
+                automationVersionId: version.id,
+                recordId,
+                triggerType,
+                startFromActionIndex: absoluteIndex + 1,
+              },
+              durationMs
+            );
+            const label = formatDuration(durationMs);
+            performed.push(`WAIT(${label} — ${queued ? 'continuation scheduled' : 'no queue — skipped'})`);
+            // Stop this execution; the queued job will continue from the next step.
+            if (queued) {
+              return log({
+                result: 'TRIGGERED',
+                conditionsMet: true,
+                actionTaken: performed.join('; '),
+                reason: `Paused at WAIT(${label}); continuation scheduled for action ${absoluteIndex + 1}`,
+              });
+            }
+          } else {
+            performed.push('WAIT(0ms — no-op)');
+          }
           break;
         }
         default:

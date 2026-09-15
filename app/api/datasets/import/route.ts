@@ -94,18 +94,44 @@ export const POST = withErrorHandling(async (req) => {
         });
       }
 
+      // Skip rows whose email already exists in this dataset so that
+      // re-importing the same file doesn't silently accumulate duplicates.
+      let payloadsToInsert = rowPayloads;
+      let dbSkipped = 0;
+      const emailKey = body.emailColumn
+        ? (body.headerToKey[body.emailColumn] ?? body.emailColumn)
+        : null;
+      if (emailKey && body.duplicateStrategy !== 'IMPORT_ALL') {
+        const existingRecords = await tx.record.findMany({
+          where: { datasetId: dataset.id },
+          select: { data: true },
+        });
+        if (existingRecords.length > 0) {
+          const existingEmails = new Set<string>();
+          for (const r of existingRecords) {
+            const v = (r.data as Record<string, unknown>)[emailKey];
+            if (typeof v === 'string' && v.trim()) existingEmails.add(v.toLowerCase().trim());
+          }
+          payloadsToInsert = rowPayloads.filter((d) => {
+            const v = d[emailKey];
+            return typeof v !== 'string' || !existingEmails.has(v.toLowerCase().trim());
+          });
+          dbSkipped = rowPayloads.length - payloadsToInsert.length;
+        }
+      }
+
       // createMany is a single INSERT. The previous per-row create() meant
       // one network round trip per record, so a 263-row import against a
       // hosted database spent 20s+ inside an interactive transaction and
       // died on Prisma's 5s default with P2028 ("Transaction not found").
       const { count } = await tx.record.createMany({
-        data: rowPayloads.map((data) => ({
+        data: payloadsToInsert.map((data) => ({
           datasetId: dataset.id,
           data: data as Prisma.InputJsonValue,
         })),
       });
 
-      return { dataset, created: count };
+      return { dataset, created: count, dbSkipped };
     },
     // Generous ceiling for genuinely large imports; the work inside is now
     // a handful of statements, so this should never be approached.
@@ -126,8 +152,21 @@ export const POST = withErrorHandling(async (req) => {
   await audit(session, 'DATASET_IMPORT', {
     targetType: 'Dataset',
     targetId: result.dataset.id,
-    metadata: { recordsImported: result.created, contactsLinked, duplicateStrategy: body.duplicateStrategy },
+    metadata: {
+      recordsImported: result.created,
+      skippedDuplicates: result.dbSkipped,
+      contactsLinked,
+      duplicateStrategy: body.duplicateStrategy,
+    },
   });
 
-  return NextResponse.json({ dataset: result.dataset, recordsImported: result.created, contactsLinked }, { status: 201 });
+  return NextResponse.json(
+    {
+      dataset: result.dataset,
+      recordsImported: result.created,
+      skippedDuplicates: result.dbSkipped,
+      contactsLinked,
+    },
+    { status: 201 }
+  );
 });

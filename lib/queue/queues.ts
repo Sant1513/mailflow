@@ -29,6 +29,8 @@ export interface AutomationEvalPayload {
   automationVersionId: string;
   recordId: string;
   triggerType: string;
+  /** When resuming after a WAIT step, skip actions before this index. */
+  startFromActionIndex?: number;
 }
 
 let connection: Redis | null = null;
@@ -89,6 +91,28 @@ export async function enqueueEmailJobs(payloads: EmailJobPayload[]): Promise<{ e
   );
 
   return { enqueued: payloads.length, queued: true };
+}
+
+/**
+ * Enqueue (or re-enqueue after WAIT) an automation evaluation.
+ * Returns true if the job was queued via BullMQ, false if Redis is unavailable.
+ */
+export async function enqueueAutomationEval(
+  payload: AutomationEvalPayload,
+  delayMs = 0
+): Promise<boolean> {
+  const queue = getQueue(QUEUE_NAMES.AUTOMATION_EVAL);
+  if (!queue) return false;
+
+  // JobId encodes automation+record+step so the same WAIT can't double-schedule.
+  const jobId = `auto-eval:${payload.automationId}:${payload.recordId}:${payload.startFromActionIndex ?? 0}`;
+  await queue.add('eval', payload, {
+    delay: delayMs,
+    jobId,
+    removeOnComplete: { count: 1000 },
+    removeOnFail: false,
+  });
+  return true;
 }
 
 export async function closeQueues(): Promise<void> {
