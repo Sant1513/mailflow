@@ -35,6 +35,8 @@ export interface AppSession {
   /** The caller's own workspace, untouched by "view as". */
   homeWorkspaceId: string | null;
   role: Role;
+  /** ACTIVE | PENDING | DISABLED — used to gate access before approval. */
+  status: string;
   email: string;
   name: string;
   /** Set while a SUPER_ADMIN is viewing another user's workspace (§9). */
@@ -51,6 +53,7 @@ async function baseSession(): Promise<AppSession | null> {
     workspaceId: user.workspaceId,
     homeWorkspaceId: user.workspaceId,
     role: user.role as Role,
+    status: (user.status as string) ?? 'ACTIVE',
     email: user.email,
     name: user.name,
   };

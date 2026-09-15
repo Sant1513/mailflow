@@ -22,11 +22,13 @@ const ICON: Record<string, string> = {
   FOLLOW_UP_DUE: '⏰',
   CAMPAIGN_APPROVAL: '✔',
   BATCH_FAILURE: '!',
+  USER_REGISTRATION: '🙋',
 };
 const ICON_COLOR: Record<string, string> = {
   NEW_REPLY: 'text-primary',
   BATCH_FAILURE: 'text-destructive',
   FOLLOW_UP_DUE: 'text-warning',
+  USER_REGISTRATION: 'text-success',
 };
 
 function ago(iso: string) {

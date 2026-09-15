@@ -3,7 +3,7 @@ import type { Adapter, AdapterUser } from 'next-auth/adapters';
 import GoogleProvider from 'next-auth/providers/google';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from '@/lib/db/client';
-import { Role } from '@prisma/client';
+import { Role, UserStatus } from '@prisma/client';
 
 /**
  * Optional sign-up allowlist.
@@ -104,9 +104,15 @@ function mailflowAdapter(): Adapter {
     async createUser(data: AdapterUser) {
       const org = await resolveOrganization();
       const email = data.email.toLowerCase();
-      // `name` is required in our schema but optional in NextAuth's, so fall
-      // back to the local part of the address rather than storing null.
       const name = data.name?.trim() || email.split('@')[0] || email;
+
+      // The very first ACTIVE super admin in the org bootstraps the system.
+      // Everyone else starts as PENDING and needs explicit approval.
+      const hasSuperAdmin = await prisma.user.findFirst({
+        where: { organizationId: org.id, role: Role.SUPER_ADMIN, status: UserStatus.ACTIVE },
+        select: { id: true },
+      });
+      const isFirstAdmin = !hasSuperAdmin;
 
       const user = await prisma.user.create({
         data: {
@@ -115,7 +121,8 @@ function mailflowAdapter(): Adapter {
           name,
           image: data.image ?? null,
           emailVerified: data.emailVerified ?? null,
-          role: Role.OPERATOR,
+          role: isFirstAdmin ? Role.SUPER_ADMIN : Role.OPERATOR,
+          status: isFirstAdmin ? UserStatus.ACTIVE : UserStatus.PENDING,
           lastLoginAt: new Date(),
         },
       });
@@ -125,9 +132,30 @@ function mailflowAdapter(): Adapter {
           organizationId: org.id,
           ownerId: user.id,
           name: `${name}'s Workspace`,
-          members: { create: { userId: user.id, role: Role.OPERATOR } },
+          members: { create: { userId: user.id, role: isFirstAdmin ? Role.SUPER_ADMIN : Role.OPERATOR } },
         },
       });
+
+      // Notify all super admins about the pending registration.
+      if (!isFirstAdmin) {
+        const admins = await prisma.user.findMany({
+          where: { organizationId: org.id, role: Role.SUPER_ADMIN, status: UserStatus.ACTIVE },
+          select: { id: true, ownedWorkspaces: { select: { id: true }, take: 1 } },
+        });
+        const notifData = admins
+          .filter((a) => a.ownedWorkspaces[0])
+          .map((a) => ({
+            userId: a.id,
+            workspaceId: a.ownedWorkspaces[0]!.id,
+            type: 'USER_REGISTRATION',
+            title: `New sign-up: ${name}`,
+            body: `${email} is waiting for approval.`,
+            link: '/approvals?section=users',
+          }));
+        if (notifData.length > 0) {
+          await prisma.notification.createMany({ data: notifData });
+        }
+      }
 
       return {
         id: user.id,
@@ -216,13 +244,12 @@ export const authOptions: NextAuthOptions = {
      */
     async signIn({ user }) {
       const email = user.email?.toLowerCase() ?? '';
-      if (!isEmailAllowed(email)) {
-        // Rejected — NextAuth redirects to /login/error?error=AccessDenied
-        return false;
-      }
+      if (!isEmailAllowed(email)) return false;
 
       const existing = await prisma.user.findUnique({ where: { email } });
-      if (existing?.status === 'DISABLED') return false;
+      if (existing?.status === UserStatus.DISABLED) return false;
+      // PENDING users can sign in but are gated to /pending.
+      if (existing?.status === UserStatus.PENDING) return '/pending';
 
       return true;
     },
@@ -234,6 +261,7 @@ export const authOptions: NextAuthOptions = {
       if (dbUser && session.user) {
         (session.user as any).id = dbUser.id;
         (session.user as any).role = dbUser.role;
+        (session.user as any).status = dbUser.status;
         (session.user as any).organizationId = dbUser.organizationId;
         (session.user as any).workspaceId = dbUser.ownedWorkspaces[0]?.id ?? null;
       }

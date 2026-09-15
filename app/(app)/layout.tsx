@@ -11,6 +11,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // is driven by the same session every page and API route sees.
   const session = await getOptionalSession();
   if (!session) redirect('/login');
+  if (session.status === 'PENDING') redirect('/pending');
 
   // Badge for reviewers: how many campaigns await a decision in their scope.
   let pendingApprovals = 0;

@@ -1,7 +1,8 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, Suspense, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 
 interface RequestRow {
@@ -26,6 +27,15 @@ interface RequestRow {
 }
 
 type Tab = 'pending' | 'approved' | 'rejected' | 'all';
+type Section = 'campaigns' | 'users';
+
+interface PendingUser {
+  id: string;
+  name: string;
+  email: string;
+  image: string | null;
+  createdAt: string;
+}
 
 const STATUS_BADGE: Record<string, string> = {
   PENDING_APPROVAL: 'badge-warning',
@@ -44,8 +54,15 @@ function ago(iso: string | null) {
   return `${Math.round(h / 24)} d`;
 }
 
-/** §36 approvals inbox for ADMIN / SUPER_ADMIN: search, approve, reject with reason + remarks. */
 export default function ApprovalsPage() {
+  return <Suspense><ApprovalsPageInner /></Suspense>;
+}
+
+function ApprovalsPageInner() {
+  const searchParams = useSearchParams();
+  const [section, setSection] = useState<Section>(
+    searchParams.get('section') === 'users' ? 'users' : 'campaigns'
+  );
   const [tab, setTab] = useState<Tab>('pending');
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<RequestRow[]>([]);
@@ -58,6 +75,11 @@ export default function ApprovalsPage() {
   const [remarks, setRemarks] = useState('');
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  // User registrations state
+  const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [userBusy, setUserBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/approvals?status=${tab}&q=${encodeURIComponent(q.trim())}`);
@@ -74,10 +96,53 @@ export default function ApprovalsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, q]);
 
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true);
+    const res = await fetch('/api/admin/pending-users');
+    if (res.ok) {
+      const json = await res.json();
+      setPendingUsers(json.users ?? []);
+    }
+    setUsersLoading(false);
+  }, []);
+
   useEffect(() => {
     const t = setTimeout(load, q ? 250 : 0);
     return () => clearTimeout(t);
   }, [load, q]);
+
+  // Always load pending users count so the badge on the tab stays accurate.
+  useEffect(() => { loadUsers(); }, [loadUsers]);
+  useEffect(() => {
+    if (section === 'users') loadUsers();
+  }, [section, loadUsers]);
+
+  async function approveUser(id: string) {
+    setUserBusy(id);
+    const res = await fetch(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'ACTIVE' }),
+    });
+    setUserBusy(null);
+    if (!res.ok) { toast.error('Could not approve user'); return; }
+    toast.success('User approved — they can now sign in');
+    loadUsers();
+  }
+
+  async function rejectUser(id: string, name: string) {
+    if (!confirm(`Reject and disable ${name}? They will not be able to sign in.`)) return;
+    setUserBusy(id);
+    const res = await fetch(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'DISABLED' }),
+    });
+    setUserBusy(null);
+    if (!res.ok) { toast.error('Could not reject user'); return; }
+    toast.success('User rejected and disabled');
+    loadUsers();
+  }
 
   async function decide() {
     if (!decision) return;
@@ -116,6 +181,96 @@ export default function ApprovalsPage() {
 
   return (
     <div className="p-4 sm:p-6">
+      {/* Section switcher */}
+      <div className="mb-5 flex items-center gap-1 rounded-lg border border-border bg-card p-1 w-fit">
+        {(['campaigns', 'users'] as Section[]).map((s) => (
+          <button
+            key={s}
+            onClick={() => setSection(s)}
+            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+              section === s ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-elevated hover:text-foreground'
+            }`}
+          >
+            {s === 'campaigns' ? 'Campaign Approvals' : (
+              <span className="flex items-center gap-2">
+                User Registrations
+                {pendingUsers.length > 0 && section !== 'users' && (
+                  <span className="rounded-full bg-primary px-1.5 text-[10px] font-bold leading-4 text-primary-foreground">{pendingUsers.length}</span>
+                )}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* ── User Registrations ── */}
+      {section === 'users' && (
+        <div>
+          <div className="mb-4">
+            <h1 className="font-heading text-2xl font-bold tracking-tight">User Registrations</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              New accounts waiting for approval. Approved users get full access; rejected users are disabled.
+            </p>
+          </div>
+          {usersLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : pendingUsers.length === 0 ? (
+            <div className="panel px-4 py-10 text-center text-sm text-muted-foreground">
+              No pending registrations — all users are approved.
+            </div>
+          ) : (
+            <div className="panel overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="text-left text-[11px] uppercase tracking-wider text-muted-foreground bg-muted">
+                  <tr>
+                    <th className="px-4 py-2">Name</th>
+                    <th className="px-4 py-2">Email</th>
+                    <th className="px-4 py-2">Requested</th>
+                    <th className="px-4 py-2 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingUsers.map((u) => (
+                    <tr key={u.id} className="border-t border-border-subtle">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          {u.image && <img src={u.image} alt="" className="h-7 w-7 rounded-full" />}
+                          <span className="font-medium">{u.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{u.email}</td>
+                      <td className="px-4 py-3 text-muted-foreground text-xs">
+                        {new Date(u.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            disabled={userBusy === u.id}
+                            onClick={() => approveUser(u.id)}
+                            className="btn-primary !py-1 text-[11px]"
+                          >
+                            {userBusy === u.id ? 'Saving…' : 'Approve'}
+                          </button>
+                          <button
+                            disabled={userBusy === u.id}
+                            onClick={() => rejectUser(u.id, u.name)}
+                            className="btn-secondary !py-1 text-[11px]"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Campaign Approvals ── */}
+      {section === 'campaigns' && (<>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="eyebrow mb-2">{scope === 'organization' ? 'Organisation' : 'Workspace'}</div>
@@ -265,6 +420,7 @@ export default function ApprovalsPage() {
           </div>
         </div>
       )}
+      </>)} {/* end campaigns section */}
     </div>
   );
 }

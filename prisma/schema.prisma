@@ -27,6 +27,7 @@ enum Role {
 
 enum UserStatus {
   ACTIVE
+  PENDING
   DISABLED
 }
 

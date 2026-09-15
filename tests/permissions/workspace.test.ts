@@ -21,6 +21,7 @@ function session(overrides: Partial<{ role: Role; workspaceId: string | null; vi
     workspaceId: 'ws-own',
     homeWorkspaceId: 'ws-own',
     role: Role.OPERATOR,
+    status: 'ACTIVE',
     email: 'a@masaischool.com',
     name: 'A',
     ...overrides,
