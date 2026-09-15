@@ -121,6 +121,51 @@ become required starting Phase 3 — see `.env.example` and
 | `npm run db:studio` | Prisma Studio, browse the DB |
 | `npm run db:seed` | Seed org + sample dataset |
 
+## Features
+
+### Inbox & conversations
+- Threaded email inbox with collapsible message bodies
+- Smart reply composer with quoted email trail included in outgoing replies
+- CC/BCC support with full reply chain preserved
+- Conversation assignment, tagging, and status (open / snoozed / resolved)
+- Follow-up due tracking
+- Sync Gmail replies sent outside the tool back into the thread
+
+### Dashboard
+- Real-time metrics: emails sent, reply rate, failed, pending, unread, open conversations, resolution rate, follow-ups due
+- **FRT (First Response Time)** and **ART (Average Response Time)** across all conversations
+- 7 / 30 / 90 day date filter
+- Campaign performance table with open/click rates
+- Per-user FRT/ART breakdown for super admins (Admin → Users → Response Times section)
+
+### Email campaigns
+- Dataset-backed bulk campaigns with Gemini AI personalisation
+- Approval-gated sending: campaigns need admin sign-off before dispatch
+- Campaign approval page with audit trail, requester/reviewer email thread, and inline expand/collapse
+
+### Notifications
+- Bell icon in sidebar header with live unread count
+- 2-second auto-popup toast when a new notification arrives, with "View" deep-link
+- Groups by Today / Yesterday / older; mark-all-read and per-item read
+
+### User registration approval
+- New sign-ups start as **PENDING** and cannot access the app until approved
+- Pending users see an approval-waiting screen with a pre-filled mailto link to the admin
+- Super admins see a **User Registrations** section under Approvals, with approve / reject (disable) actions
+- Bell notification fires to all super admins on every new registration
+- First-ever registrant is auto-promoted to SUPER_ADMIN (bootstrap)
+
+### Admin
+- User management: roles, activation/deactivation
+- View-as: super admins can inspect any workspace without logging out
+- Per-user response-time metrics (FRT/ART) with date filter
+
+### Optional env vars
+| Variable | Effect |
+| --- | --- |
+| `ALLOWED_EMAIL_DOMAIN` | Restrict sign-up to one domain (e.g. `masaischool.com`) |
+| `ADMIN_CONTACT_EMAIL` | Email shown on the pending-approval screen (fallback: `admin@masaischool.com`) |
+
 ## What's real vs. not yet
 
 This codebase follows one rule strictly (§140 of the spec): **no fake
