@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 import { ExplainButton } from '@/components/ai/ExplainButton';
 import { SenderSettings } from '@/components/campaign/SenderSettings';
 import { CampaignReview, type CampaignPreview } from '@/components/campaign/CampaignReview';
+import { CampaignDocuments } from '@/components/campaign/CampaignDocuments';
+import { useDocumentPreview } from '@/components/documents/PdfPreviewDialog';
 
 interface Simulation {
   total: number;
@@ -30,6 +32,7 @@ const REASON_LABELS: Record<string, string> = {
   INVALID_EMAIL: 'Invalid email',
   MISSING_EMAIL: 'No email address',
   MISSING_VARIABLE: 'Missing variable value',
+  MISSING_DOCUMENT_FIELD: 'Missing document value',
   DUPLICATE_IN_BATCH: 'Duplicate address',
   CONDITION_NOT_MET: 'Automation condition not met',
   FREQUENCY_LIMIT: 'Send-frequency limit',
@@ -45,6 +48,13 @@ export default function CampaignDetailPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [preview, setPreview] = useState<CampaignPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const { openPreview, previewDialog } = useDocumentPreview();
+  const previewDocument = useCallback(
+    (campaignDocumentId: string, name: string, recordId?: string | null) => {
+      openPreview(`/api/campaigns/${params.id}/documents/${campaignDocumentId}/preview`, recordId ? { recordId } : {}, name);
+    },
+    [openPreview, params.id]
+  );
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/campaigns/${params.id}`);
@@ -198,6 +208,22 @@ export default function CampaignDetailPage() {
     loadBatch();
   }
 
+  async function verifyAttachment(attachmentId: string) {
+    const res = await fetch(`/api/attachments/${attachmentId}?verify=1`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast.error(json.error ?? 'Could not verify the document');
+      return;
+    }
+    if (json.verification === 'identical') {
+      toast.success(`${json.filename} (${json.reference}) regenerates byte-for-byte identical to the copy sent to ${json.recipient}.`, { duration: 8000 });
+    } else if (json.verification === 'not-sent-yet') {
+      toast.message(`${json.filename} has not been sent yet.`);
+    } else {
+      toast.error(`${json.filename} does not match the hash recorded when it was sent.`);
+    }
+  }
+
   if (!data) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
 
   const canApprove = (data.viewerRole === 'ADMIN' || data.viewerRole === 'SUPER_ADMIN');
@@ -285,6 +311,18 @@ export default function CampaignDetailPage() {
         />
       </div>
 
+      {/* Personalised PDFs attached to every email */}
+      <div className="mb-6">
+        <CampaignDocuments
+          campaignId={campaign.id}
+          onChanged={() => {
+            load();
+            loadPreview(preview?.preview?.recordId);
+          }}
+          onPreview={(documentId, name) => previewDocument(documentId, name, preview?.preview?.recordId)}
+        />
+      </div>
+
       {/* §113 pre-send review */}
       {preview && (
         <div className="mb-6">
@@ -295,6 +333,7 @@ export default function CampaignDetailPage() {
             data={preview}
             loadingRecipient={previewLoading}
             onSelectRecipient={(recordId) => loadPreview(recordId)}
+            onPreviewDocument={(documentId, name, recordId) => previewDocument(documentId, name, recordId)}
           />
         </div>
       )}
@@ -464,6 +503,7 @@ export default function CampaignDetailPage() {
                       <th className="px-2 py-1 text-left">To</th>
                       <th className="px-2 py-1 text-left">Status</th>
                       <th className="px-2 py-1 text-left">Detail</th>
+                      <th className="px-2 py-1 text-left">PDF</th>
                       <th className="px-2 py-1" />
                     </tr>
                   </thead>
@@ -474,6 +514,20 @@ export default function CampaignDetailPage() {
                         <td className="px-2 py-1">{j.status}</td>
                         <td className="px-2 py-1 text-muted-foreground">
                           {j.errorMessage ?? j.skipReason ?? (j.gmailThreadId ? `thread ${j.gmailThreadId.slice(0, 10)}…` : '')}
+                        </td>
+                        <td className="px-2 py-1">
+                          {(j.attachments ?? []).map((a: any) => (
+                            <span key={a.id} className="mr-2 inline-flex items-center gap-1 whitespace-nowrap">
+                              <a href={`/api/attachments/${a.id}`} className="text-primary hover:underline" title={a.documentRef ?? ''}>
+                                📎 {a.filename}
+                              </a>
+                              {a.sha256 && (
+                                <button onClick={() => verifyAttachment(a.id)} className="text-[11px] text-muted-foreground hover:text-primary">
+                                  Verify
+                                </button>
+                              )}
+                            </span>
+                          ))}
                         </td>
                         <td className="relative px-2 py-1 text-right">
                           <ExplainButton request={{ action: 'explain_send', emailJobId: j.id }} label="Why?" className="text-[11px] text-muted-foreground hover:text-primary" compact />
@@ -487,6 +541,8 @@ export default function CampaignDetailPage() {
           )}
         </div>
       )}
+
+      {previewDialog}
     </div>
   );
 }

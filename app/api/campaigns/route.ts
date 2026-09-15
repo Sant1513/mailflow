@@ -7,6 +7,8 @@ import { resolveWorkspaceId, requireCanWrite } from '@/lib/permissions/workspace
 import { audit } from '@/lib/audit/log';
 import { latestVersionOf } from '@/lib/templates/access';
 import { CampaignStatus } from '@prisma/client';
+import { snapshotFromTemplate } from '@/lib/documents/campaign';
+import { MAX_DOCUMENTS_PER_CAMPAIGN } from '@/lib/documents/types';
 
 export const GET = withErrorHandling(async (req) => {
   const session = await requireSession();
@@ -21,6 +23,7 @@ export const GET = withErrorHandling(async (req) => {
       template: { select: { id: true, name: true } },
       templateVersion: { select: { version: true } },
       createdBy: { select: { name: true, email: true } },
+      _count: { select: { documents: true } },
       batches: { select: { id: true, label: true, status: true, sentCount: true, failedCount: true, total: true } },
     },
   });
@@ -38,6 +41,8 @@ const createSchema = z.object({
   scheduledAt: z.string().datetime().optional(),
   timezone: z.string().default('Asia/Kolkata'),
   workspaceId: z.string().optional(),
+  /** Personalised documents (library ids) to attach; each is snapshotted at creation. */
+  documentTemplateIds: z.array(z.string()).max(MAX_DOCUMENTS_PER_CAMPAIGN).default([]),
 });
 
 export const POST = withErrorHandling(async (req) => {
@@ -57,6 +62,15 @@ export const POST = withErrorHandling(async (req) => {
   if (!template || template.workspaceId !== workspaceId) {
     return NextResponse.json({ error: 'Template not found in this workspace' }, { status: 404 });
   }
+
+  const documentIds = Array.from(new Set(body.documentTemplateIds));
+  const documentTemplates = documentIds.length
+    ? await prisma.documentTemplate.findMany({ where: { id: { in: documentIds }, workspaceId, archived: false } })
+    : [];
+  if (documentTemplates.length !== documentIds.length) {
+    return NextResponse.json({ error: 'One or more documents were not found in this workspace, or are archived.' }, { status: 400 });
+  }
+  const orderedDocuments = documentIds.map((id) => documentTemplates.find((d) => d.id === id)!);
 
   // §21/§126: the campaign pins ONE template version at creation. Later
   // edits to the template create new versions and never alter what this
@@ -85,10 +99,17 @@ export const POST = withErrorHandling(async (req) => {
       status: body.scheduledAt ? CampaignStatus.SCHEDULED : CampaignStatus.DRAFT,
       scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : null,
       timezone: body.timezone,
+      documents: {
+        create: orderedDocuments.map((d, i) => ({ documentTemplateId: d.id, order: i, ...snapshotFromTemplate(d) })),
+      },
     },
   });
 
-  await audit(session, 'CAMPAIGN_CREATE', { targetType: 'Campaign', targetId: campaign.id });
+  await audit(session, 'CAMPAIGN_CREATE', {
+    targetType: 'Campaign',
+    targetId: campaign.id,
+    metadata: orderedDocuments.length ? { documents: orderedDocuments.map((d) => d.name) } : undefined,
+  });
 
   return NextResponse.json({ campaign }, { status: 201 });
 });

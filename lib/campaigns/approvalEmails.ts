@@ -45,6 +45,8 @@ export interface RequestEmailInput {
   templateName: string;
   templateVersion: number;
   reviewUrl: string;
+  /** Names of personalised documents attached to every email. */
+  documents?: string[];
 }
 
 function shell(title: string, body: string): string {
@@ -66,6 +68,7 @@ export function renderApprovalRequest(i: RequestEmailInput): { html: string; pla
     ['Recipients', String(i.recipientCount)],
     ['Email subject', i.subjectLine],
     ['Template', `${i.templateName} (v${i.templateVersion})`],
+    ...(i.documents?.length ? [['Personalised PDFs', i.documents.join(', ')] as [string, string]] : []),
   ];
   const table = `<table style="border-collapse:collapse;margin:12px 0">${rows
     .map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#718096">${escapeHtml(k)}</td><td style="padding:4px 0"><strong>${escapeHtml(v)}</strong></td></tr>`)
@@ -158,6 +161,7 @@ export async function sendApprovalRequestEmail(campaignId: string, session: AppS
       templateVersion: { select: { version: true, subject: true } },
       createdBy: { select: { id: true, name: true, email: true } },
       _count: { select: { campaignRecords: true } },
+      documents: { select: { name: true }, orderBy: { order: 'asc' } },
     },
   });
   if (!c) return 'FAILED: campaign not found';
@@ -183,6 +187,7 @@ export async function sendApprovalRequestEmail(campaignId: string, session: AppS
           templateName: c.template.name,
           templateVersion: c.templateVersion.version,
           reviewUrl: appUrl(`/campaigns/${c.id}`),
+          documents: c.documents.map((d) => d.name),
         });
         const result = await new GmailProvider(mailbox).sendEmail({
           to: to[0]!,

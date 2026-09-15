@@ -9,6 +9,7 @@ const REASON_LABELS: Record<string, string> = {
   INVALID_EMAIL: 'Invalid email',
   MISSING_EMAIL: 'No email address',
   MISSING_VARIABLE: 'Missing variable value',
+  MISSING_DOCUMENT_FIELD: 'Missing document value',
   DUPLICATE_IN_BATCH: 'Duplicate address',
   CONDITION_NOT_MET: 'Condition not met',
   FREQUENCY_LIMIT: 'Send-frequency limit',
@@ -58,6 +59,17 @@ export interface CampaignPreview {
     ok: boolean;
   };
   health: HealthCheckResult;
+  /** Personalised PDFs for the recipient being previewed. */
+  documents?: {
+    campaignDocumentId: string;
+    name: string;
+    fileName: string;
+    lockMode: string;
+    fields: { id: string; label: string; value: string; missing: string[]; required: boolean; usedFallback: boolean }[];
+    blocking: string[];
+    warnings: string[];
+  }[];
+  documentIssues?: { level: 'error' | 'warning'; message: string }[];
   campaign: { templateVersion: number; template: { name: string }; dataset: { name: string } };
 }
 
@@ -66,10 +78,12 @@ export function CampaignReview({
   data,
   onSelectRecipient,
   loadingRecipient,
+  onPreviewDocument,
 }: {
   data: CampaignPreview;
   onSelectRecipient: (recordId: string) => void;
   loadingRecipient: boolean;
+  onPreviewDocument?: (campaignDocumentId: string, name: string, recordId: string) => void;
 }) {
   const [mode, setMode] = useState<'desktop' | 'mobile'>('desktop');
   const [showAll, setShowAll] = useState(false);
@@ -146,6 +160,11 @@ export function CampaignReview({
           ) : (
             <div className="text-success">✓ Every variable exists in the dataset.</div>
           )}
+          {(data.documentIssues ?? []).map((issue, i) => (
+            <div key={`document-issue-${i}`} className={issue.level === 'error' ? 'text-primary' : 'text-warning'}>
+              {issue.level === 'error' ? '✕' : '!'} {issue.message}
+            </div>
+          ))}
           {data.templateCheck.columnsUnused.length > 0 && (
             <div className="text-muted-foreground">
               Unused columns: {data.templateCheck.columnsUnused.join(', ')}
@@ -260,6 +279,51 @@ export function CampaignReview({
                     ))}
                   </dl>
                 </details>
+              )}
+              {(data.documents?.length ?? 0) > 0 && (
+                <div className="border-t px-4 py-3">
+                  <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Attached for this recipient</div>
+                  <ul className="space-y-2">
+                    {(data.documents ?? []).map((d) => (
+                      <li key={d.campaignDocumentId} className="rounded-md border p-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="min-w-0 truncate font-medium">📎 {d.fileName}</span>
+                          {onPreviewDocument && data.preview && (
+                            <button
+                              onClick={() => onPreviewDocument(d.campaignDocumentId, d.name, data.preview!.recordId)}
+                              className="shrink-0 text-primary hover:underline"
+                            >
+                              Open PDF
+                            </button>
+                          )}
+                        </div>
+                        {d.blocking.length > 0 && (
+                          <div className="mt-1 text-primary">Required value empty: {d.blocking.join(', ')}. This recipient is skipped.</div>
+                        )}
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-muted-foreground">{d.fields.length} value(s) written</summary>
+                          <dl className="mt-1 space-y-0.5 text-[11px]">
+                            {d.fields.map((f) => (
+                              <div key={f.id} className="flex gap-1">
+                                <dt className="shrink-0 text-muted-foreground">{f.label}:</dt>
+                                <dd className="truncate">
+                                  {f.value || <span className={`italic ${f.required ? 'text-primary' : 'text-warning'}`}>empty</span>}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </details>
+                        {d.warnings.length > 0 && (
+                          <ul className="mt-1 text-warning">
+                            {d.warnings.map((w, i) => (
+                              <li key={i}>! {w}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </>
           ) : (

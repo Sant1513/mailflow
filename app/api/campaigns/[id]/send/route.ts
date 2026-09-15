@@ -15,7 +15,12 @@ import {
 import { dryRun, validateCampaign } from '@/lib/campaigns/evaluate';
 import { renderTemplate } from '@/lib/templates/variables';
 import { enqueueEmailJobs } from '@/lib/queue/queues';
-import { CampaignStatus, BatchStatus, EmailJobStatus } from '@prisma/client';
+import { documentValidationIssues, jobAttachmentRows } from '@/lib/documents/campaign';
+import { CampaignStatus, BatchStatus, EmailJobStatus, type Prisma } from '@prisma/client';
+
+// Creating one snapshot per recipient (plus document values) takes longer
+// than the default function limit for large campaigns.
+export const maxDuration = 60;
 
 const sendSchema = z.object({
   /** §36: policy escape hatch for low-risk sends by authorized users. */
@@ -91,6 +96,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     availableColumnKeys: campaign.dataset.columns.map((c) => c.key),
     recipientCount: simulation.wouldSend,
     canSend: canWrite(session.role),
+    documentIssues: documentValidationIssues(built.documents, campaign.dataset.columns.map((c) => c.key)),
   });
 
   // §33: any critical failure blocks the send outright.
@@ -102,6 +108,8 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   }
 
   const sendable = simulation.evaluations.filter((e) => e.willSend);
+  const fromName = campaign.fromName?.trim() || sender.displayName || campaign.createdBy.name;
+  const sendTime = new Date();
   const recordsById = new Map(built.records.map((r) => [r.id, r]));
 
   const batch = await prisma.$transaction(async (tx) => {
@@ -115,6 +123,8 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
         skippedCount: simulation.skipped,
       },
     });
+
+    const attachmentRows: Prisma.AttachmentCreateManyInput[] = [];
 
     for (const evaluation of sendable) {
       const record = recordsById.get(evaluation.recordId)!;
@@ -133,7 +143,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
         ? `<style>${campaign.templateVersion.css}</style>${rendered.html}`
         : rendered.html;
 
-      await tx.emailJob.create({
+      const job = await tx.emailJob.create({
         data: {
           batchId: created.id,
           campaignId: campaign.id,
@@ -147,7 +157,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
           bccEmails: campaign.bccEmails,
           // §30 sender snapshot — immutable, even if the user later renames
           // themselves or disconnects the account.
-          fromName: campaign.fromName?.trim() || sender.displayName || campaign.createdBy.name,
+          fromName,
           fromEmail: sender.emailAddress,
           replyTo: campaign.replyTo,
           subject: rendered.subject,
@@ -161,6 +171,30 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
         where: { id: record.id },
         data: { emailStatus: 'QUEUED', lastBatchId: created.id },
       });
+
+      // Personalised documents: freeze each copy's values, file name and
+      // reference now; the PDF itself is generated when this email is sent.
+      if (built.documents.length > 0) {
+        attachmentRows.push(
+          ...jobAttachmentRows({
+            emailJobId: job.id,
+            docs: built.documents,
+            data: record.data,
+            recipientEmail: evaluation.email!,
+            system: {
+              campaignName: campaign.name,
+              timezone: campaign.timezone,
+              senderName: fromName,
+              senderEmail: sender.emailAddress,
+              now: sendTime,
+            },
+          })
+        );
+      }
+    }
+
+    if (attachmentRows.length > 0) {
+      await tx.attachment.createMany({ data: attachmentRows });
     }
 
     // Skipped records get their reason persisted too (§91), so "why was
@@ -178,7 +212,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     });
 
     return created;
-  });
+  }, { timeout: 60_000, maxWait: 10_000 });
 
   // Hand off to the queue. If Redis is not configured, the jobs stay QUEUED
   // in the database and are processed by POST /api/batches/:id/drain
@@ -207,6 +241,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       force: body.force,
       skipApproval: body.skipApproval,
       transport: enqueued.queued ? 'redis' : 'drain',
+      documents: built.documents.length,
     },
   });
 

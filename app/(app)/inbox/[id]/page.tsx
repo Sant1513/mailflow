@@ -275,14 +275,27 @@ export default function ConversationPage() {
                     </span>
                     <span>{new Date(item.sentAt ?? item.receivedAt).toLocaleString()}</span>
                   </div>
-                  <MessageBody main={item.bodyMain ?? '<p><em>(no text)</em></p>'} quoted={item.bodyQuoted ?? null} />
+                  <MessageBody main={item.bodyMain ?? '<p><em>(no text)</em></p>'} quoted={item.bodyQuoted ?? null} collapsible />
                   {item.attachments?.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1 text-[11px]">
-                      {item.attachments.map((a: any) => (
-                        <span key={a.id} className="badge badge-neutral !normal-case !tracking-normal" title={a.mimeType}>
-                          📎 {a.filename} <span className="text-faint">({Math.max(1, Math.round(a.size / 1024))} KB)</span>
-                        </span>
-                      ))}
+                      {item.attachments.map((a: any) =>
+                        a.campaignDocumentId ? (
+                          <a
+                            key={a.id}
+                            href={`/api/attachments/${a.id}?inline=1`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="badge badge-neutral !normal-case !tracking-normal hover:text-primary"
+                            title={`Open the personalised PDF sent in this email${a.documentRef ? ` (${a.documentRef})` : ''}`}
+                          >
+                            📎 {a.filename} <span className="text-faint">({Math.max(1, Math.round(a.size / 1024))} KB)</span>
+                          </a>
+                        ) : (
+                          <span key={a.id} className="badge badge-neutral !normal-case !tracking-normal" title={a.mimeType}>
+                            📎 {a.filename} <span className="text-faint">({Math.max(1, Math.round(a.size / 1024))} KB)</span>
+                          </span>
+                        )
+                      )}
                     </div>
                   )}
                 </div>

@@ -123,17 +123,13 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
       contactId = parentJob?.record.contactId ?? null;
     }
 
-    if (!contactId && fromEmail) {
-      // Rule 3: an unsolicited message from someone we already have on file.
-      const contact = await prisma.contact.findUnique({
-        where: { workspaceId_primaryEmail: { workspaceId: account.workspaceId, primaryEmail: fromEmail } },
-        select: { id: true },
-      });
-      contactId = contact?.id ?? null;
-    }
-
+    // Rule 3 (removed): we no longer accept unsolicited messages from known
+    // contacts. Doing so imported every email that arrived in the mailbox from
+    // someone who ever received a campaign — which is the opposite of what the
+    // inbox is for. We only track threads that MailFlow started or that the
+    // student started in direct reply to something MailFlow sent (Rule 2).
     if (!contactId) {
-      return { status: 'IGNORED', reason: `Not a MailFlow thread and ${fromEmail || 'sender'} is not a known contact.` };
+      return { status: 'IGNORED', reason: `Not a MailFlow thread and the message does not reply to a message MailFlow sent.` };
     }
   }
 

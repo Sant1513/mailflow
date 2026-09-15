@@ -12,3 +12,6 @@ coverage
 .vercel
 
 .next-verify
+
+# copied from pdfjs-dist on install
+public/pdf.worker.min.mjs

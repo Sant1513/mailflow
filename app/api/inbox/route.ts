@@ -82,6 +82,19 @@ export const GET = withErrorHandling(async (req) => {
     ]),
   ]);
 
+  // For each conversation, fetch the first (oldest) message direction in a single
+  // bulk query so we can show a "direct inbound" badge for pre-Rule-3 conversations.
+  const convIds = conversations.map((c) => c.id);
+  const firstMessages = convIds.length
+    ? await prisma.conversationMessage.findMany({
+        where: { conversationId: { in: convIds } },
+        distinct: ['conversationId'],
+        orderBy: { sentAt: 'asc' },
+        select: { conversationId: true, direction: true },
+      })
+    : [];
+  const firstDir = new Map(firstMessages.map((m) => [m.conversationId, m.direction]));
+
   return NextResponse.json({
     conversations: conversations.map((c) => ({
       id: c.id,
@@ -95,6 +108,8 @@ export const GET = withErrorHandling(async (req) => {
       assignee: c.assignee,
       tags: c.tags.map((t) => t.tag),
       lastMessage: c.messages[0] ?? null,
+      // INBOUND = thread started by a direct email, not a MailFlow campaign.
+      firstMessageDirection: firstDir.get(c.id) ?? null,
     })),
     total,
     page,

@@ -5,6 +5,7 @@ import { canWrite } from '@/lib/permissions/workspace';
 import { loadCampaignForSession, buildEvaluationContext, senderAccountFor, emailColumnKeyOf } from '@/lib/campaigns/context';
 import { dryRun, validateCampaign } from '@/lib/campaigns/evaluate';
 import { audit } from '@/lib/audit/log';
+import { documentValidationIssues } from '@/lib/documents/campaign';
 
 /**
  * §34 Run Simulation — evaluates every record and reports exactly what would
@@ -37,6 +38,7 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
     availableColumnKeys: campaign.dataset.columns.map((c) => c.key),
     recipientCount: simulation.wouldSend,
     canSend: canWrite(session.role),
+    documentIssues: documentValidationIssues(built.documents, campaign.dataset.columns.map((c) => c.key)),
   });
 
   await audit(session, 'CAMPAIGN_SIMULATE', {
@@ -60,6 +62,7 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
     validation,
     sender: sender ? { emailAddress: sender.emailAddress, status: sender.status } : null,
     templateVersion: campaign.templateVersion.version,
+    documents: built.documents.map((d) => d.name),
     emailsSent: 0,
   });
 });

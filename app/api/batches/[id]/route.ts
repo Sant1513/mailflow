@@ -32,6 +32,10 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
         sentAt: true,
         gmailMessageId: true,
         gmailThreadId: true,
+        attachments: {
+          where: { campaignDocumentId: { not: null } },
+          select: { id: true, filename: true, size: true, sha256: true, documentRef: true },
+        },
       },
     }),
     prisma.emailJob.groupBy({ by: ['status'], where: { batchId: batch.id }, _count: true }),

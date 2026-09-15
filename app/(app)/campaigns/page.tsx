@@ -15,6 +15,7 @@ interface CampaignRow {
   templateVersion: { version: number };
   createdBy: { name: string; email: string };
   batches: { id: string; label: string; status: string; sentCount: number; failedCount: number; total: number }[];
+  _count?: { documents: number };
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -37,19 +38,29 @@ export default function CampaignsPage() {
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: '', datasetId: '', templateId: '' });
+  const [documents, setDocuments] = useState<{ id: string; name: string; fieldCount: number }[]>([]);
+  const [form, setForm] = useState<{ name: string; datasetId: string; templateId: string; documentTemplateIds: string[] }>({
+    name: '',
+    datasetId: '',
+    templateId: '',
+    documentTemplateIds: [],
+  });
   const [showForm, setShowForm] = useState(false);
 
   async function load() {
     setLoading(true);
-    const [c, d, t] = await Promise.all([
+    const [c, d, t, docs] = await Promise.all([
       fetch('/api/campaigns').then((r) => r.json()),
       fetch('/api/datasets').then((r) => r.json()),
       fetch('/api/templates').then((r) => r.json()),
+      fetch('/api/documents')
+        .then((r) => r.json())
+        .catch(() => ({ documents: [] })),
     ]);
     setCampaigns(c.campaigns ?? []);
     setDatasets(d.datasets ?? []);
     setTemplates(t.templates ?? []);
+    setDocuments(docs.documents ?? []);
     setLoading(false);
   }
 
@@ -133,6 +144,44 @@ export default function CampaignsPage() {
               </select>
             </div>
           </div>
+          <div className="mt-3">
+            <div className="mb-1 text-xs font-medium">
+              Personalised PDFs <span className="font-normal text-muted-foreground">(optional)</span>
+            </div>
+            {documents.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                None in the library yet.{' '}
+                <Link href="/documents" className="text-primary hover:underline">
+                  Upload an agreement or form
+                </Link>{' '}
+                to attach a filled copy to every email.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {documents.map((doc) => {
+                  const on = form.documentTemplateIds.includes(doc.id);
+                  return (
+                    <label
+                      key={doc.id}
+                      className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs ${on ? 'border-primary bg-primary/10' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={() =>
+                          setForm({
+                            ...form,
+                            documentTemplateIds: on ? form.documentTemplateIds.filter((x) => x !== doc.id) : [...form.documentTemplateIds, doc.id],
+                          })
+                        }
+                      />
+                      📎 {doc.name} <span className="text-muted-foreground">({doc.fieldCount} fields)</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           <p className="mt-2 text-xs text-muted-foreground">
             The template&apos;s current version is pinned to this campaign — later template edits will
             not change what this campaign sends.
@@ -192,6 +241,11 @@ export default function CampaignsPage() {
                     </td>
                     <td className="px-4 py-2">
                       {c.template.name} <span className="text-xs text-muted-foreground">v{c.templateVersion.version}</span>
+                      {c._count?.documents ? (
+                        <span className="ml-1 text-xs text-muted-foreground" title="Personalised PDFs attached">
+                          📎 {c._count.documents}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-2 text-xs">
                       {batch ? `${batch.sentCount} sent · ${batch.failedCount} failed of ${batch.total}` : '—'}

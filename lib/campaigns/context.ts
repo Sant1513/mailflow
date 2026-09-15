@@ -3,6 +3,7 @@ import { canReviewWorkspace } from '@/lib/permissions/reviewer';
 import { ForbiddenError, type AppSession } from '@/lib/auth/session';
 import { ColumnType, Role, EmailJobStatus, EmailProvider as EmailProviderEnum } from '@prisma/client';
 import type { EvaluableRecord, EvaluationContext } from './evaluate';
+import { documentRequirements, loadCampaignDocuments, type LoadedCampaignDocument } from '@/lib/documents/campaign';
 
 /**
  * Assembles everything the dry run and the real send need, from one place,
@@ -56,7 +57,7 @@ export function emailColumnKeyOf(dataset: { columns: { key: string; type: Column
 export async function buildEvaluationContext(
   campaign: LoadedCampaign,
   options: { batchLabel?: string; senderEmail?: string | null } = {}
-): Promise<{ records: EvaluableRecord[]; ctx: EvaluationContext } | { error: string }> {
+): Promise<{ records: EvaluableRecord[]; ctx: EvaluationContext; documents: LoadedCampaignDocument[] } | { error: string }> {
   const emailColumnKey = emailColumnKeyOf(campaign.dataset);
   if (!emailColumnKey) return { error: 'The dataset has no email column.' };
 
@@ -77,10 +78,16 @@ export async function buildEvaluationContext(
     select: { recordId: true },
   });
 
+  // Personalised documents: the same snapshot rows drive the dry run, the
+  // review, validation and the send, so they can never disagree.
+  const documents = await loadCampaignDocuments(campaign.id);
+
   return {
     records: records.map((r) => ({ id: r.id, data: (r.data ?? {}) as Record<string, unknown> })),
+    documents,
     ctx: {
       emailColumnKey,
+      documents: documentRequirements(documents),
       template: {
         subject: campaign.templateVersion.subject,
         html: campaign.templateVersion.html,

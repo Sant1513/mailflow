@@ -17,6 +17,7 @@ interface InboxRow {
   assignee: { id: string; name: string } | null;
   tags: { name: string; color: string | null }[];
   lastMessage: { snippet: string | null; direction: string; classification: string; senderName: string | null } | null;
+  firstMessageDirection: string | null;
 }
 
 const FILTERS: { key: string; label: string; countKey?: 'unread' | 'mine' | 'open' | 'waiting' }[] = [
@@ -27,6 +28,8 @@ const FILTERS: { key: string; label: string; countKey?: 'unread' | 'mine' | 'ope
   { key: 'resolved', label: 'Resolved' },
   { key: 'all', label: 'All' },
 ];
+
+const PAGE_SIZE = 40;
 
 function timeAgo(iso: string | null): string {
   if (!iso) return '';
@@ -47,28 +50,39 @@ export default function InboxPage() {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<InboxRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [gmail, setGmail] = useState<{ connected: boolean; pushConfigured: boolean; email?: string } | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (p = page) => {
     setLoading(true);
-    const params = new URLSearchParams({ filter });
+    const params = new URLSearchParams({ filter, page: String(p), pageSize: String(PAGE_SIZE) });
     if (q.trim()) params.set('q', q.trim());
     const res = await fetch(`/api/inbox?${params}`);
     const json = await res.json();
     setRows(json.conversations ?? []);
     setCounts(json.counts ?? {});
+    setTotal(json.total ?? 0);
     setLoading(false);
+  }, [filter, q, page]);
+
+  // Reset to page 1 when filter/search changes.
+  useEffect(() => {
+    setPage(1);
+    const t = setTimeout(() => load(1), q ? 250 : 0);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, q]);
 
+  // When page changes (and filter/search didn't), load that page.
   useEffect(() => {
-    const t = setTimeout(load, q ? 250 : 0);
-    return () => clearTimeout(t);
-  }, [load, q]);
+    load(page);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
 
-  // §104: pull the mailbox on open, then refresh the list if anything arrived.
-  useAutoSync(() => load());
+  useAutoSync(() => load(page));
 
   useEffect(() => {
     fetch('/api/gmail/sync')
@@ -93,8 +107,10 @@ export default function InboxPage() {
       return;
     }
     toast.success(json.note ?? 'Synced');
-    load();
+    load(page);
   }
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="flex h-full min-h-[calc(100dvh-3.5rem)] lg:min-h-0">
@@ -149,81 +165,130 @@ export default function InboxPage() {
             )}
           </div>
         )}
+
+        <div className="mt-4 rounded-md border bg-muted/40 p-2 text-[11px] text-muted-foreground">
+          <p className="font-medium text-foreground">What shows here</p>
+          <p className="mt-0.5">Only threads started by MailFlow campaigns or replied to via MailFlow. Direct emails to your Gmail address are not imported.</p>
+        </div>
       </aside>
 
       {/* CENTER: list */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="border-b bg-card px-4 py-2">
+        <div className="flex items-center gap-3 border-b bg-card px-4 py-2">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search name, email, subject, message text, or thread id…"
-            className="w-full max-w-xl btn-secondary"
+            className="min-w-0 flex-1 btn-secondary"
           />
+          {total > 0 && !loading && (
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {total} conversation{total !== 1 ? 's' : ''}
+            </span>
+          )}
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="p-6 text-sm text-muted-foreground">Loading…</div>
-          ) : rows.length === 0 ? (
-            <div className="p-12 text-center text-sm text-muted-foreground">
-              {filter === 'unread' ? "You're all caught up." : 'No conversations yet.'}
-              {gmail?.connected && filter !== 'unread' && (
-                <div className="mt-2 text-xs">Replies appear here after a sync. Try &quot;Sync now&quot;.</div>
-              )}
-            </div>
-          ) : (
-            <ul>
-              {rows.map((c) => (
-                <li key={c.id} className="border-b">
-                  <Link
-                    href={`/inbox/${c.id}`}
-                    className={`block px-4 py-3 hover:bg-elevated/60 ${c.unread ? 'bg-primary/5' : ''}`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          {c.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" title="Unread reply" />}
-                          <span className={`truncate text-sm ${c.unread ? 'font-semibold' : 'font-medium'}`}>
-                            {c.contact?.name || c.recipientEmail}
-                          </span>
-                          {c.assignee && (
-                            <span className="shrink-0 rounded bg-muted px-1.5 text-[10px] text-muted-foreground">
-                              {c.assignee.name}
-                            </span>
-                          )}
-                        </div>
-                        <div className="truncate text-sm">{c.subject}</div>
-                        <div className="truncate text-xs text-muted-foreground">
-                          {c.lastMessage?.direction === 'OUTBOUND' && <span className="mr-1">You:</span>}
-                          {c.lastMessage?.classification && c.lastMessage.classification !== 'HUMAN_REPLY' && (
-                            <span className="mr-1 rounded bg-warning/15 px-1 text-[10px] text-warning">
-                              {c.lastMessage.classification.replace(/_/g, ' ').toLowerCase()}
-                            </span>
-                          )}
-                          {c.lastMessage?.snippet ?? ''}
-                        </div>
-                        {c.tags.length > 0 && (
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {c.tags.map((t) => (
-                              <span key={t.name} className="rounded px-1.5 text-[10px]" style={{ background: t.color ? `${t.color}22` : undefined, color: t.color ?? undefined }}>
-                                {t.name}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex-1 overflow-y-auto">
+            {loading ? (
+              <div className="p-6 text-sm text-muted-foreground">Loading…</div>
+            ) : rows.length === 0 ? (
+              <div className="p-12 text-center text-sm text-muted-foreground">
+                {filter === 'unread' ? "You're all caught up." : 'No conversations yet.'}
+                {gmail?.connected && filter !== 'unread' && (
+                  <div className="mt-2 text-xs">Replies appear here after a sync. Try &quot;Sync now&quot;.</div>
+                )}
+              </div>
+            ) : (
+              <ul>
+                {rows.map((c) => {
+                  // Flag conversations where the first message was inbound (no MailFlow
+                  // campaign preceded it) — these are legacy cold-inbound threads.
+                  const isColdInbound = c.firstMessageDirection === 'INBOUND';
+                  return (
+                    <li key={c.id} className="border-b">
+                      <Link
+                        href={`/inbox/${c.id}`}
+                        className={`block px-4 py-3 hover:bg-elevated/60 ${c.unread ? 'bg-primary/5' : ''}`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              {c.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" title="Unread reply" />}
+                              <span className={`truncate text-sm ${c.unread ? 'font-semibold' : 'font-medium'}`}>
+                                {c.contact?.name || c.recipientEmail}
                               </span>
-                            ))}
+                              {c.assignee && (
+                                <span className="shrink-0 rounded bg-muted px-1.5 text-[10px] text-muted-foreground">
+                                  {c.assignee.name}
+                                </span>
+                              )}
+                              {isColdInbound && (
+                                <span
+                                  className="shrink-0 rounded border border-warning/40 bg-warning/10 px-1.5 text-[10px] text-warning"
+                                  title="This conversation was started by a direct inbound email, not a MailFlow campaign. Consider closing it."
+                                >
+                                  direct inbound
+                                </span>
+                              )}
+                            </div>
+                            <div className="truncate text-sm">{c.subject}</div>
+                            <div className="truncate text-xs text-muted-foreground">
+                              {c.lastMessage?.direction === 'OUTBOUND' && <span className="mr-1">You:</span>}
+                              {c.lastMessage?.classification && c.lastMessage.classification !== 'HUMAN_REPLY' && (
+                                <span className="mr-1 rounded bg-warning/15 px-1 text-[10px] text-warning">
+                                  {c.lastMessage.classification.replace(/_/g, ' ').toLowerCase()}
+                                </span>
+                              )}
+                              {c.lastMessage?.snippet ?? ''}
+                            </div>
+                            {c.tags.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {c.tags.map((t) => (
+                                  <span key={t.name} className="rounded px-1.5 text-[10px]" style={{ background: t.color ? `${t.color}22` : undefined, color: t.color ?? undefined }}>
+                                    {t.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                      <div className="shrink-0 text-right text-xs text-muted-foreground">
-                        <div>{timeAgo(c.lastMessageAt)}</div>
-                        <div className="mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px]">
-                          {c.status.replace(/_/g, ' ').toLowerCase()}
+                          <div className="shrink-0 text-right text-xs text-muted-foreground">
+                            <div>{timeAgo(c.lastMessageAt)}</div>
+                            <div className="mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                              {c.status.replace(/_/g, ' ').toLowerCase()}
+                            </div>
+                            <div className="mt-0.5 text-[10px]">{c.messageCount} msg{c.messageCount !== 1 ? 's' : ''}</div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  </Link>
-                </li>
-              ))}
-            </ul>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t bg-card px-4 py-2 text-xs text-muted-foreground">
+              <span>Page {page} of {totalPages}</span>
+              <div className="flex gap-2">
+                <button
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => p - 1)}
+                  className="rounded border px-3 py-1 hover:bg-elevated disabled:opacity-40"
+                >
+                  ← Prev
+                </button>
+                <button
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => p + 1)}
+                  className="rounded border px-3 py-1 hover:bg-elevated disabled:opacity-40"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

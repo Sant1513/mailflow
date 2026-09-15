@@ -14,6 +14,8 @@ import { dryRun, validateCampaign } from '@/lib/campaigns/evaluate';
 import { renderTemplate, validateVariables } from '@/lib/templates/variables';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 import { runHealthCheck } from '@/lib/templates/healthCheck';
+import { documentValidationIssues, resolveDocument, systemValuesFor } from '@/lib/documents/campaign';
+import { PREVIEW_REFERENCE } from '@/lib/documents/reference';
 
 /**
  * §113 campaign review: everything a human needs to cross-check BEFORE a
@@ -90,6 +92,8 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     senderEmail: sender?.emailAddress ?? null,
   });
 
+  const documentIssues = documentValidationIssues(built.documents, columnKeys);
+
   const validation = validateCampaign({
     hasDataset: true,
     hasTemplate: true,
@@ -100,7 +104,45 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     availableColumnKeys: columnKeys,
     recipientCount: simulation.wouldSend,
     canSend: canWrite(session.role),
+    documentIssues,
   });
+
+  // Personalised documents for the recipient being previewed: the file name,
+  // every value, what is empty, and whether it would skip this person.
+  const emailKey = emailColumnKeyOf(campaign.dataset);
+  const documents = target
+    ? built.documents.map((d) => {
+        const raw = emailKey ? target.data[emailKey] : null;
+        const system = systemValuesFor(
+          {
+            campaignName: campaign.name,
+            timezone: campaign.timezone,
+            senderName: fromName,
+            senderEmail: fromEmail ?? campaign.createdBy.email,
+            now: new Date(),
+          },
+          typeof raw === 'string' ? raw.trim() : null,
+          PREVIEW_REFERENCE
+        );
+        const resolved = resolveDocument(d, target.data, system);
+        return {
+          campaignDocumentId: d.id,
+          name: d.name,
+          fileName: resolved.fileName,
+          lockMode: d.lockMode,
+          fields: resolved.fields.map((f) => ({
+            id: f.id,
+            label: f.label,
+            value: f.value,
+            missing: f.missing,
+            required: f.required,
+            usedFallback: f.usedFallback,
+          })),
+          blocking: resolved.blocking.map((b) => b.label),
+          warnings: resolved.warnings,
+        };
+      })
+    : [];
 
   // Recipient table: who gets it, who doesn't, and why — with the data that
   // will be substituted, so the operator can spot bad rows before sending.
@@ -164,6 +206,8 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     },
     health,
     validation,
+    documents,
+    documentIssues,
     emailsSent: 0,
   });
 });

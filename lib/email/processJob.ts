@@ -3,6 +3,9 @@ import { GmailProvider } from '@/lib/email/gmail';
 import { SendEmailError, type EmailProvider } from '@/lib/email/provider';
 import { buildReferences } from '@/lib/email/mime';
 import { EmailJobStatus, BatchStatus, CampaignStatus, MessageDirection } from '@prisma/client';
+import { generateJobDocuments, type GeneratedAttachment } from '@/lib/documents/campaign';
+import { DocumentRenderError } from '@/lib/documents/render';
+import { DocumentFileError } from '@/lib/documents/inspect';
 
 /**
  * Processes exactly one EmailJob. This is THE send path — the BullMQ worker
@@ -31,6 +34,12 @@ export async function processEmailJob(
       batch: { include: { campaign: true } },
       emailProviderAccount: true,
       record: true,
+      // Personalised documents frozen onto this job at send time.
+      attachments: {
+        where: { campaignDocumentId: { not: null } },
+        orderBy: { createdAt: 'asc' },
+        include: { campaignDocument: { select: { fileId: true, fields: true, lockMode: true, stampReference: true } } },
+      },
     },
   });
 
@@ -78,6 +87,26 @@ export async function processEmailJob(
     ? options.providerFactory(job.emailProviderAccount)
     : new GmailProvider(job.emailProviderAccount);
 
+  // Personalised documents (agreements, forms): generated now from the values
+  // frozen when the job was created, so the attachment is exactly what the
+  // campaign approved. A bad value or broken PDF is permanent — retrying
+  // cannot fix it; an infrastructure hiccup (e.g. loading the file) is not.
+  let documents: GeneratedAttachment[] = [];
+  const documentAttachments = job.attachments ?? [];
+  if (documentAttachments.length > 0) {
+    try {
+      documents = await generateJobDocuments(documentAttachments);
+    } catch (err) {
+      const permanent = err instanceof DocumentRenderError || err instanceof DocumentFileError;
+      const message = permanent
+        ? (err as Error).message
+        : `Could not generate the attached document: ${(err as Error).message ?? String(err)}`;
+      await failJob(job.id, 'DOCUMENT_ERROR', message, !permanent);
+      if (!permanent) throw new SendEmailError(message, 'TRANSIENT');
+      return { status: 'FAILED', emailJobId, reason: message, retryable: false };
+    }
+  }
+
   try {
     const result = await provider.sendEmail({
       to: job.toEmail,
@@ -90,8 +119,12 @@ export async function processEmailJob(
       html: job.html,
       plainText: job.plainText,
       threadId: job.gmailThreadId,
+      ...(documents.length > 0
+        ? { attachments: documents.map((d) => ({ filename: d.filename, mimeType: 'application/pdf', content: d.content })) }
+        : {}),
     });
 
+    let messageId: string | null = null;
     await prisma.$transaction(async (tx) => {
       await tx.emailJob.update({
         where: { id: job.id },
@@ -154,7 +187,7 @@ export async function processEmailJob(
           },
         });
 
-        await tx.conversationMessage.create({
+        const message = await tx.conversationMessage.create({
           data: {
             conversationId: conversation.id,
             gmailMessageId: result.providerMessageId,
@@ -179,15 +212,33 @@ export async function processEmailJob(
             sentAt: new Date(),
             status: 'SENT',
             isRead: true,
+            hasAttachments: documents.length > 0,
           },
         });
+        messageId = message?.id ?? null;
 
         await tx.recipientHistory.create({
           data: {
             contactId: job.record.contactId,
             type: 'EMAIL_SENT',
-            summary: `Sent "${job.subject}" (campaign ${job.batch.campaign.name})`,
+            summary: `Sent "${job.subject}" (campaign ${job.batch.campaign.name})${
+              documents.length > 0 ? ` with ${documents.map((d) => d.filename).join(', ')}` : ''
+            }`,
             refId: job.id,
+          },
+        });
+      }
+
+      // Record what was actually attached. The hash lets "download sent copy"
+      // prove a regenerated file is byte-identical to the one in the email.
+      for (const d of documents) {
+        await tx.attachment.update({
+          where: { id: d.attachmentId },
+          data: {
+            sha256: d.sha256,
+            size: d.size,
+            generatedAt: new Date(),
+            ...(messageId ? { conversationMessageId: messageId } : {}),
           },
         });
       }

@@ -1,4 +1,5 @@
 import { validateVariables, renderTemplate } from '@/lib/templates/variables';
+import { hasValue, variablesIn } from '@/lib/documents/values';
 
 /**
  * §34 Dry run and §91 "why sent / why skipped".
@@ -14,6 +15,7 @@ export const SKIP_REASONS = {
   INVALID_EMAIL: 'INVALID_EMAIL',
   MISSING_EMAIL: 'MISSING_EMAIL',
   MISSING_VARIABLE: 'MISSING_VARIABLE',
+  MISSING_DOCUMENT_FIELD: 'MISSING_DOCUMENT_FIELD',
   DUPLICATE_IN_BATCH: 'DUPLICATE_IN_BATCH',
   CONDITION_NOT_MET: 'CONDITION_NOT_MET',
   FREQUENCY_LIMIT: 'FREQUENCY_LIMIT',
@@ -41,6 +43,12 @@ export interface EvaluationContext {
   conditionResults?: Map<string, { met: boolean; description: string }>;
   /** Record ids blocked by a send-frequency policy (§37). */
   frequencyBlockedRecordIds?: Map<string, string>;
+  /**
+   * Personalised documents attached to the campaign. A REQUIRED document
+   * field whose variables are empty for a record skips that record, exactly
+   * like a missing email variable (§24) — never a blank agreement.
+   */
+  documents?: { name: string; fields: { label: string; value: string; required: boolean }[] }[];
   /** Human-readable origin, used to build sendReason (§35). */
   origin?: {
     campaignName?: string;
@@ -178,6 +186,23 @@ export function evaluateRecord(
     };
   }
 
+  const documentGaps: string[] = [];
+  for (const doc of ctx.documents ?? []) {
+    for (const field of doc.fields) {
+      if (!field.required) continue;
+      const empty = variablesIn(field.value).filter((v) => !hasValue(record.data, v));
+      if (empty.length > 0) documentGaps.push(`${doc.name}: ${field.label} (${empty.map((v) => `{{${v}}}`).join(', ')})`);
+    }
+  }
+  if (documentGaps.length > 0) {
+    return {
+      ...base,
+      willSend: false,
+      skipReason: SKIP_REASONS.MISSING_DOCUMENT_FIELD,
+      reasonDetail: `Missing document value: ${documentGaps.join('; ')}.`,
+    };
+  }
+
   seenEmails.add(normalized);
   return {
     ...base,
@@ -203,7 +228,8 @@ export function dryRun(records: EvaluableRecord[], ctx: EvaluationContext): DryR
   const invalid =
     (byReason[SKIP_REASONS.INVALID_EMAIL] ?? 0) +
     (byReason[SKIP_REASONS.MISSING_EMAIL] ?? 0) +
-    (byReason[SKIP_REASONS.MISSING_VARIABLE] ?? 0);
+    (byReason[SKIP_REASONS.MISSING_VARIABLE] ?? 0) +
+    (byReason[SKIP_REASONS.MISSING_DOCUMENT_FIELD] ?? 0);
 
   return {
     total: records.length,
@@ -232,6 +258,8 @@ export function validateCampaign(input: {
   availableColumnKeys?: string[];
   recipientCount: number;
   canSend: boolean;
+  /** Problems with attached personalised documents (lib/documents/campaign.ts). */
+  documentIssues?: { level: 'error' | 'warning'; message: string }[];
 }): { issues: CampaignValidationIssue[]; blocked: boolean } {
   const issues: CampaignValidationIssue[] = [];
   const error = (id: string, message: string) => issues.push({ id, level: 'error', message });
@@ -253,6 +281,8 @@ export function validateCampaign(input: {
       error('variables', `Template uses ${validation.missing.map((v) => `{{${v}}}`).join(', ')}, which the dataset does not provide.`);
     }
   }
+
+  (input.documentIssues ?? []).forEach((issue, i) => issues.push({ id: `document-${i}`, level: issue.level, message: issue.message }));
 
   if (input.recipientCount === 0) error('recipients', 'No recipients would receive this campaign.');
   else if (input.recipientCount > 500) {
