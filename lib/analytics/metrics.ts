@@ -46,7 +46,7 @@ export interface Totals {
   followUpsDue: number;
 }
 
-export async function totals(scope: Scope, now = new Date()): Promise<Totals> {
+export async function totals(scope: Scope, now = new Date(), since?: Date): Promise<Totals> {
   const jobWhere = jobScope(scope);
   const convWhere = conversationScope(scope);
   const [
@@ -59,16 +59,17 @@ export async function totals(scope: Scope, now = new Date()): Promise<Totals> {
     resolvedConversations,
     followUpsDue,
   ] = await Promise.all([
-    prisma.emailJob.count({ where: { ...jobWhere, status: EmailJobStatus.SENT } }),
+    prisma.emailJob.count({ where: { ...jobWhere, status: EmailJobStatus.SENT, ...(since ? { sentAt: { gte: since } } : {}) } }),
     prisma.emailJob.count({
       where: { ...jobWhere, status: { in: [EmailJobStatus.QUEUED, EmailJobStatus.SENDING] } },
     }),
-    prisma.emailJob.count({ where: { ...jobWhere, status: EmailJobStatus.FAILED } }),
+    prisma.emailJob.count({ where: { ...jobWhere, status: EmailJobStatus.FAILED, ...(since ? { lastAttemptAt: { gte: since } } : {}) } }),
     prisma.conversationMessage.count({
       where: {
         conversation: convWhere,
         direction: MessageDirection.INBOUND,
         classification: MessageClassification.HUMAN_REPLY,
+        ...(since ? { receivedAt: { gte: since } } : {}),
       },
     }),
     prisma.conversation.count({ where: { ...convWhere, unread: true } }),
@@ -271,6 +272,150 @@ export async function orgCounts(organizationId: string, days: number, now = new 
 export function parseDays(raw: string | string[] | undefined, fallback = 30): number {
   const n = Number(Array.isArray(raw) ? raw[0] : raw);
   return [7, 30, 90].includes(n) ? n : fallback;
+}
+
+// ── §140 Response Times ───────────────────────────────────────────────────
+
+export interface ResponseTimeMetrics {
+  /** Average first response time in minutes; null if no data. */
+  frtMinutes: number | null;
+  /** Average response time across all inbound→outbound pairs; null if no data. */
+  artMinutes: number | null;
+  /** Conversations with at least one outbound reply in the window. */
+  respondedConversations: number;
+  /** Total conversations created in the window. */
+  totalConversations: number;
+  /** Reply rate 0–100 (responded / total). */
+  replyRate: number | null;
+}
+
+const NOISE_CLASSIFICATIONS = [
+  MessageClassification.BOUNCE,
+  MessageClassification.DELIVERY_FAILURE,
+  MessageClassification.OUT_OF_OFFICE,
+  MessageClassification.AUTO_REPLY,
+];
+
+function avgMinutes(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+}
+
+function calcResponseTimes(conversations: Array<{
+  messages: Array<{ direction: string; sentAt: Date | null; receivedAt: Date | null }>;
+}>): { frtValues: number[]; artValues: number[]; responded: number } {
+  const frtValues: number[] = [];
+  const artValues: number[] = [];
+  let responded = 0;
+
+  for (const conv of conversations) {
+    const msgs = conv.messages;
+    const firstInbound = msgs.find((m) => m.direction === MessageDirection.INBOUND);
+    const firstOutbound = msgs.find((m) => m.direction === MessageDirection.OUTBOUND);
+
+    if (firstInbound && firstOutbound) {
+      const inAt = firstInbound.receivedAt ?? firstInbound.sentAt;
+      const outAt = firstOutbound.sentAt;
+      if (inAt && outAt && outAt > inAt) {
+        frtValues.push((outAt.getTime() - inAt.getTime()) / 60_000);
+        responded++;
+      }
+    }
+
+    let lastInbound: Date | null = null;
+    for (const msg of msgs) {
+      const t = msg.receivedAt ?? msg.sentAt;
+      if (!t) continue;
+      if (msg.direction === MessageDirection.INBOUND) {
+        lastInbound = t;
+      } else if (msg.direction === MessageDirection.OUTBOUND && lastInbound) {
+        const delta = (t.getTime() - lastInbound.getTime()) / 60_000;
+        if (delta >= 0) artValues.push(delta);
+        lastInbound = null;
+      }
+    }
+  }
+
+  return { frtValues, artValues, responded };
+}
+
+export async function responseTimeMetrics(scope: Scope, days: number, now = new Date()): Promise<ResponseTimeMetrics> {
+  const since = windowStart(days, now);
+  const convWhere = conversationScope(scope);
+
+  const conversations = await prisma.conversation.findMany({
+    where: { ...convWhere, createdAt: { gte: since } },
+    select: {
+      messages: {
+        orderBy: { sentAt: 'asc' },
+        where: { classification: { notIn: NOISE_CLASSIFICATIONS } },
+        select: { direction: true, sentAt: true, receivedAt: true },
+      },
+    },
+  });
+
+  const { frtValues, artValues, responded } = calcResponseTimes(conversations);
+  const total = conversations.length;
+
+  return {
+    frtMinutes: avgMinutes(frtValues),
+    artMinutes: avgMinutes(artValues),
+    respondedConversations: responded,
+    totalConversations: total,
+    replyRate: total > 0 ? Math.round((responded / total) * 100) : null,
+  };
+}
+
+export interface UserResponseTimeRow {
+  userId: string;
+  userName: string | null;
+  userEmail: string;
+  frtMinutes: number | null;
+  artMinutes: number | null;
+  respondedConversations: number;
+  totalAssignedConversations: number;
+}
+
+export async function responseTimesByUser(organizationId: string, days: number, now = new Date()): Promise<UserResponseTimeRow[]> {
+  const since = windowStart(days, now);
+
+  const conversations = await prisma.conversation.findMany({
+    where: { organizationId, createdAt: { gte: since }, assigneeId: { not: null } },
+    select: {
+      assigneeId: true,
+      assignee: { select: { id: true, name: true, email: true } },
+      messages: {
+        orderBy: { sentAt: 'asc' },
+        where: { classification: { notIn: NOISE_CLASSIFICATIONS } },
+        select: { direction: true, sentAt: true, receivedAt: true },
+      },
+    },
+  });
+
+  const userMap = new Map<string, {
+    user: { id: string; name: string | null; email: string };
+    convs: typeof conversations;
+  }>();
+
+  for (const conv of conversations) {
+    if (!conv.assigneeId || !conv.assignee) continue;
+    const uid = conv.assigneeId;
+    if (!userMap.has(uid)) userMap.set(uid, { user: conv.assignee, convs: [] });
+    userMap.get(uid)!.convs.push(conv);
+  }
+
+  return [...userMap.values()].map(({ user, convs }) => {
+    const { frtValues, artValues, responded } = calcResponseTimes(convs);
+    return {
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      frtMinutes: avgMinutes(frtValues),
+      artMinutes: avgMinutes(artValues),
+      respondedConversations: responded,
+      totalAssignedConversations: convs.length,
+    };
+  });
 }
 
 // ── §36 approvals ─────────────────────────────────────────────────────────

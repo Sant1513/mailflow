@@ -111,9 +111,6 @@ export function AppNav({
           <div className="truncate text-faint">{user.email}</div>
         </div>
       </div>
-      <div className="mb-2">
-        <NotificationBell />
-      </div>
       <div className="mb-3">
         <ThemeToggle />
       </div>
@@ -124,19 +121,22 @@ export function AppNav({
   );
 
   const wordmark = (
-    <Link href="/dashboard" className="block">
-      <div className="font-heading text-2xl font-bold leading-none tracking-tight text-foreground">
-        masai<span className="text-primary">.</span>
-      </div>
-      <div className="eyebrow mt-2">MailFlow</div>
-    </Link>
+    <div className="flex items-center justify-between">
+      <Link href="/dashboard" className="block">
+        <div className="font-heading text-2xl font-bold leading-none tracking-tight text-foreground">
+          masai<span className="text-primary">.</span>
+        </div>
+        <div className="eyebrow mt-2">MailFlow</div>
+      </Link>
+      <NotificationBell />
+    </div>
   );
 
   return (
     <>
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-border bg-card lg:flex">
-        <div className="border-b border-border px-5 py-5">{wordmark}</div>
+        <div className="border-b border-border px-4 py-4">{wordmark}</div>
         {links}
         {footer}
       </aside>
@@ -165,8 +165,13 @@ export function AppNav({
         <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/60" onClick={() => setOpen(false)} />
           <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col bg-card shadow-xl">
-            <div className="flex items-center justify-between border-b border-border px-5 py-4">
-              {wordmark}
+            <div className="flex items-center justify-between border-b border-border px-4 py-4">
+              <Link href="/dashboard" className="block">
+                <div className="font-heading text-2xl font-bold leading-none tracking-tight text-foreground">
+                  masai<span className="text-primary">.</span>
+                </div>
+                <div className="eyebrow mt-2">MailFlow</div>
+              </Link>
               <button onClick={() => setOpen(false)} aria-label="Close menu" className="flex h-9 w-9 items-center justify-center rounded-md border border-border text-foreground">
                 ✕
               </button>

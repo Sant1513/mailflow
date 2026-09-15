@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 
 interface Item {
   id: string;
@@ -47,27 +49,55 @@ function dateLabel(iso: string): string {
 
 /** §87 notification centre: unread count, list, mark read.
  *
- * Panel opens UPWARD in sidebar mode so it never overflows the sidebar bottom
- * and overlaps the main content. In compact (mobile top-bar) mode it opens
- * downward to the left, away from the viewport edge.
+ * Sits in the sidebar header beside the wordmark.
+ * In compact (mobile top-bar) mode opens downward-left.
+ * When a new notification arrives it fires a 2-second sonner toast.
  */
 export function NotificationBell({ compact }: { compact?: boolean }) {
+  const router = useRouter();
   const [items, setItems] = useState<Item[]>([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const prevIdsRef = useRef<Set<string>>(new Set());
+  const initialLoadRef = useRef(true);
 
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/notifications?limit=25');
       if (!res.ok) return;
       const j = await res.json();
-      setItems(j.notifications ?? []);
-      setUnread(j.unread ?? 0);
+      const newItems: Item[] = j.notifications ?? [];
+      const newUnread: number = j.unread ?? 0;
+
+      // Detect genuinely new (never-seen) unread notifications after the first load.
+      if (!initialLoadRef.current) {
+        const fresh = newItems.filter((n) => !n.read && !prevIdsRef.current.has(n.id));
+        if (fresh.length > 0) {
+          const latest = fresh[0]!;
+          toast(latest.title, {
+            description: latest.body ?? undefined,
+            duration: 2000,
+            ...(latest.link
+              ? {
+                  action: {
+                    label: 'View',
+                    onClick: () => router.push(latest.link!),
+                  },
+                }
+              : {}),
+          });
+        }
+      }
+      initialLoadRef.current = false;
+      prevIdsRef.current = new Set(newItems.map((n) => n.id));
+
+      setItems(newItems);
+      setUnread(newUnread);
     } catch {
       /* keep last state */
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     load();
@@ -116,14 +146,9 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
   }
 
   // Panel positioning:
-  //   compact (mobile top bar) → right-0 top-full mt-2   (opens down-left)
-  //   sidebar (non-compact)    → left-full ml-2 bottom-0  (opens to the right, aligned to bottom)
-  //
-  // "left-full" puts the panel to the RIGHT of the sidebar button so it never
-  // clips the sidebar edge. "bottom-0" keeps it top-aligned to the button row.
-  const panelClass = compact
-    ? 'right-0 top-full mt-2'
-    : 'left-full ml-2 bottom-0';
+  //   compact (mobile top bar) → right-0 top-full mt-2  (opens down-left)
+  //   sidebar header (non-compact) → right-0 top-full mt-2 (opens down from the bell icon)
+  const panelClass = compact ? 'right-0 top-full mt-2' : 'right-0 top-full mt-2';
 
   return (
     <div ref={box} className="relative">
@@ -132,20 +157,13 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
         onClick={() => setOpen((v) => !v)}
         aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`}
         aria-expanded={open}
-        className={`relative flex items-center gap-2 rounded-md border border-border text-foreground ${
-          compact
-            ? 'h-9 w-9 justify-center'
-            : `w-full px-3 py-2 text-sm hover:bg-elevated/60 ${open ? 'bg-elevated/60' : ''}`
-        }`}
+        className={`relative flex items-center justify-center rounded-md border border-border text-foreground hover:bg-elevated/60 ${
+          compact ? 'h-9 w-9' : 'h-8 w-8'
+        } ${open ? 'bg-elevated/60' : ''}`}
       >
-        <span aria-hidden>🔔</span>
-        {!compact && <span className="text-muted-foreground">Notifications</span>}
+        <span aria-hidden className="text-base leading-none">🔔</span>
         {unread > 0 && (
-          <span
-            className={`${
-              compact ? 'absolute -right-1 -top-1' : 'ml-auto'
-            } rounded-full bg-primary px-1.5 text-[10px] font-bold leading-4 text-primary-foreground`}
-          >
+          <span className="absolute -right-1 -top-1 rounded-full bg-primary px-1.5 text-[10px] font-bold leading-4 text-primary-foreground">
             {unread > 99 ? '99+' : unread}
           </span>
         )}
@@ -203,7 +221,7 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
                         n.read ? '' : 'bg-primary/5'
                       }`}
                     >
-                      {/* Icon dot */}
+                      {/* Icon */}
                       <div
                         className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs ${
                           n.read ? 'bg-muted text-muted-foreground' : 'bg-primary/15 text-primary'
