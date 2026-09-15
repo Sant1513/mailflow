@@ -55,6 +55,9 @@ const patchSchema = z.object({
     .or(z.literal('').transform(() => null)),
   ccEmails: emailListSchema.optional(),
   bccEmails: emailListSchema.optional(),
+  // Dataset / template swaps — only allowed on DRAFT campaigns (§126).
+  datasetId: z.string().cuid().optional(),
+  templateId: z.string().cuid().optional(),
 });
 
 export const PATCH = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
@@ -76,6 +79,24 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
   }
 
   const body = patchSchema.parse(await req.json());
+
+  // Dataset / template swaps only allowed on DRAFT campaigns.
+  if ((body.datasetId || body.templateId) && campaign.status !== CampaignStatus.DRAFT) {
+    return NextResponse.json({ error: 'Dataset and template can only be changed on DRAFT campaigns.' }, { status: 409 });
+  }
+
+  // Resolve the new template's latest version if the template is being swapped.
+  let newTemplateVersionId: string | undefined;
+  if (body.templateId) {
+    const tpl = await prisma.template.findFirst({
+      where: { id: body.templateId, workspaceId: campaign.workspaceId },
+      include: { versions: { orderBy: { version: 'desc' }, take: 1 } },
+    });
+    if (!tpl) return NextResponse.json({ error: 'Template not found.' }, { status: 404 });
+    if (!tpl.versions[0]) return NextResponse.json({ error: 'Template has no saved versions.' }, { status: 422 });
+    newTemplateVersionId = tpl.versions[0].id;
+  }
+
   const updated = await prisma.campaign.update({
     where: { id: campaign.id },
     data: {
@@ -90,6 +111,10 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
             scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : null,
             status: body.scheduledAt ? CampaignStatus.SCHEDULED : campaign.status,
           }
+        : {}),
+      ...(body.datasetId !== undefined ? { datasetId: body.datasetId } : {}),
+      ...(body.templateId !== undefined && newTemplateVersionId
+        ? { templateId: body.templateId, templateVersionId: newTemplateVersionId }
         : {}),
     },
   });

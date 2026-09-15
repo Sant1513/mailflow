@@ -6,6 +6,7 @@ import { EmailJobStatus, BatchStatus, CampaignStatus, MessageDirection } from '@
 import { generateJobDocuments, type GeneratedAttachment } from '@/lib/documents/campaign';
 import { DocumentRenderError } from '@/lib/documents/render';
 import { DocumentFileError } from '@/lib/documents/inspect';
+import { injectTracking } from '@/lib/email/tracking';
 
 /**
  * Processes exactly one EmailJob. This is THE send path — the BullMQ worker
@@ -69,6 +70,23 @@ export async function processEmailJob(
     return { status: 'SKIPPED', emailJobId, reason: 'Campaign cancelled.' };
   }
 
+  // Check the suppression list — if the recipient unsubscribed, skip silently.
+  const suppressed = await prisma.emailSuppression.findUnique({
+    where: {
+      workspaceId_email: {
+        workspaceId: job.batch.campaign.workspaceId,
+        email: job.toEmail.toLowerCase(),
+      },
+    },
+  });
+  if (suppressed) {
+    await prisma.emailJob.update({
+      where: { id: job.id },
+      data: { status: EmailJobStatus.SKIPPED, skipReason: `Suppressed: ${suppressed.reason}` },
+    });
+    return { status: 'SKIPPED', emailJobId, reason: `${job.toEmail} is on the suppression list (${suppressed.reason}).` };
+  }
+
   if (!job.emailProviderAccount) {
     await failJob(job.id, 'NO_SENDER', 'No connected sending account for this job.', false);
     return { status: 'FAILED', emailJobId, reason: 'No connected sending account.', retryable: false };
@@ -108,6 +126,12 @@ export async function processEmailJob(
   }
 
   try {
+    const trackedHtml = injectTracking(
+      job.html,
+      { campaignId: job.campaignId, emailJobId: job.id, email: job.toEmail },
+      job.batch.campaign.workspaceId
+    );
+
     const result = await provider.sendEmail({
       to: job.toEmail,
       cc: job.ccEmails,
@@ -116,7 +140,7 @@ export async function processEmailJob(
       fromEmail: job.fromEmail,
       replyTo: job.replyTo ?? undefined,
       subject: job.subject,
-      html: job.html,
+      html: trackedHtml,
       plainText: job.plainText,
       threadId: job.gmailThreadId,
       ...(documents.length > 0

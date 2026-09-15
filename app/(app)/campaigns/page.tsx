@@ -46,6 +46,11 @@ export default function CampaignsPage() {
     documentTemplateIds: [],
   });
   const [showForm, setShowForm] = useState(false);
+  // Inline edit state for DRAFT campaigns
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{ datasetId: string; templateId: string }>({ datasetId: '', templateId: '' });
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -67,6 +72,46 @@ export default function CampaignsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  function startEdit(c: CampaignRow) {
+    setEditingId(c.id);
+    setEditForm({ datasetId: c.dataset.id, templateId: c.template.id });
+  }
+
+  async function saveEdit(campaignId: string) {
+    setSaving(true);
+    const res = await fetch(`/api/campaigns/${campaignId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(editForm),
+    });
+    setSaving(false);
+    const json = await res.json();
+    if (!res.ok) {
+      toast.error(json.error ?? 'Failed to update campaign');
+      return;
+    }
+    setEditingId(null);
+    load();
+  }
+
+  async function deleteCampaign(campaignId: string, campaignName: string) {
+    if (!confirm(`Delete "${campaignName}"? This cannot be undone.`)) return;
+    setDeleting(campaignId);
+    const res = await fetch(`/api/campaigns/${campaignId}`, { method: 'DELETE' });
+    setDeleting(null);
+    const json = await res.json();
+    if (!res.ok) {
+      toast.error(json.error ?? 'Failed to delete campaign');
+      return;
+    }
+    if (json.cancelledInsteadOfDeleted) {
+      toast.info(json.message);
+    } else {
+      toast.success(`"${campaignName}" deleted`);
+    }
+    load();
+  }
 
   async function create() {
     if (!form.name || !form.datasetId || !form.templateId) {
@@ -217,40 +262,110 @@ export default function CampaignsPage() {
                 <th className="px-4 py-2">Dataset</th>
                 <th className="px-4 py-2">Template</th>
                 <th className="px-4 py-2">Progress</th>
+                <th className="px-4 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {campaigns.map((c) => {
                 const batch = c.batches[0];
+                const isDraft = c.status === 'DRAFT';
+                const isEditingThis = editingId === c.id;
                 return (
-                  <tr key={c.id} className="border-t hover:bg-elevated/60">
-                    <td className="px-4 py-2">
-                      <Link href={`/campaigns/${c.id}`} className="font-medium text-primary hover:underline">
-                        {c.name}
-                      </Link>
-                      <div className="text-xs text-muted-foreground">by {c.createdBy.name}</div>
-                    </td>
-                    <td className="px-4 py-2">
-                      <span className={`rounded px-1.5 py-0.5 text-xs ${STATUS_STYLES[c.status] ?? 'bg-muted'}`}>
-                        {c.status.replace(/_/g, ' ')}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2">
-                      {c.dataset.name}
-                      <span className="ml-1 text-xs text-muted-foreground">({c.dataset._count.records})</span>
-                    </td>
-                    <td className="px-4 py-2">
-                      {c.template.name} <span className="text-xs text-muted-foreground">v{c.templateVersion.version}</span>
-                      {c._count?.documents ? (
-                        <span className="ml-1 text-xs text-muted-foreground" title="Personalised PDFs attached">
-                          📎 {c._count.documents}
+                  <>
+                    <tr key={c.id} className={`border-t hover:bg-elevated/60 ${isEditingThis ? 'bg-elevated/40' : ''}`}>
+                      <td className="px-4 py-2">
+                        <Link href={`/campaigns/${c.id}`} className="font-medium text-primary hover:underline">
+                          {c.name}
+                        </Link>
+                        <div className="text-xs text-muted-foreground">by {c.createdBy.name}</div>
+                      </td>
+                      <td className="px-4 py-2">
+                        <span className={`rounded px-1.5 py-0.5 text-xs ${STATUS_STYLES[c.status] ?? 'bg-muted'}`}>
+                          {c.status.replace(/_/g, ' ')}
                         </span>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-2 text-xs">
-                      {batch ? `${batch.sentCount} sent · ${batch.failedCount} failed of ${batch.total}` : '—'}
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="px-4 py-2">
+                        {c.dataset.name}
+                        <span className="ml-1 text-xs text-muted-foreground">({c.dataset._count.records})</span>
+                      </td>
+                      <td className="px-4 py-2">
+                        {c.template.name} <span className="text-xs text-muted-foreground">v{c.templateVersion.version}</span>
+                        {c._count?.documents ? (
+                          <span className="ml-1 text-xs text-muted-foreground" title="Personalised PDFs attached">
+                            📎 {c._count.documents}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-2 text-xs">
+                        {batch ? `${batch.sentCount} sent · ${batch.failedCount} failed of ${batch.total}` : '—'}
+                      </td>
+                      <td className="px-4 py-2">
+                        {isDraft && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => isEditingThis ? setEditingId(null) : startEdit(c)}
+                              className="rounded border px-2 py-0.5 text-xs hover:bg-elevated"
+                              title="Change dataset or template"
+                            >
+                              {isEditingThis ? 'Cancel' : 'Edit'}
+                            </button>
+                            <button
+                              onClick={() => deleteCampaign(c.id, c.name)}
+                              disabled={deleting === c.id}
+                              className="rounded border border-destructive/40 px-2 py-0.5 text-xs text-destructive hover:bg-destructive/10"
+                              title="Delete this draft"
+                            >
+                              {deleting === c.id ? '…' : 'Delete'}
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                    {isEditingThis && (
+                      <tr key={`${c.id}-edit`} className="border-t bg-elevated/30">
+                        <td colSpan={6} className="px-4 py-3">
+                          <div className="flex flex-wrap items-end gap-3">
+                            <div>
+                              <label className="mb-1 block text-xs font-medium">Dataset</label>
+                              <select
+                                value={editForm.datasetId}
+                                onChange={(e) => setEditForm({ ...editForm, datasetId: e.target.value })}
+                                className="rounded-md border px-2 py-1.5 text-sm"
+                              >
+                                <option value="">Select…</option>
+                                {datasets.map((d) => (
+                                  <option key={d.id} value={d.id}>{d.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium">Template</label>
+                              <select
+                                value={editForm.templateId}
+                                onChange={(e) => setEditForm({ ...editForm, templateId: e.target.value })}
+                                className="rounded-md border px-2 py-1.5 text-sm"
+                              >
+                                <option value="">Select…</option>
+                                {templates.map((t) => (
+                                  <option key={t.id} value={t.id}>{t.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <button
+                              onClick={() => saveEdit(c.id)}
+                              disabled={saving || (!editForm.datasetId && !editForm.templateId)}
+                              className="btn-primary"
+                            >
+                              {saving ? 'Saving…' : 'Save changes'}
+                            </button>
+                            <p className="text-xs text-muted-foreground">
+                              Changing the template pins its latest saved version to this campaign.
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 );
               })}
             </tbody>

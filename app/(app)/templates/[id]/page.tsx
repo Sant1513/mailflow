@@ -168,6 +168,10 @@ export default function TemplateEditorPage() {
   }
 
   async function saveVersion() {
+    if (!subject.trim()) {
+      toast.error('Subject line is required — add a subject before saving.');
+      return;
+    }
     setSaving(true);
     const res = await fetch(`/api/templates/${params.id}/versions`, {
       method: 'POST',
@@ -252,13 +256,18 @@ export default function TemplateEditorPage() {
         >
           <h2 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Settings</h2>
 
-          <label className="mb-1 block text-xs font-medium">Subject</label>
+          <label className="mb-1 block text-xs font-medium">
+            Subject <span className="text-destructive">*</span>
+          </label>
           <input
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
             placeholder="Reminder: RPG Clearance – {{Deadline}}"
-            className="mb-3 w-full rounded-md border px-2 py-1.5 text-sm"
+            className={`mb-1 w-full rounded-md border px-2 py-1.5 text-sm ${!subject.trim() ? 'border-destructive/60 focus:ring-destructive/40' : ''}`}
           />
+          {!subject.trim() && (
+            <p className="mb-2 text-[11px] text-destructive">Subject is required before saving.</p>
+          )}
 
           <label className="mb-1 block text-xs font-medium">From</label>
           <div className="mb-3 rounded-md border bg-muted px-2 py-1.5 text-xs text-muted-foreground">
@@ -301,6 +310,31 @@ export default function TemplateEditorPage() {
               ))}
             </select>
           )}
+
+          {/* Always-visible dataset variables — shown as clickable chips so users know exact names to use. */}
+          <div className="mt-3">
+            <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+              Dataset variables
+            </div>
+            {datasetColumns.length === 0 ? (
+              <p className="rounded-md border border-dashed px-2 py-2 text-[11px] text-muted-foreground">
+                Select a dataset above to see available variables. Only listed variable names will resolve — using a different name (e.g. <span className="font-mono">{`{{Name}}`}</span> vs <span className="font-mono">{`{{name}}`}</span>) will leave the placeholder unresolved.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1">
+                {datasetColumns.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => insertVariable(c)}
+                    title={`Click to insert {{${c}}} at cursor`}
+                    className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px] hover:bg-elevated hover:border-primary/60"
+                  >
+                    {`{{${c}}}`}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <VariableMenu columns={datasetColumns} onInsert={insertVariable} />
 

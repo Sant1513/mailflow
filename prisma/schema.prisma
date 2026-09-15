@@ -150,6 +150,7 @@ model Workspace {
   aiUsage               AiUsage[]
   tags                  Tag[]
   conversations         Conversation[]
+  suppressions          EmailSuppression[]
 
   @@index([organizationId])
 }
@@ -469,10 +470,11 @@ model Campaign {
   automation      Automation?     @relation(fields: [automationId], references: [id])
   createdBy       User            @relation("CampaignCreatedBy", fields: [createdById], references: [id])
 
-  campaignRecords CampaignRecord[]
-  batches         Batch[]
-  emailJobs       EmailJob[]
-  documents       CampaignDocument[]
+  campaignRecords  CampaignRecord[]
+  batches          Batch[]
+  emailJobs        EmailJob[]
+  documents        CampaignDocument[]
+  trackingEvents   EmailTrackingEvent[]
 
   @@index([workspaceId])
   @@index([status])
@@ -578,6 +580,7 @@ model EmailJob {
   templateVersion      TemplateVersion       @relation(fields: [templateVersionId], references: [id])
   emailProviderAccount EmailProviderAccount? @relation(fields: [emailProviderAccountId], references: [id])
   attachments          Attachment[]
+  trackingEvents       EmailTrackingEvent[]
 
   @@unique([campaignId, recordId, templateVersionId])
   @@index([batchId])
@@ -1038,5 +1041,45 @@ model ReplySnippet {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// EMAIL TRACKING (open / click events)
+// ─────────────────────────────────────────────────────────────────────────
+
+model EmailTrackingEvent {
+  id         String   @id @default(cuid())
+  campaignId String
+  emailJobId String
+  email      String
+  type       String   // "OPEN" | "CLICK"
+  url        String?  // destination URL for clicks
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  campaign Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  emailJob EmailJob  @relation(fields: [emailJobId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([emailJobId])
+  @@index([email])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// EMAIL SUPPRESSION (unsubscribes, bounces)
+// ─────────────────────────────────────────────────────────────────────────
+
+model EmailSuppression {
+  id          String   @id @default(cuid())
+  workspaceId String
+  email       String
+  reason      String   @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | COMPLAINT
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, email])
   @@index([workspaceId])
 }
