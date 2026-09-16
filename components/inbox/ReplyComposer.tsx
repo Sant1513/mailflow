@@ -8,6 +8,29 @@ import { ReplyAssistant } from '@/components/ai/ReplyAssistant';
 import { formatHtml } from '@/lib/templates/format';
 import { htmlToPlainText } from '@/lib/templates/variables';
 
+interface ContactSuggestion { id: string; name: string | null; primaryEmail: string; }
+
+function useContactSuggestions(query: string) {
+  const [suggestions, setSuggestions] = useState<ContactSuggestion[]>([]);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (query.length < 2) { setSuggestions([]); return; }
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/contacts?q=${encodeURIComponent(query)}`);
+        if (!res.ok) return;
+        const { contacts } = await res.json();
+        setSuggestions((contacts as ContactSuggestion[]).slice(0, 6));
+      } catch { /* silent */ }
+    }, 200);
+    return () => { if (timer.current) clearTimeout(timer.current); };
+  }, [query]);
+
+  return suggestions;
+}
+
 const CodeEditor = dynamic(() => import('@/components/email-editor/CodeEditor').then((m) => m.CodeEditor), { ssr: false });
 
 export interface ComposerAttachment {
@@ -78,9 +101,50 @@ export function ReplyComposer({
   const [previewWidth, setPreviewWidth] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
   const [hasDraft, setHasDraft] = useState(false);
+  const [ccQuery, setCcQuery] = useState('');
+  const [suggOpen, setSuggOpen] = useState(false);
+  const [suggIdx, setSuggIdx] = useState(0);
+  const ccRef = useRef<HTMLInputElement>(null);
+  const suggestions = useContactSuggestions(ccQuery);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Derive the active token being typed (text after last comma/semicolon).
+  function activeToken(value: string) {
+    const parts = value.split(/[,;]/);
+    return (parts[parts.length - 1] ?? '').trimStart();
+  }
+
+  function handleCcChange(value: string) {
+    setCc(value);
+    scheduleDraftSave(html, value);
+    const token = activeToken(value);
+    setCcQuery(token);
+    setSuggOpen(token.length >= 2);
+    setSuggIdx(0);
+  }
+
+  function pickSuggestion(email: string) {
+    const parts = cc.split(/[,;]/);
+    parts[parts.length - 1] = email;
+    const next = parts.join(', ') + ', ';
+    setCc(next);
+    scheduleDraftSave(html, next);
+    setCcQuery('');
+    setSuggOpen(false);
+    setTimeout(() => { ccRef.current?.focus(); }, 0);
+  }
+
+  function handleCcKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!suggOpen || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setSuggIdx((i) => Math.min(i + 1, suggestions.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setSuggIdx((i) => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter' || e.key === 'Tab') {
+      const s = suggestions[suggIdx];
+      if (s) { e.preventDefault(); pickSuggestion(s.primaryEmail); }
+    } else if (e.key === 'Escape') { setSuggOpen(false); }
+  }
 
   // Restore draft or inject signature on mount.
   useEffect(() => {
@@ -278,13 +342,34 @@ export function ReplyComposer({
         </div>
       </div>
 
-      <div className="px-3 pt-2">
+      <div className="relative px-3 pt-2">
         <input
+          ref={ccRef}
           value={cc}
-          onChange={(e) => { setCc(e.target.value); scheduleDraftSave(html, e.target.value); }}
+          onChange={(e) => handleCcChange(e.target.value)}
+          onKeyDown={handleCcKeyDown}
+          onBlur={() => setTimeout(() => setSuggOpen(false), 150)}
+          onFocus={() => { if (ccQuery.length >= 2) setSuggOpen(true); }}
           placeholder="CC (optional, comma-separated)"
           className="mb-2 w-full !py-1 text-xs"
+          autoComplete="off"
         />
+        {suggOpen && suggestions.length > 0 && (
+          <ul className="absolute left-3 right-3 top-[calc(100%-0.5rem)] z-50 max-h-48 overflow-y-auto rounded-md border border-border bg-card shadow-lg">
+            {suggestions.map((s, i) => (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); pickSuggestion(s.primaryEmail); }}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${i === suggIdx ? 'bg-primary/10 text-primary' : 'hover:bg-elevated'}`}
+                >
+                  <span className="font-medium">{s.name ?? s.primaryEmail}</span>
+                  {s.name && <span className="text-muted-foreground">{s.primaryEmail}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {/* Mode tabs + toolbar */}
