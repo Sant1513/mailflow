@@ -19,11 +19,19 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
 
   const sender = await senderAccountFor(campaign);
 
+  // Expose the template's latest version so the UI can detect when a re-sync is available.
+  const latestTemplateVersion = await prisma.templateVersion.findFirst({
+    where: { templateId: campaign.templateId },
+    orderBy: { version: 'desc' },
+    select: { id: true, version: true },
+  });
+
   return NextResponse.json({
     campaign,
     sender: sender ? { emailAddress: sender.emailAddress, status: sender.status } : null,
     viewerRole: session.role,
     viewerIsCreator: campaign.createdById === session.userId,
+    latestTemplateVersion,
   });
 });
 

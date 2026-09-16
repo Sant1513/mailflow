@@ -138,6 +138,38 @@ export default function CampaignDetailPage() {
 
   const [scheduledAt, setScheduledAt] = useState('');
   const [decision, setDecision] = useState<'APPROVE' | 'REJECT' | null>(null);
+
+  // Draft configuration — dataset / template swap + version re-sync.
+  const [datasets, setDatasets] = useState<{ id: string; name: string; _count: { records: number } }[]>([]);
+  const [templates, setTemplates] = useState<{ id: string; name: string; versions: { version: number }[] }[]>([]);
+  const [swapDatasetId, setSwapDatasetId] = useState('');
+  const [swapTemplateId, setSwapTemplateId] = useState('');
+
+  useEffect(() => {
+    if (!campaign || campaign.status !== 'DRAFT') return;
+    fetch('/api/datasets').then((r) => r.json()).then((j) => setDatasets(j.datasets ?? [])).catch(() => undefined);
+    fetch('/api/templates').then((r) => r.json()).then((j) => setTemplates(j.templates ?? [])).catch(() => undefined);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaign?.status]);
+
+  async function swapConfig(patch: { datasetId?: string; templateId?: string }) {
+    const label = patch.datasetId ? 'Change dataset?' : 'Change template? The campaign will use the latest version.';
+    if (!confirm(label)) return;
+    setBusy('swap');
+    const res = await fetch(`/api/campaigns/${params.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    setBusy(null);
+    const json = await res.json();
+    if (!res.ok) { toast.error(json.error ?? 'Update failed'); return; }
+    toast.success(patch.datasetId ? 'Dataset updated.' : 'Template updated to latest version.');
+    setSwapDatasetId('');
+    setSwapTemplateId('');
+    load();
+    loadPreview();
+  }
   const [decisionReason, setDecisionReason] = useState('');
   const [decisionRemarks, setDecisionRemarks] = useState('');
 
@@ -297,6 +329,96 @@ export default function CampaignDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Draft configuration — swap dataset / template, re-sync version */}
+      {(campaign.status === 'DRAFT' || campaign.status === 'REJECTED') && (
+        <div className="mb-5 rounded-lg border border-border bg-card p-4">
+          <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Configuration</div>
+          <div className="grid gap-4 sm:grid-cols-2">
+
+            {/* Dataset */}
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground">Dataset</label>
+              <p className="mb-1 text-sm font-medium">{campaign.dataset.name}</p>
+              {datasets.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <select
+                    value={swapDatasetId}
+                    onChange={(e) => setSwapDatasetId(e.target.value)}
+                    className="!py-1 text-xs"
+                  >
+                    <option value="">Switch dataset…</option>
+                    {datasets.filter((d) => d.id !== campaign.datasetId).map((d) => (
+                      <option key={d.id} value={d.id}>{d.name} ({d._count.records} rows)</option>
+                    ))}
+                  </select>
+                  {swapDatasetId && (
+                    <button
+                      onClick={() => swapConfig({ datasetId: swapDatasetId })}
+                      disabled={busy === 'swap'}
+                      className="btn-secondary !px-2 !py-1 text-xs"
+                    >
+                      Apply
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Template + version re-sync */}
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground">Template</label>
+              <p className="mb-1 text-sm font-medium">
+                {campaign.template.name}
+                <span className="ml-1.5 text-xs text-muted-foreground">
+                  using v{campaign.templateVersion.version}
+                  {data.latestTemplateVersion && data.latestTemplateVersion.version > campaign.templateVersion.version && (
+                    <span className="ml-1 text-warning">(v{data.latestTemplateVersion.version} available)</span>
+                  )}
+                </span>
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Sync to latest version button */}
+                {data.latestTemplateVersion && data.latestTemplateVersion.version > campaign.templateVersion.version && (
+                  <button
+                    onClick={() => swapConfig({ templateId: campaign.templateId })}
+                    disabled={busy === 'swap'}
+                    className="btn-secondary !px-2 !py-1 text-xs text-warning border-warning/50 hover:bg-warning/10"
+                  >
+                    Sync to v{data.latestTemplateVersion.version}
+                  </button>
+                )}
+                {/* Switch to a different template */}
+                {templates.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={swapTemplateId}
+                      onChange={(e) => setSwapTemplateId(e.target.value)}
+                      className="!py-1 text-xs"
+                    >
+                      <option value="">Switch template…</option>
+                      {templates.filter((t) => t.id !== campaign.templateId).map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} (v{t.versions[0]?.version ?? '?'})
+                        </option>
+                      ))}
+                    </select>
+                    {swapTemplateId && (
+                      <button
+                        onClick={() => swapConfig({ templateId: swapTemplateId })}
+                        disabled={busy === 'swap'}
+                        className="btn-secondary !px-2 !py-1 text-xs"
+                      >
+                        Apply
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Workflow actions */}
       <div className="mb-6 flex flex-wrap gap-2">
