@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Full bleed background for maskable (safe zone is inner 80%) -->
+  <rect width="512" height="512" fill="#4f46e5"/>
+  <!-- Envelope body — scaled to sit within safe zone -->
+  <rect x="112" y="188" width="288" height="196" rx="14" fill="none" stroke="white" stroke-width="20"/>
+  <!-- Envelope flap -->
+  <polyline points="112,204 256,300 400,204" fill="none" stroke="white" stroke-width="20" stroke-linejoin="round"/>
+  <!-- Lightning bolt -->
+  <polygon points="270,216 242,278 263,278 242,322 290,256 266,256 290,216" fill="white" opacity="0.92"/>
+</svg>

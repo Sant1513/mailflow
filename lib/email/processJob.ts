@@ -346,6 +346,15 @@ export async function reconcileBatchStatus(batchId: string): Promise<BatchStatus
 
   await prisma.batch.update({ where: { id: batchId }, data: { status } });
 
+  if (pending > 0) {
+    // When the first job of a scheduled send fires, the campaign is still in
+    // SCHEDULED status. Advance it to RUNNING so the UI reflects reality.
+    await prisma.campaign.updateMany({
+      where: { id: batch.campaignId, status: CampaignStatus.SCHEDULED },
+      data: { status: CampaignStatus.RUNNING },
+    });
+  }
+
   if (pending === 0) {
     const campaignStatus =
       status === BatchStatus.COMPLETED

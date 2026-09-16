@@ -72,7 +72,10 @@ export const DEFAULT_JOB_OPTIONS: JobsOptions = {
   removeOnFail: false,
 };
 
-export async function enqueueEmailJobs(payloads: EmailJobPayload[]): Promise<{ enqueued: number; queued: boolean }> {
+export async function enqueueEmailJobs(
+  payloads: EmailJobPayload[],
+  delayMs = 0
+): Promise<{ enqueued: number; queued: boolean }> {
   const queue = getQueue(QUEUE_NAMES.EMAIL_SEND);
   if (!queue) return { enqueued: 0, queued: false };
 
@@ -86,6 +89,7 @@ export async function enqueueEmailJobs(payloads: EmailJobPayload[]): Promise<{ e
         // the same job id is a no-op in BullMQ, so a double-click or a
         // retried HTTP request cannot enqueue a duplicate send.
         jobId: payload.emailJobId,
+        ...(delayMs > 0 ? { delay: delayMs } : {}),
       },
     }))
   );

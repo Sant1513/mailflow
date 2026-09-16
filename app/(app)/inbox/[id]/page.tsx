@@ -88,6 +88,16 @@ export default function ConversationPage() {
     return true;
   }
 
+  async function deleteNote(noteId: string) {
+    if (!confirm('Delete this note? This cannot be undone.')) return;
+    const res = await fetch(`/api/conversations/${params.id}/notes/${noteId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      toast.error('Failed to delete note');
+      return;
+    }
+    load();
+  }
+
   async function addNote() {
     if (!note.trim()) return;
     setBusy('note');
@@ -250,7 +260,16 @@ export default function ConversationPage() {
                 <div key={`n-${item.id}`} className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
                   <div className="mb-1 flex items-center justify-between text-xs text-warning">
                     <span><strong>INTERNAL NOTE</strong> · {item.author.name}</span>
-                    <span>{new Date(item.createdAt).toLocaleString()}</span>
+                    <div className="flex items-center gap-2">
+                      <span>{new Date(item.createdAt).toLocaleString()}</span>
+                      <button
+                        onClick={() => deleteNote(item.id)}
+                        className="text-warning/60 hover:text-warning"
+                        title="Delete note"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   </div>
                   <div className="whitespace-pre-wrap text-warning">{item.body}</div>
                   <div className="mt-1 text-[10px] text-warning">Never sent to the recipient.</div>

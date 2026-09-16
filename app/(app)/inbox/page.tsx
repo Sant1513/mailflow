@@ -48,6 +48,8 @@ function timeAgo(iso: string | null): string {
 export default function InboxPage() {
   const [filter, setFilter] = useState('open');
   const [q, setQ] = useState('');
+  const [assigneeId, setAssigneeId] = useState('');
+  const [tag, setTag] = useState('');
   const [rows, setRows] = useState<InboxRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [total, setTotal] = useState(0);
@@ -55,11 +57,14 @@ export default function InboxPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [gmail, setGmail] = useState<{ connected: boolean; pushConfigured: boolean; email?: string } | null>(null);
+  const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
 
   const load = useCallback(async (p = page) => {
     setLoading(true);
     const params = new URLSearchParams({ filter, page: String(p), pageSize: String(PAGE_SIZE) });
     if (q.trim()) params.set('q', q.trim());
+    if (assigneeId) params.set('assigneeId', assigneeId);
+    if (tag.trim()) params.set('tag', tag.trim());
     const res = await fetch(`/api/inbox?${params}`);
     const json = await res.json();
     setRows(json.conversations ?? []);
@@ -68,13 +73,21 @@ export default function InboxPage() {
     setLoading(false);
   }, [filter, q, page]);
 
+  // Fetch workspace members once for the assignee dropdown.
+  useEffect(() => {
+    fetch('/api/members')
+      .then((r) => r.json())
+      .then((j) => setMembers(j.members ?? []))
+      .catch(() => undefined);
+  }, []);
+
   // Reset to page 1 when filter/search changes.
   useEffect(() => {
     setPage(1);
     const t = setTimeout(() => load(1), q ? 250 : 0);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, q]);
+  }, [filter, q, assigneeId, tag]);
 
   // When page changes (and filter/search didn't), load that page.
   useEffect(() => {
@@ -147,6 +160,44 @@ export default function InboxPage() {
             );
           })}
         </nav>
+
+        {/* Assignee filter */}
+        {members.length > 0 && (
+          <div className="mt-4">
+            <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">Assignee</div>
+            <select
+              value={assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+              className="w-full rounded border bg-background px-2 py-1 text-xs"
+            >
+              <option value="">All</option>
+              <option value="none">Unassigned</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Tag filter */}
+        <div className="mt-3">
+          <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">Tag</div>
+          <input
+            value={tag}
+            onChange={(e) => setTag(e.target.value)}
+            placeholder="Filter by tag…"
+            className="w-full rounded border bg-background px-2 py-1 text-xs"
+          />
+        </div>
+
+        {(assigneeId || tag) && (
+          <button
+            onClick={() => { setAssigneeId(''); setTag(''); }}
+            className="mt-2 w-full rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-elevated"
+          >
+            Clear filters
+          </button>
+        )}
 
         {gmail && (
           <div className="mt-4 rounded-md border bg-muted/40 p-2 text-[11px] text-muted-foreground">

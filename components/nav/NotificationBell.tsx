@@ -60,7 +60,9 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
   const [items, setItems] = useState<Item[]>([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number } | null>(null);
   const box = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const prevIdsRef = useRef<Set<string>>(new Set());
   const initialLoadRef = useRef(true);
 
@@ -107,15 +109,37 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
     return () => clearInterval(t);
   }, [load]);
 
-  // Close on outside click.
+  // Close on outside click or Escape.
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
       if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [open]);
+
+  function togglePanel() {
+    if (open) { setOpen(false); return; }
+    if (!btnRef.current) { setOpen(true); return; }
+    const r = btnRef.current.getBoundingClientRect();
+    const panelW = Math.min(352, window.innerWidth - 16);
+    let left: number;
+    if (compact) {
+      // Mobile top-bar: right-align to the bell button, clamped to screen.
+      left = Math.max(8, r.right - panelW);
+    } else {
+      // Sidebar: open to the RIGHT of the bell, just past the sidebar edge.
+      left = Math.min(r.right + 4, window.innerWidth - panelW - 8);
+    }
+    setPanelPos({ top: r.bottom + 8, left });
+    setOpen(true);
+  }
 
   async function markAll() {
     await fetch('/api/notifications', {
@@ -147,16 +171,12 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
     }
   }
 
-  // Panel positioning:
-  //   compact (mobile top bar) → right-0 top-full mt-2  (opens down-left)
-  //   sidebar header (non-compact) → right-0 top-full mt-2 (opens down from the bell icon)
-  const panelClass = compact ? 'right-0 top-full mt-2' : 'right-0 top-full mt-2';
-
   return (
     <div ref={box} className="relative">
       {/* Trigger button */}
       <button
-        onClick={() => setOpen((v) => !v)}
+        ref={btnRef}
+        onClick={togglePanel}
         aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`}
         aria-expanded={open}
         className={`relative flex items-center justify-center rounded-md border border-border text-foreground hover:bg-elevated/60 ${
@@ -171,11 +191,17 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
         )}
       </button>
 
-      {/* Panel */}
-      {open && (
+      {/* Panel — fixed so it's always fully on-screen regardless of where the bell sits. */}
+      {open && panelPos && (
         <div
-          className={`absolute z-50 w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-border bg-card shadow-xl ${panelClass}`}
-          style={{ maxHeight: 'min(28rem, calc(100dvh - 5rem))' }}
+          style={{
+            position: 'fixed',
+            top: panelPos.top,
+            left: panelPos.left,
+            width: `min(22rem, calc(100vw - 1rem))`,
+            maxHeight: 'min(28rem, calc(100dvh - 5rem))',
+          }}
+          className="z-[200] overflow-hidden rounded-lg border border-border bg-card shadow-xl"
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border-subtle px-4 py-2.5">
@@ -198,7 +224,7 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
           </div>
 
           {/* List */}
-          <div className="overflow-y-auto" style={{ maxHeight: 'min(22rem, calc(100dvh - 9rem))' }}>
+          <div className="overflow-y-auto" style={{ maxHeight: 'min(20rem, calc(100dvh - 9rem))' }}>
             {items.length === 0 ? (
               <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
                 <span className="text-2xl">🔔</span>

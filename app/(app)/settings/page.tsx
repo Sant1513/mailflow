@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth/options';
 import { GmailPanel } from './GmailPanel';
 import { ProfileSlack } from '@/components/settings/ProfileSlack';
 import { SnippetsManager } from '@/components/settings/SnippetsManager';
+import { SignatureEditor } from '@/components/settings/SignatureEditor';
 
 export default async function SettingsPage() {
   const session = await getServerSession(authOptions);
@@ -23,6 +24,11 @@ export default async function SettingsPage() {
         <div className="mt-4 border-t border-border-subtle pt-4">
           <ProfileSlack />
         </div>
+      </section>
+
+      <section className="mb-8 max-w-lg rounded-lg border bg-card p-4">
+        <h2 className="mb-1 text-sm font-semibold">Email signature</h2>
+        <SignatureEditor />
       </section>
 
       <section className="mb-8 max-w-lg rounded-lg border bg-card p-4">

@@ -27,6 +27,8 @@ const sendSchema = z.object({
   skipApproval: z.boolean().default(false),
   /** §41 Force Resend — audited. */
   force: z.boolean().default(false),
+  /** ISO 8601 datetime — schedule the send for a future time instead of immediately. */
+  scheduledAt: z.string().datetime().optional(),
 });
 
 /**
@@ -39,6 +41,10 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   const session = await requireSession();
   requireCanWrite(session);
   const body = sendSchema.parse(await req.json().catch(() => ({})));
+  const scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
+  const now = new Date();
+  const isScheduled = scheduledAt !== null && scheduledAt > now;
+  const delayMs = isScheduled ? scheduledAt.getTime() - now.getTime() : 0;
 
   const campaign = await loadCampaignForSession(session, params.id);
   if (!campaign) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -208,7 +214,11 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
 
     await tx.campaign.update({
       where: { id: campaign.id },
-      data: { status: CampaignStatus.RUNNING, senderAccountId: sender.id },
+      data: {
+        status: isScheduled ? CampaignStatus.SCHEDULED : CampaignStatus.RUNNING,
+        senderAccountId: sender.id,
+        ...(isScheduled ? { scheduledAt } : {}),
+      },
     });
 
     return created;
@@ -221,8 +231,12 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     where: { batchId: batch.id, status: EmailJobStatus.QUEUED },
     select: { id: true },
   });
+  // For scheduled sends, pass the delay so BullMQ holds jobs until the time
+  // arrives. If Redis is not available the jobs stay QUEUED in the DB and the
+  // /api/cron/scheduled-send cron picks them up once scheduledAt has passed.
   const enqueued = await enqueueEmailJobs(
-    queuedJobs.map((j) => ({ emailJobId: j.id, batchId: batch.id }))
+    queuedJobs.map((j) => ({ emailJobId: j.id, batchId: batch.id })),
+    delayMs
   );
 
   await prisma.batch.update({
@@ -242,16 +256,23 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       skipApproval: body.skipApproval,
       transport: enqueued.queued ? 'redis' : 'drain',
       documents: built.documents.length,
+      ...(isScheduled ? { scheduledAt: scheduledAt!.toISOString() } : {}),
     },
   });
+
+  const scheduleNote = isScheduled
+    ? `Scheduled for ${scheduledAt!.toISOString()}. ${enqueued.queued ? 'BullMQ will fire at that time.' : 'Cron will fire it once the time arrives.'}`
+    : null;
 
   return NextResponse.json(
     {
       batch: { id: batch.id, label, total: simulation.total, queued: sendable.length, skipped: simulation.skipped },
       transport: enqueued.queued ? 'queue' : 'drain',
-      note: enqueued.queued
+      scheduled: isScheduled,
+      scheduledAt: isScheduled ? scheduledAt!.toISOString() : null,
+      note: scheduleNote ?? (enqueued.queued
         ? 'Jobs handed to the email-send queue.'
-        : 'REDIS_URL is not configured, so jobs are queued in the database. Process them with POST /api/batches/:id/drain (or run the worker with Redis).',
+        : 'REDIS_URL is not configured, so jobs are queued in the database. Process them with POST /api/batches/:id/drain (or run the worker with Redis).'),
       simulation: { wouldSend: simulation.wouldSend, skipped: simulation.skipped, byReason: simulation.byReason },
     },
     { status: 201 }

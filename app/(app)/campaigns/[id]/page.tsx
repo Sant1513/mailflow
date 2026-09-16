@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -72,6 +72,20 @@ export default function CampaignDetailPage() {
   const campaign = data?.campaign;
   const latestBatch = campaign?.batches?.[0];
 
+  const TERMINAL = new Set(['COMPLETED', 'FAILED', 'PARTIALLY_FAILED', 'CANCELLED']);
+  const isLive = campaign && !TERMINAL.has(campaign.status) && campaign.status !== 'DRAFT' && campaign.status !== 'APPROVED' && campaign.status !== 'PENDING_APPROVAL' && campaign.status !== 'REJECTED' && campaign.status !== 'SCHEDULED';
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (!isLive) return;
+    pollRef.current = setInterval(() => {
+      load();
+      loadBatch();
+    }, 5000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive]);
+
   const loadBatch = useCallback(async () => {
     if (!latestBatch) return;
     const res = await fetch(`/api/batches/${latestBatch.id}`);
@@ -122,6 +136,7 @@ export default function CampaignDetailPage() {
     toast.success(`Simulation complete — ${json.simulation.wouldSend} would send. No emails were sent.`);
   }
 
+  const [scheduledAt, setScheduledAt] = useState('');
   const [decision, setDecision] = useState<'APPROVE' | 'REJECT' | null>(null);
   const [decisionReason, setDecisionReason] = useState('');
   const [decisionRemarks, setDecisionRemarks] = useState('');
@@ -151,19 +166,48 @@ export default function CampaignDetailPage() {
     load();
   }
 
-  async function send(skipApproval = false) {
-    if (!confirm(`Send this campaign${skipApproval ? ' without approval' : ''}? Emails will go out from your Gmail account.`)) return;
+  async function send(skipApproval = false, overrideScheduledAt?: string) {
+    const label = overrideScheduledAt
+      ? `Schedule send for ${new Date(overrideScheduledAt).toLocaleString('en-IN')}?`
+      : `Send this campaign${skipApproval ? ' without approval' : ''}? Emails will go out from your Gmail account.`;
+    if (!confirm(label)) return;
     setBusy('send');
     const res = await fetch(`/api/campaigns/${params.id}/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ skipApproval }),
+      body: JSON.stringify({
+        skipApproval,
+        ...(overrideScheduledAt ? { scheduledAt: overrideScheduledAt } : {}),
+      }),
     });
     setBusy(null);
     const json = await res.json();
     if (!res.ok) {
       toast.error(json.error ?? 'Send failed');
       if (json.validation) setValidation(json.validation);
+      return;
+    }
+    if (json.scheduled) {
+      toast.success(`Scheduled for ${new Date(json.scheduledAt).toLocaleString('en-IN')} — ${json.batch.queued} emails queued.`, { duration: 8000 });
+    } else {
+      toast.success(`Batch ${json.batch.label} created — ${json.batch.queued} queued.`);
+    }
+    setScheduledAt('');
+    load();
+  }
+
+  async function sendImmediately() {
+    if (!confirm('Send now, ignoring the scheduled time? This cannot be undone.')) return;
+    setBusy('sendNow');
+    const res = await fetch(`/api/campaigns/${params.id}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skipApproval: false }),
+    });
+    setBusy(null);
+    const json = await res.json();
+    if (!res.ok) {
+      toast.error(json.error ?? 'Send failed');
       return;
     }
     toast.success(`Batch ${json.batch.label} created — ${json.batch.queued} queued.`);
@@ -280,9 +324,38 @@ export default function CampaignDetailPage() {
           </span>
         )}
         {campaign.status === 'APPROVED' && (
-          <button onClick={() => send(false)} disabled={!!busy} className="btn-primary">
-            {busy === 'send' ? 'Sending…' : 'Send now'}
-          </button>
+          <>
+            <button onClick={() => send(false)} disabled={!!busy} className="btn-primary">
+              {busy === 'send' ? 'Sending…' : 'Send now'}
+            </button>
+            <div className="flex items-center gap-1">
+              <input
+                type="datetime-local"
+                value={scheduledAt}
+                min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+                onChange={(e) => setScheduledAt(e.target.value)}
+                className="rounded border border-border bg-background px-2 py-1.5 text-sm"
+              />
+              <button
+                onClick={() => scheduledAt && send(false, new Date(scheduledAt).toISOString())}
+                disabled={!!busy || !scheduledAt}
+                className="btn-secondary"
+              >
+                Schedule send
+              </button>
+            </div>
+          </>
+        )}
+        {campaign.status === 'SCHEDULED' && (
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-muted-foreground">
+              Scheduled for{' '}
+              <strong>{campaign.scheduledAt ? new Date(campaign.scheduledAt).toLocaleString('en-IN') : '—'}</strong>
+            </span>
+            <button onClick={sendImmediately} disabled={!!busy} className="btn-secondary">
+              {busy === 'sendNow' ? 'Sending…' : 'Send immediately'}
+            </button>
+          </div>
         )}
         {isAdmin && ['DRAFT', 'REJECTED'].includes(campaign.status) && (
           <button onClick={() => send(true)} disabled={!!busy} className="rounded-md border border-warning/40 px-3 py-1.5 text-sm text-warning hover:bg-warning/10">
@@ -451,8 +524,14 @@ export default function CampaignDetailPage() {
       {latestBatch && (
         <div className="rounded-lg border bg-card p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
               Batch {latestBatch.label} — {latestBatch.status.replace(/_/g, ' ')}
+              {isLive && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[11px] text-success">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
+                  Live
+                </span>
+              )}
             </h2>
             <div className="flex flex-wrap gap-2">
               <ExplainButton

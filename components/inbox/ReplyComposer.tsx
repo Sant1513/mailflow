@@ -67,6 +67,8 @@ export function ReplyComposer({
   busy: boolean;
   onSend: (payload: ComposerPayload) => Promise<boolean>;
 }) {
+  const DRAFT_KEY = `draft:${conversationId}`;
+
   const [mode, setMode] = useState<Mode>('write');
   const [html, setHtml] = useState('');
   const [cc, setCc] = useState('');
@@ -75,8 +77,46 @@ export function ReplyComposer({
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [previewWidth, setPreviewWidth] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
+  const [hasDraft, setHasDraft] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Restore draft or inject signature on mount.
+  useEffect(() => {
+    let cancelled = false;
+    async function init() {
+      try {
+        const saved = localStorage.getItem(DRAFT_KEY);
+        if (saved) {
+          const { html: draftHtml, cc: draftCc } = JSON.parse(saved) as { html: string; cc: string };
+          if (!cancelled && draftHtml) {
+            setHtml(draftHtml);
+            setCc(draftCc ?? '');
+            setHasDraft(true);
+            return;
+          }
+        }
+      } catch { /* ignore bad localStorage */ }
+      // No draft — fetch signature and seed the editor.
+      try {
+        const res = await fetch('/api/profile');
+        if (!cancelled && res.ok) {
+          const { user } = await res.json();
+          if (user.emailSignature) {
+            const sig = `<p></p><p>--</p>${user.emailSignature
+              .split(/\n{2,}/)
+              .map((p: string) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+              .join('')}`;
+            setHtml(sig);
+          }
+        }
+      } catch { /* no-op */ }
+    }
+    init();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     fetch(`/api/snippets?conversationId=${conversationId}`)
@@ -85,6 +125,36 @@ export function ReplyComposer({
       .catch(() => undefined);
   }, [conversationId]);
 
+  // Autosave draft to localStorage with 1s debounce.
+  function scheduleDraftSave(nextHtml: string, nextCc: string) {
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    draftTimer.current = setTimeout(() => {
+      try {
+        if (nextHtml.replace(/<[^>]+>/g, '').trim()) {
+          localStorage.setItem(DRAFT_KEY, JSON.stringify({ html: nextHtml, cc: nextCc }));
+        } else {
+          localStorage.removeItem(DRAFT_KEY);
+        }
+      } catch { /* full */ }
+    }, 1000);
+  }
+
+  function discardDraft() {
+    try { localStorage.removeItem(DRAFT_KEY); } catch { /* no-op */ }
+    setHtml('');
+    setCc('');
+    setHasDraft(false);
+    if (editorRef.current) editorRef.current.innerHTML = '';
+    // Re-fetch signature.
+    fetch('/api/profile').then((r) => r.json()).then(({ user }) => {
+      if (user.emailSignature) {
+        const sig = `<p></p><p>--</p>${user.emailSignature.split(/\n{2,}/).map((p: string) => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}`;
+        setHtml(sig);
+        if (editorRef.current) editorRef.current.innerHTML = sig;
+      }
+    }).catch(() => undefined);
+  }
+
   // Keep the rich editor in sync when html changes from outside (snippet, AI, mode switch).
   useEffect(() => {
     if (mode === 'write' && editorRef.current && editorRef.current.innerHTML !== html) editorRef.current.innerHTML = html;
@@ -92,8 +162,13 @@ export function ReplyComposer({
   }, [mode, html === '' ? '' : null]);
 
   const syncFromEditor = useCallback(() => {
-    if (editorRef.current) setHtml(editorRef.current.innerHTML);
-  }, []);
+    if (editorRef.current) {
+      const next = editorRef.current.innerHTML;
+      setHtml(next);
+      scheduleDraftSave(next, cc);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cc]);
 
   function switchMode(next: Mode) {
     if (mode === 'write') syncFromEditor();
@@ -170,12 +245,14 @@ export function ReplyComposer({
       attachments: attachments.map(({ filename, mimeType, base64 }) => ({ filename, mimeType, base64 })),
     });
     if (ok) {
+      try { localStorage.removeItem(DRAFT_KEY); } catch { /* no-op */ }
       setHtml('');
       if (editorRef.current) editorRef.current.innerHTML = '';
       setCc('');
       setAttachments([]);
       setNewThread(false);
       setMode('write');
+      setHasDraft(false);
     }
   }
 
@@ -188,13 +265,26 @@ export function ReplyComposer({
         <span className="font-semibold">
           {newThread ? 'New email' : 'Reply'} <span className="font-normal text-muted-foreground">to {recipientEmail} · from {fromEmail}</span>
         </span>
-        <label className="flex items-center gap-1 text-muted-foreground">
-          <input type="checkbox" checked={newThread} onChange={(e) => setNewThread(e.target.checked)} /> Start a new thread
-        </label>
+        <div className="flex items-center gap-3">
+          {hasDraft && (
+            <span className="flex items-center gap-1.5 text-warning">
+              Draft restored
+              <button onClick={discardDraft} className="underline hover:no-underline">Discard</button>
+            </span>
+          )}
+          <label className="flex items-center gap-1 text-muted-foreground">
+            <input type="checkbox" checked={newThread} onChange={(e) => setNewThread(e.target.checked)} /> Start a new thread
+          </label>
+        </div>
       </div>
 
       <div className="px-3 pt-2">
-        <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="CC (optional, comma-separated)" className="mb-2 w-full !py-1 text-xs" />
+        <input
+          value={cc}
+          onChange={(e) => { setCc(e.target.value); scheduleDraftSave(html, e.target.value); }}
+          placeholder="CC (optional, comma-separated)"
+          className="mb-2 w-full !py-1 text-xs"
+        />
       </div>
 
       {/* Mode tabs + toolbar */}
@@ -264,7 +354,7 @@ export function ReplyComposer({
         )}
         {mode === 'html' && (
           <div className="h-56 overflow-hidden rounded border border-border">
-            <CodeEditor value={html} onChange={setHtml} language="html" />
+            <CodeEditor value={html} onChange={(v) => { setHtml(v); scheduleDraftSave(v, cc); }} language="html" />
           </div>
         )}
         {mode === 'preview' && (

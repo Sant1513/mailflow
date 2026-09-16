@@ -16,6 +16,7 @@ export const GET = withErrorHandling(async (req) => {
 
   const filter = url.searchParams.get('filter') ?? 'open';
   const tag = url.searchParams.get('tag');
+  const assigneeId = url.searchParams.get('assigneeId');
   const q = url.searchParams.get('q')?.trim();
   const page = Math.max(1, Number(url.searchParams.get('page') ?? '1'));
   const pageSize = Math.min(100, Number(url.searchParams.get('pageSize') ?? '40'));
@@ -44,6 +45,8 @@ export const GET = withErrorHandling(async (req) => {
   }
 
   if (tag) where.tags = { some: { tag: { name: tag } } };
+  if (assigneeId === 'none') where.assigneeId = null;
+  else if (assigneeId) where.assigneeId = assigneeId;
 
   if (q) {
     where.OR = [

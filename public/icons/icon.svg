@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#4f46e5"/>
+  <!-- Envelope body -->
+  <rect x="80" y="160" width="352" height="240" rx="16" fill="none" stroke="white" stroke-width="24"/>
+  <!-- Envelope flap (V) -->
+  <polyline points="80,176 256,296 432,176" fill="none" stroke="white" stroke-width="24" stroke-linejoin="round"/>
+  <!-- Lightning bolt -->
+  <polygon points="272,200 240,272 264,272 240,328 296,248 268,248 296,200" fill="white" opacity="0.9"/>
+</svg>

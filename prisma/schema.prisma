@@ -67,7 +67,8 @@ model User {
   updatedAt      DateTime   @updatedAt
   lastLoginAt    DateTime?
   // Slack member id (U…): mentions in assignment / resolution notifications.
-  slackUserId    String?
+  slackUserId      String?
+  emailSignature   String?  @db.Text
 
   organization           Organization           @relation(fields: [organizationId], references: [id])
   ownedWorkspaces        Workspace[]            @relation("WorkspaceOwner")
