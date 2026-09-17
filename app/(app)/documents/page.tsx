@@ -1,232 +1,315 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { LOCK_MODE_LABELS, MAX_UPLOAD_BYTES, type LockMode } from '@/lib/documents/types';
 
-interface DocumentRow {
+const PAGE_SIZE = 20;
+
+type SigningStatus = 'DRAFT' | 'SENT' | 'VIEWED' | 'SIGNED' | 'EXPIRED' | 'VOIDED';
+
+interface SigningRequest {
   id: string;
-  name: string;
-  description: string | null;
-  archived: boolean;
-  updatedAt: string;
-  owner: string;
-  fileName: string;
-  size: number;
-  pageCount: number;
-  formFieldCount: number;
-  fieldCount: number;
-  lockMode: LockMode;
-  campaignCount: number;
+  title: string;
+  recipientName: string;
+  recipientEmail: string;
+  status: SigningStatus;
+  sentAt: string | null;
+  signedAt: string | null;
+  createdAt: string;
+  sentBy: { name: string; email: string } | null;
 }
 
-const STEPS = [
-  ['Upload a PDF', 'An agreement, offer letter, consent form or NOC. Fillable PDFs work best; flat or scanned PDFs work too.'],
-  ['Map the fields', 'Point each fillable field or a box on the page at a column: {{Name}}, {{Batch}}, {{Today}}.'],
-  ['Attach to a campaign', 'Every recipient receives their own filled copy, attached to their email, with a unique reference.'],
-];
+interface ESignDetail {
+  id: string;
+  title: string;
+  signedPdfData: string | null;
+}
 
-export default function DocumentsPage() {
-  const router = useRouter();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [rows, setRows] = useState<DocumentRow[]>([]);
+const STATUS_BADGE: Record<SigningStatus, string> = {
+  SIGNED: 'badge-success',
+  SENT: 'badge-info',
+  VIEWED: 'badge-warning',
+  EXPIRED: 'badge',
+  VOIDED: 'badge-destructive',
+  DRAFT: 'badge',
+};
+
+export default function ESignDocumentsPage() {
+  const [requests, setRequests] = useState<SigningRequest[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
-  const [dragging, setDragging] = useState(false);
+  const [page, setPage] = useState(1);
 
-  async function load() {
-    setLoading(true);
-    const res = await fetch(`/api/documents?includeArchived=${showArchived}`);
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) toast.error(json.error ?? 'Could not load documents');
-    setRows(json.documents ?? []);
-    setLoading(false);
-  }
+  // Filters
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+
+  const load = useCallback(
+    async (pg: number) => {
+      setLoading(true);
+      const p = new URLSearchParams({ page: String(pg) });
+      if (search) p.set('search', search);
+      if (status) p.set('status', status);
+      if (from) p.set('from', from);
+      if (to) p.set('to', to);
+      const res = await fetch(`/api/e-sign?${p}`);
+      setLoading(false);
+      if (!res.ok) return;
+      const json = (await res.json()) as { requests: SigningRequest[]; total: number; page: number };
+      setRequests(json.requests ?? []);
+      setTotal(json.total ?? 0);
+    },
+    [search, status, from, to],
+  );
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showArchived]);
+    load(page);
+  }, [load, page]);
 
-  async function upload(file: File) {
-    if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) {
-      toast.error('Choose a PDF file.');
-      return;
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      toast.error(`That PDF is ${(file.size / 1048576).toFixed(1)} MB; the limit is 4 MB.`);
-      return;
-    }
-    setUploading(true);
-    const form = new FormData();
-    form.append('file', file);
-    const res = await fetch('/api/documents', { method: 'POST', body: form });
-    const json = await res.json().catch(() => ({}));
-    setUploading(false);
-    if (!res.ok) {
-      toast.error(json.error ?? 'Upload failed');
-      return;
-    }
-    const found = json.inspection?.formFields?.length ?? 0;
-    toast.success(`Uploaded: ${json.inspection?.pageCount ?? '?'} page(s), ${found} fillable field(s) found.`);
-    router.push(`/documents/${json.document.id}`);
+  function reset() {
+    setSearch('');
+    setStatus('');
+    setFrom('');
+    setTo('');
+    setPage(1);
   }
 
-  async function setArchived(row: DocumentRow, archived: boolean) {
-    const res = await fetch(`/api/documents/${row.id}`, {
+  async function viewPdf(id: string) {
+    const res = await fetch(`/api/e-sign/${id}`);
+    if (!res.ok) {
+      toast.error('Could not fetch document');
+      return;
+    }
+    const json = (await res.json()) as ESignDetail;
+    const b64 = json.signedPdfData;
+    if (!b64) {
+      toast.error('No signed PDF available');
+      return;
+    }
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    window.open(URL.createObjectURL(blob), '_blank');
+  }
+
+  async function voidRequest(id: string) {
+    if (!confirm('Void this signing request?')) return;
+    const res = await fetch(`/api/e-sign/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ archived }),
+      body: JSON.stringify({ action: 'void' }),
     });
-    const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      toast.error(json.error ?? 'Could not update');
+      toast.error('Could not void request');
       return;
     }
-    toast.success(archived ? 'Archived' : 'Restored');
-    load();
+    toast.success('Request voided');
+    load(page);
   }
 
-  async function remove(row: DocumentRow) {
-    const note = row.campaignCount > 0 ? ' It is used by campaigns, so it will be archived instead.' : '';
-    if (!confirm(`Delete "${row.name}"?${note}`)) return;
-    const res = await fetch(`/api/documents/${row.id}`, { method: 'DELETE' });
-    const json = await res.json().catch(() => ({}));
+  async function resendRequest(id: string) {
+    const res = await fetch(`/api/e-sign/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'resend' }),
+    });
     if (!res.ok) {
-      toast.error(json.error ?? 'Could not delete');
+      toast.error('Could not resend request');
       return;
     }
-    toast.success(json.message ?? 'Deleted');
-    load();
+    toast.success('Request resent successfully');
   }
+
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const fmt = (d: string | null) =>
+    d ? new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
 
   return (
-    <div
-      className="relative p-6"
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragging(true);
-      }}
-      onDragLeave={(e) => {
-        if (e.currentTarget === e.target) setDragging(false);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragging(false);
-        const file = e.dataTransfer.files?.[0];
-        if (file) upload(file);
-      }}
-    >
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div className="p-6">
+      <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Documents</h1>
-          <p className="text-sm text-muted-foreground">
-            PDF agreements, letters and forms, personalised for every recipient of a campaign.
-          </p>
+          <p className="text-sm text-muted-foreground">E-signature requests sent to recipients.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
-            Show archived
-          </label>
-          <button onClick={() => inputRef.current?.click()} disabled={uploading} className="btn-primary">
-            {uploading ? 'Uploading…' : 'Upload PDF'}
-          </button>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = '';
-              if (file) upload(file);
-            }}
-          />
+        <div className="flex items-center gap-2">
+          {loading && <span className="text-xs text-muted-foreground">Loading…</span>}
+          <Link href="/documents/new" className="btn-primary">
+            New Request
+          </Link>
         </div>
       </div>
 
-      {dragging && (
-        <div className="pointer-events-none absolute inset-4 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-primary/5 text-sm font-medium text-primary">
-          Drop the PDF to upload it
-        </div>
-      )}
-
-      {loading ? (
-        <div className="text-sm text-muted-foreground">Loading…</div>
-      ) : rows.length === 0 ? (
-        <div className="mx-auto mt-10 max-w-3xl">
-          <div className="grid gap-3 sm:grid-cols-3">
-            {STEPS.map(([title, body], i) => (
-              <div key={title} className="rounded-lg border bg-card p-4">
-                <div className="eyebrow mb-1">Step {i + 1}</div>
-                <div className="mb-1 text-sm font-semibold">{title}</div>
-                <p className="text-xs text-muted-foreground">{body}</p>
-              </div>
-            ))}
+      {/* Filter bar */}
+      <div className="mb-5 rounded-lg border bg-card p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">Search</label>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Title or recipient…"
+              className="!py-1 text-sm w-48"
+            />
           </div>
-          <button
-            onClick={() => inputRef.current?.click()}
-            className="mt-4 w-full rounded-lg border-2 border-dashed p-8 text-sm text-muted-foreground hover:border-primary hover:text-primary"
-          >
-            Drop a PDF here or click to upload (max 4 MB, 50 pages)
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">Status</label>
+            <select
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                setPage(1);
+              }}
+              className="!py-1 text-sm min-w-[140px]"
+            >
+              <option value="">All</option>
+              <option value="SENT">Sent</option>
+              <option value="VIEWED">Viewed</option>
+              <option value="SIGNED">Signed</option>
+              <option value="EXPIRED">Expired</option>
+              <option value="VOIDED">Voided</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">From</label>
+            <input
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => {
+                setFrom(e.target.value);
+                setPage(1);
+              }}
+              className="!py-1 text-sm"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">To</label>
+            <input
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => {
+                setTo(e.target.value);
+                setPage(1);
+              }}
+              className="!py-1 text-sm"
+            />
+          </div>
+          <button onClick={reset} className="btn-secondary !px-3 !py-1 text-xs">
+            Reset
           </button>
         </div>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border bg-card">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2">Document</th>
-                <th className="px-4 py-2">PDF</th>
-                <th className="px-4 py-2">Fields</th>
-                <th className="px-4 py-2">Student can</th>
-                <th className="px-4 py-2">Used in</th>
-                <th className="px-4 py-2">Updated</th>
-                <th className="px-4 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((d) => (
-                <tr key={d.id} className="border-t hover:bg-elevated/60">
-                  <td className="px-4 py-2">
-                    <Link href={`/documents/${d.id}`} className="font-medium text-primary hover:underline">
-                      {d.name}
-                    </Link>
-                    {d.archived && <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px]">ARCHIVED</span>}
-                    <div className="text-xs text-muted-foreground">by {d.owner}</div>
-                  </td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {d.fileName}
-                    <div>
-                      {d.pageCount} page(s) · {Math.max(1, Math.round(d.size / 1024))} KB
-                    </div>
-                  </td>
-                  <td className="px-4 py-2 text-xs">
-                    {d.fieldCount === 0 ? <span className="text-warning">Not mapped yet</span> : `${d.fieldCount} mapped`}
-                    {d.formFieldCount > 0 && <div className="text-muted-foreground">{d.formFieldCount} fillable in PDF</div>}
-                  </td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">{LOCK_MODE_LABELS[d.lockMode].label.split(' — ')[1] ?? d.lockMode}</td>
-                  <td className="px-4 py-2 text-xs">{d.campaignCount} campaign(s)</td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">{new Date(d.updatedAt).toLocaleString('en-IN')}</td>
-                  <td className="px-4 py-2">
-                    <div className="flex gap-3 text-xs">
-                      <button onClick={() => setArchived(d, !d.archived)} className="text-muted-foreground hover:text-foreground">
-                        {d.archived ? 'Restore' : 'Archive'}
-                      </button>
-                      <button onClick={() => remove(d)} className="text-muted-foreground hover:text-primary">
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-2 text-xs text-muted-foreground">
+          {total.toLocaleString()} request{total !== 1 ? 's' : ''}
         </div>
+      </div>
+
+      {/* Table */}
+      {requests.length === 0 && !loading ? (
+        <div className="mt-16 text-center text-sm text-muted-foreground">
+          No documents yet. Send your first signing request.
+        </div>
+      ) : (
+        <>
+          <div className="overflow-x-auto overflow-hidden rounded-lg border bg-card">
+            <table className="w-full min-w-[800px] text-sm">
+              <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2">Title</th>
+                  <th className="px-4 py-2">Recipient</th>
+                  <th className="px-4 py-2">Status</th>
+                  <th className="px-4 py-2 whitespace-nowrap">Sent</th>
+                  <th className="px-4 py-2 whitespace-nowrap">Signed</th>
+                  <th className="px-4 py-2 whitespace-nowrap">Sent by</th>
+                  <th className="px-4 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map((req, i) => (
+                  <tr key={req.id} className={`border-t border-border-subtle ${i % 2 === 1 ? 'bg-muted/30' : ''}`}>
+                    <td className="px-4 py-2 font-medium">{req.title}</td>
+                    <td className="px-4 py-2">
+                      <div className="text-xs font-medium">{req.recipientName}</div>
+                      <div className="text-xs text-muted-foreground">{req.recipientEmail}</div>
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className={`badge ${STATUS_BADGE[req.status]}`}>{req.status}</span>
+                    </td>
+                    <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                      {fmt(req.sentAt)}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                      {fmt(req.signedAt)}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-muted-foreground">
+                      {req.sentBy ? (
+                        <>
+                          <div>{req.sentBy.name}</div>
+                          <div className="text-faint">{req.sentBy.email.split('@')[0]}</div>
+                        </>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        {req.status === 'SIGNED' && (
+                          <button onClick={() => viewPdf(req.id)} className="text-primary hover:underline">
+                            View PDF
+                          </button>
+                        )}
+                        {!['SIGNED', 'VOIDED', 'EXPIRED'].includes(req.status) && (
+                          <button
+                            onClick={() => voidRequest(req.id)}
+                            className="text-muted-foreground hover:text-primary"
+                          >
+                            Void
+                          </button>
+                        )}
+                        {['SENT', 'VIEWED'].includes(req.status) && (
+                          <button
+                            onClick={() => resendRequest(req.id)}
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            Resend
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {totalPages > 1 && (
+            <div className="mt-4 flex items-center justify-between text-sm">
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+                className="btn-secondary !px-3 !py-1 text-xs disabled:opacity-40"
+              >
+                ← Prev
+              </button>
+              <span className="text-muted-foreground">
+                Page {page} of {totalPages} · {total.toLocaleString()} total
+              </span>
+              <button
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+                className="btn-secondary !px-3 !py-1 text-xs disabled:opacity-40"
+              >
+                Next →
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

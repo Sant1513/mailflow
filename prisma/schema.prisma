@@ -90,6 +90,7 @@ model User {
   contactSegments        ContactSegment[]
   scheduledReplies       ScheduledReply[]
   slaRules               SlaRule[]
+  signingRequestsSent    SigningRequest[]        @relation("SigningRequestsSentBy")
 
   @@index([organizationId])
 }
@@ -160,6 +161,7 @@ model Workspace {
   contactSegments       ContactSegment[]
   slaRules              SlaRule[]
   webhookEndpoints      WebhookEndpoint[]
+  signingRequests       SigningRequest[]
 
   @@index([organizationId])
 }
@@ -1200,5 +1202,49 @@ model WebhookDelivery {
   endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
 
   @@index([endpointId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E-SIGNING (PandaDoc-style document signing requests)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SigningRequestStatus {
+  DRAFT
+  SENT
+  VIEWED
+  SIGNED
+  EXPIRED
+  VOIDED
+}
+
+model SigningRequest {
+  id             String               @id @default(cuid())
+  workspaceId    String
+  title          String
+  content        String               @db.Text
+  recipientName  String
+  recipientEmail String
+  fieldValues    Json                 @default("{}")
+  ccEmails       String[]             @default([])
+  token          String               @unique @default(cuid())
+  status         SigningRequestStatus @default(DRAFT)
+  expiresAt      DateTime?
+  sentAt         DateTime?
+  viewedAt       DateTime?
+  signedAt       DateTime?
+  voidedAt       DateTime?
+  signatureImage String?              @db.Text
+  signedPdfData  String?              @db.Text
+  signerIp       String?
+  signerAgent    String?
+  sentById       String
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sentBy    User      @relation("SigningRequestsSentBy", fields: [sentById], references: [id])
+
+  @@index([workspaceId])
+  @@index([token])
 }
 
