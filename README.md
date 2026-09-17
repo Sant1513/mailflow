@@ -126,22 +126,56 @@ become required starting Phase 3 — see `.env.example` and
 ### Inbox & conversations
 - Threaded email inbox with collapsible message bodies
 - Smart reply composer with quoted email trail included in outgoing replies
-- CC/BCC support with full reply chain preserved
+- CC/BCC support with full reply chain preserved; CC autocomplete from org contacts
 - Conversation assignment, tagging, and status (open / snoozed / resolved)
+- **Bulk actions**: select multiple conversations and apply assign/tag/status/snooze in one click
+- **Merge conversations**: consolidate duplicate threads from the conversation view
 - Follow-up due tracking
+- **Conversation export**: download the full thread as PDF or CSV
 - Sync Gmail replies sent outside the tool back into the thread
+- Keyboard shortcuts (J/K to navigate, E to archive, R to reply) with unread badge on tab
 
-### Dashboard
+### Dashboard & performance
 - Real-time metrics: emails sent, reply rate, failed, pending, unread, open conversations, resolution rate, follow-ups due
 - **FRT (First Response Time)** and **ART (Average Response Time)** across all conversations
 - 7 / 30 / 90 day date filter
 - Campaign performance table with open/click rates
 - Per-user FRT/ART breakdown for super admins (Admin → Users → Response Times section)
+- **Team performance dashboard**: per-agent volume, FRT, resolution rate, and reply-rate sparklines
 
 ### Email campaigns
 - Dataset-backed bulk campaigns with Gemini AI personalisation
 - Approval-gated sending: campaigns need admin sign-off before dispatch
 - Campaign approval page with audit trail, requester/reviewer email thread, and inline expand/collapse
+- **Draft configuration**: swap dataset or email template on a draft, with version re-sync to keep subject/body current
+- **Reply scheduling**: schedule individual replies to send at a future time (cron-dispatched)
+- **Campaign analytics dashboard** (per-campaign, for completed/sending campaigns):
+  - Stat tab bar: Overview · Sent · Read · Clicked · Replied · Failed — each showing count and rate
+  - 8 KPI tiles: Audience, Sent, Opens, Clicks, Replies, Bounced, Failed, Skipped
+  - Per-day stacked bar chart for sent / failed / opens / clicks trend
+  - Paginated contact list per tab (50/page)
+
+### Templates
+- Email template editor with variable substitution
+- **Live preview with real contact data**: pick any contact from a dropdown to render the template with their actual field values before sending
+
+### Contacts & segments
+- Contact grid with CSV import and custom fields
+- **Contact segments**: save filter combinations (field conditions) as named segments for reuse in campaigns
+- **Bounce auto-suppress**: contacts that hard-bounce are automatically added to the suppression list with a full audit trail entry
+
+### SLA rules
+- Define first-response and resolution time targets per workspace
+- Rules can apply to all conversations, or scope to a specific tag or assignee
+- Conversations that breach the deadline show an **Overdue** badge in the inbox
+- Daily cron re-evaluates every open conversation and logs breaches
+
+### Outbound webhooks
+- Register HTTPS endpoints to receive real-time events (conversation created/updated/resolved, campaign sent, etc.)
+- Payloads are signed with HMAC-SHA256 (`X-MailFlow-Signature: sha256=<hex>`) using a per-endpoint secret
+- Delivery history with status, HTTP response code, and response body
+- Test-fire button sends a sample payload immediately
+- Manage endpoints at **Settings → Webhooks**
 
 ### Notifications
 - Bell icon in sidebar header with live unread count
@@ -159,6 +193,7 @@ become required starting Phase 3 — see `.env.example` and
 - User management: roles, activation/deactivation
 - View-as: super admins can inspect any workspace without logging out
 - Per-user response-time metrics (FRT/ART) with date filter
+- **Audit logs** with full multi-parameter filtering: date range (with 7d/30d/90d presets), user, workspace, action type (dropdown populated from real event history), and target type free-text; paginated 50/page
 
 ### Optional env vars
 | Variable | Effect |
