@@ -1,10 +1,8 @@
 /**
  * Re-generates signed PDFs for all SIGNED signing requests using the
- * updated pdf.ts logic (improved HTML stripping, no WinAnsi crash).
+ * new HTML-aware renderer (bold, headings, center alignment, italic).
  *
  * Run:  node scripts/regen-signed-pdfs.mjs
- *
- * Requires: DATABASE_URL in .env (loaded via dotenv)
  */
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
@@ -12,197 +10,259 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
 const prisma = new PrismaClient();
 
-// ── Exact copy of lib/documents/pdf.ts helpers ────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
+const PAGE_W = 595, PAGE_H = 842, MARGIN = 55, USABLE_W = PAGE_W - MARGIN * 2;
+const BODY_SZ = 10.5, BODY_LH = 15.5;
 
-function sanitizeForPdf(text) {
-  return text
-    .replace(/₹/g, 'Rs.')
-    .replace(/€/g, 'EUR ')
-    .replace(/£/g, 'GBP ')
-    .replace(/—/g, '--')
-    .replace(/–/g, '-')
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/…/g, '...')
-    .replace(/•/g, '*')
-    .replace(/[^\x00-\xFF]/g, '?');
+// ── WinAnsi sanitiser ─────────────────────────────────────────────────────────
+function san(t) {
+  return String(t)
+    .replace(/₹/g,'Rs.').replace(/€/g,'EUR ').replace(/£/g,'GBP ')
+    .replace(/—/g,'--').replace(/–/g,'-')
+    .replace(/[‘’]/g,"'").replace(/[“”]/g,'"')
+    .replace(/…/g,'...').replace(/•/g,'*')
+    .replace(/[^\x00-\xFF]/g,'?');
 }
 
-function stripHtml(html) {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/h[1-6]>/gi, '\n')
-    .replace(/<\/li>/gi, '\n')
-    .replace(/<li[^>]*>/gi, '* ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+function decodeEntities(t) {
+  return t.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+    .replace(/&nbsp;/g,' ').replace(/&quot;/g,'"').replace(/&#39;/g,"'")
+    .replace(/&#\d+;/g,'');
 }
 
-function wrapLine(line, maxChars) {
-  if (line.length <= maxChars) return [line];
-  const words = line.split(' ');
-  const lines = [];
-  let current = '';
-  for (const word of words) {
-    if ((current + (current ? ' ' : '') + word).length > maxChars) {
-      if (current) lines.push(current);
-      if (word.length > maxChars) {
-        let remaining = word;
-        while (remaining.length > maxChars) {
-          lines.push(remaining.slice(0, maxChars));
-          remaining = remaining.slice(maxChars);
-        }
-        current = remaining;
-      } else {
-        current = word;
+// ── HTML → Block parser ───────────────────────────────────────────────────────
+function parseHtml(html) {
+  html = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi,'')
+             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi,'');
+  const blocks = [];
+  let current = null, boldD = 0, italD = 0, curAlign = 'left', curKind = 'p', curIndent = 0;
+
+  function alignFromAttrs(a) {
+    const m = /text-align\s*:\s*(left|center|right)/i.exec(a);
+    return m ? m[1].toLowerCase() : null;
+  }
+  function ensure() {
+    if (!current) current = { kind: curKind, align: curAlign, indent: curIndent, runs: [] };
+  }
+  function push(text) {
+    if (!text) return;
+    ensure();
+    const bold = boldD > 0, italic = italD > 0;
+    const last = current.runs.at(-1);
+    if (last && last.bold === bold && last.italic === italic) last.text += text;
+    else current.runs.push({ text, bold, italic });
+  }
+  function flush() {
+    if (current?.runs.some(r => r.text.trim())) blocks.push(current);
+    current = null;
+  }
+
+  const re = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:[^>'"]*|'[^']*'|"[^"]*")*)\s*\/?>/g;
+  let cursor = 0, m;
+  while ((m = re.exec(html)) !== null) {
+    if (m.index > cursor) push(decodeEntities(html.slice(cursor, m.index)));
+    cursor = m.index + m[0].length;
+    const closing = m[1] === '/', tag = m[2].toLowerCase(), attrs = m[3] ?? '';
+    if (closing) {
+      switch(tag) {
+        case 'p': case 'div': flush(); curAlign='left'; curKind='p'; break;
+        case 'h1':case 'h2':case 'h3':case 'h4':case 'h5':case 'h6':
+          flush(); curAlign='left'; curKind='p'; break;
+        case 'center': flush(); curAlign='left'; break;
+        case 'li': flush(); curIndent=0; curKind='p'; break;
+        case 'strong':case 'b': boldD=Math.max(0,boldD-1); break;
+        case 'em':case 'i': italD=Math.max(0,italD-1); break;
       }
     } else {
-      current = current ? current + ' ' + word : word;
+      const ta = alignFromAttrs(attrs);
+      switch(tag) {
+        case 'br': push('\n'); break;
+        case 'hr': flush(); blocks.push({kind:'hr',align:'left',indent:0,runs:[]}); break;
+        case 'p': flush(); curAlign=ta??'left'; curKind='p'; break;
+        case 'div': flush(); curAlign=ta??curAlign; curKind='p'; break;
+        case 'h1':case 'h2':case 'h3':case 'h4':case 'h5':case 'h6':
+          flush(); curKind=tag; curAlign=ta??'left'; break;
+        case 'center': flush(); curAlign='center'; curKind='p'; break;
+        case 'li': flush(); curKind='li'; curIndent=16; push('• '); break;
+        case 'strong':case 'b': boldD++; break;
+        case 'em':case 'i': italD++; break;
+      }
     }
   }
-  if (current) lines.push(current);
+  if (cursor < html.length) push(decodeEntities(html.slice(cursor)));
+  flush();
+  return blocks;
+}
+
+// ── Block metrics ─────────────────────────────────────────────────────────────
+function bSz(k) { return k==='h1'?15:k==='h2'?13:k==='h3'?12:k==='h4'?11.5:BODY_SZ; }
+function bLh(k) { return k==='h1'?22:k==='h2'?19:k==='h3'?18:k==='h4'?17:BODY_LH; }
+function bBefore(k) { return k==='h1'?10:k==='h2'?8:(k==='h3'||k==='h4')?6:3; }
+function bAfter(k) { return k==='h1'?5:k==='h2'?4:1; }
+function isH(k) { return ['h1','h2','h3','h4','h5','h6'].includes(k); }
+
+// ── Line wrapping ─────────────────────────────────────────────────────────────
+function pickFont(fonts, bold, italic) {
+  return bold&&italic?fonts.bi:bold?fonts.b:italic?fonts.i:fonts.r;
+}
+
+function wrapBlock(block, fonts) {
+  const sz = bSz(block.kind), forceB = isH(block.kind), maxW = USABLE_W - block.indent;
+  const tokens = [];
+  for (const run of block.runs) {
+    const bold = run.bold || forceB, italic = run.italic;
+    const parts = run.text.split('\n');
+    for (let pi = 0; pi < parts.length; pi++) {
+      if (pi > 0) tokens.push({ word:'', bold, italic, br:true });
+      for (const w of (parts[pi].match(/\S+\s*|\s+/g)??[]))
+        tokens.push({ word:w, bold, italic, br:false });
+    }
+  }
+  const lines = []; let cur = [], curW = 0;
+  function flush() {
+    if (!cur.length) return;
+    const last = cur[cur.length-1]; last.text = last.text.trimEnd();
+    if (cur.some(s => s.text)) lines.push([...cur]);
+    cur=[]; curW=0;
+  }
+  for (const tok of tokens) {
+    if (tok.br) { flush(); continue; }
+    const sw = san(tok.word), f = pickFont(fonts, tok.bold, tok.italic);
+    const w = f.widthOfTextAtSize(sw, sz);
+    if (cur.length === 0 && !sw.trim()) continue;
+    if (curW+w > maxW && cur.length > 0) flush();
+    const last = cur[cur.length-1];
+    if (last && last.bold===tok.bold && last.italic===tok.italic) last.text+=tok.word;
+    else cur.push({text:tok.word, bold:tok.bold, italic:tok.italic});
+    curW += w;
+  }
+  flush();
   return lines;
 }
 
-function wrapText(text, maxChars) {
-  const paragraphs = text.split(/\n{2,}/);
-  const result = [];
-  for (let pi = 0; pi < paragraphs.length; pi++) {
-    const rawLines = paragraphs[pi].split('\n');
-    for (const rawLine of rawLines) {
-      result.push(...wrapLine(rawLine.trim(), maxChars));
+// ── Renderer ──────────────────────────────────────────────────────────────────
+function newPage(s) { s.page = s.doc.addPage([PAGE_W,PAGE_H]); s.y = PAGE_H-MARGIN; }
+function space(s, n) { if (s.y-n < MARGIN) newPage(s); }
+
+function drawBlock(s, block) {
+  if (block.kind === 'hr') {
+    space(s,20); s.y-=10;
+    s.page.drawLine({start:{x:MARGIN,y:s.y},end:{x:PAGE_W-MARGIN,y:s.y},thickness:0.5,color:rgb(0.7,0.7,0.7)});
+    s.y-=10; return;
+  }
+  const sz = bSz(block.kind), lh = bLh(block.kind);
+  const lines = wrapBlock(block, s.fonts);
+  if (!lines.length) return;
+  s.y -= bBefore(block.kind);
+  for (const line of lines) {
+    space(s, lh);
+    let lw = 0;
+    for (const seg of line) lw += pickFont(s.fonts,seg.bold,seg.italic).widthOfTextAtSize(san(seg.text),sz);
+    let x = block.align==='center'?(PAGE_W-lw)/2:block.align==='right'?PAGE_W-MARGIN-lw:MARGIN+block.indent;
+    s.y -= sz;
+    for (const seg of line) {
+      const st = san(seg.text);
+      if (!st) continue;
+      const f = pickFont(s.fonts,seg.bold,seg.italic);
+      s.page.drawText(st,{x,y:s.y,size:sz,font:f,color:rgb(0.08,0.08,0.08)});
+      x += f.widthOfTextAtSize(st,sz);
     }
-    if (pi < paragraphs.length - 1) result.push('');
+    s.y -= lh-sz;
   }
-  return result;
+  s.y -= bAfter(block.kind);
 }
 
-const PAGE_WIDTH = 595, PAGE_HEIGHT = 842, MARGIN = 50;
-const BODY_SIZE = 11, HEADING_SIZE = 16;
-const LINE_HEIGHT_BODY = 16, LINE_HEIGHT_HEADING = 24;
-const USABLE_WIDTH = PAGE_WIDTH - MARGIN * 2;
-const MAX_CHARS = 90;
-
-function newPage(state) {
-  state.page = state.doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  state.y = PAGE_HEIGHT - MARGIN;
-}
-function ensureSpace(state, needed) {
-  if (state.y - needed < MARGIN) newPage(state);
-}
-function drawHeading(state, text) {
-  text = sanitizeForPdf(text);
-  ensureSpace(state, LINE_HEIGHT_HEADING + 8);
-  state.y -= 8;
-  state.page.drawText(text, { x: MARGIN, y: state.y - HEADING_SIZE, size: HEADING_SIZE, font: state.boldFont, color: rgb(0.1, 0.1, 0.1) });
-  state.y -= LINE_HEIGHT_HEADING;
-}
-function drawBody(state, text) {
-  text = sanitizeForPdf(text);
-  for (const line of wrapText(text, MAX_CHARS)) {
-    ensureSpace(state, LINE_HEIGHT_BODY);
-    if (line.trim()) {
-      state.page.drawText(line, { x: MARGIN, y: state.y - BODY_SIZE, size: BODY_SIZE, font: state.font, color: rgb(0.15, 0.15, 0.15) });
-    }
-    state.y -= LINE_HEIGHT_BODY;
-  }
-}
-function drawLabelValue(state, label, value) {
-  const fullLine = sanitizeForPdf(`${label}: ${value}`);
-  for (const line of wrapLine(fullLine, MAX_CHARS)) {
-    ensureSpace(state, LINE_HEIGHT_BODY);
-    state.page.drawText(line, { x: MARGIN, y: state.y - BODY_SIZE, size: BODY_SIZE, font: state.font, color: rgb(0.2, 0.2, 0.2) });
-    state.y -= LINE_HEIGHT_BODY;
-  }
-}
-function drawDivider(state) {
-  ensureSpace(state, 16);
-  state.y -= 8;
-  state.page.drawLine({ start: { x: MARGIN, y: state.y }, end: { x: PAGE_WIDTH - MARGIN, y: state.y }, thickness: 0.5, color: rgb(0.7, 0.7, 0.7) });
-  state.y -= 8;
+function bk(kind, text, {bold=false,italic=false,align='left',indent=0}={}) {
+  return {kind,align,indent,runs:[{text,bold,italic}]};
 }
 
+// ── PDF generation ────────────────────────────────────────────────────────────
 async function generateSignedPdf(input) {
   const doc = await PDFDocument.create();
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
-  const state = { doc, font, boldFont, page: doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]), y: PAGE_HEIGHT - MARGIN };
+  const fonts = {
+    r: await doc.embedFont(StandardFonts.Helvetica),
+    b: await doc.embedFont(StandardFonts.HelveticaBold),
+    i: await doc.embedFont(StandardFonts.HelveticaOblique),
+    bi: await doc.embedFont(StandardFonts.HelveticaBoldOblique),
+  };
+  const s = { doc, fonts, page: doc.addPage([PAGE_W,PAGE_H]), y: PAGE_H-MARGIN };
 
-  drawHeading(state, input.title);
-  drawDivider(state);
+  // Header
+  drawBlock(s, bk('h1', san(input.title), {bold:true}));
+  drawBlock(s, {kind:'hr',align:'left',indent:0,runs:[]});
   const signedDateStr = input.signedAt.toUTCString();
-  drawBody(state, `This document was signed by ${input.recipientName} <${input.recipientEmail}> on ${signedDateStr}.`);
-  state.y -= 8;
-  drawDivider(state);
-  state.y -= 8;
+  drawBlock(s, {kind:'p',align:'left',indent:0,runs:[
+    {text:'Signed by: ',bold:true,italic:false},
+    {text:`${input.recipientName} <${input.recipientEmail}>`,bold:false,italic:false},
+  ]});
+  drawBlock(s, {kind:'p',align:'left',indent:0,runs:[
+    {text:'Signed on: ',bold:true,italic:false},
+    {text:signedDateStr,bold:false,italic:false},
+  ]});
+  drawBlock(s, {kind:'hr',align:'left',indent:0,runs:[]});
 
-  let processedContent = input.content;
+  // Document content
+  let content = input.content;
   for (const [key, value] of Object.entries(input.fieldValues)) {
-    processedContent = processedContent.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
+    content = content.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
   }
-  const plainContent = stripHtml(processedContent);
-  if (plainContent) drawBody(state, plainContent);
+  content = content.replace(/\{\{\w+\}\}/g, '');
+  for (const block of parseHtml(content)) drawBlock(s, block);
 
-  newPage(state);
-  drawHeading(state, 'Certificate of Completion');
-  drawDivider(state);
-  drawLabelValue(state, 'Document', input.title);
-  drawLabelValue(state, 'Signer name', input.recipientName);
-  drawLabelValue(state, 'Signer email', input.recipientEmail);
-  drawLabelValue(state, 'Signed at', signedDateStr);
-  drawLabelValue(state, 'IP address', input.signerIp);
+  // Certificate page
+  newPage(s);
+  drawBlock(s, bk('h2','Certificate of Completion',{bold:true}));
+  drawBlock(s, {kind:'hr',align:'left',indent:0,runs:[]});
+  for (const [label, value] of [
+    ['Document', input.title],
+    ['Signer name', input.recipientName],
+    ['Signer email', input.recipientEmail],
+    ['Signed at', signedDateStr],
+    ['IP address', input.signerIp],
+  ]) {
+    drawBlock(s, {kind:'p',align:'left',indent:0,runs:[
+      {text:`${label}: `,bold:true,italic:false},
+      {text:san(value),bold:false,italic:false},
+    ]});
+  }
 
   if (Object.keys(input.fieldValues).length > 0) {
-    state.y -= 8;
-    ensureSpace(state, LINE_HEIGHT_BODY);
-    state.page.drawText('Field values:', { x: MARGIN, y: state.y - BODY_SIZE, size: BODY_SIZE, font: boldFont, color: rgb(0.1, 0.1, 0.1) });
-    state.y -= LINE_HEIGHT_BODY;
-    for (const [key, value] of Object.entries(input.fieldValues)) {
-      drawLabelValue(state, `  ${key}`, String(value));
+    s.y -= 6;
+    drawBlock(s, bk('p','Field values:',{bold:true}));
+    for (const [k,v] of Object.entries(input.fieldValues)) {
+      drawBlock(s, {kind:'p',align:'left',indent:16,runs:[
+        {text:`${k}: `,bold:true,italic:false},
+        {text:san(String(v)),bold:false,italic:false},
+      ]});
     }
   }
 
-  // Embed signature image
+  // Signature
   const rawBase64 = input.signatureImage.startsWith('data:')
     ? input.signatureImage.replace(/^data:image\/png;base64,/, '')
     : input.signatureImage;
-
   try {
     const pngBytes = Buffer.from(rawBase64, 'base64');
     const pngImage = await doc.embedPng(pngBytes);
-    const maxW = USABLE_WIDTH, maxH = 120;
     const { width: iw, height: ih } = pngImage.scale(1);
-    const scale = Math.min(maxW / iw, maxH / ih, 1);
-    const drawW = iw * scale, drawH = ih * scale;
-    ensureSpace(state, drawH + 40);
-    state.y -= 16;
-    state.page.drawText('Signature:', { x: MARGIN, y: state.y - BODY_SIZE, size: BODY_SIZE, font: boldFont, color: rgb(0.1, 0.1, 0.1) });
-    state.y -= LINE_HEIGHT_BODY + 4;
-    state.page.drawImage(pngImage, { x: MARGIN, y: state.y - drawH, width: drawW, height: drawH });
-    state.y -= drawH + 12;
+    const scale = Math.min(USABLE_W/iw, 100/ih, 1);
+    const drawW = iw*scale, drawH = ih*scale;
+    space(s, drawH+50); s.y -= 14;
+    drawBlock(s, bk('p','Signature:',{bold:true}));
+    s.y -= 4;
+    s.page.drawImage(pngImage,{x:MARGIN,y:s.y-drawH,width:drawW,height:drawH});
+    s.y -= drawH+14;
   } catch {
-    drawBody(state, '[Signature image could not be embedded]');
+    drawBlock(s, bk('p','[Signature image could not be embedded]',{italic:true}));
   }
 
-  drawDivider(state);
-  drawBody(state, 'This certificate was generated automatically by MailFlow and serves as an audit record of the signing event.');
+  drawBlock(s, {kind:'hr',align:'left',indent:0,runs:[]});
+  drawBlock(s, bk('p','This certificate was generated automatically by MailFlow and serves as an audit record of the signing event.'));
 
   return Buffer.from(await doc.save());
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────
-
+// ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
   const signed = await prisma.signingRequest.findMany({
     where: { status: 'SIGNED', signatureImage: { not: null } },
@@ -213,7 +273,6 @@ async function main() {
       signedAt: true, signerIp: true,
     },
   });
-
   console.log(`Found ${signed.length} signed request(s) to regenerate.`);
 
   for (const req of signed) {
@@ -223,17 +282,15 @@ async function main() {
         content: req.content,
         recipientName: req.recipientName,
         recipientEmail: req.recipientEmail,
-        fieldValues: (req.fieldValues ?? {}),
+        fieldValues: req.fieldValues ?? {},
         signatureImage: req.signatureImage,
         signedAt: req.signedAt ?? new Date(),
         signerIp: req.signerIp ?? 'unknown',
       });
-
       await prisma.signingRequest.update({
         where: { id: req.id },
         data: { signedPdfData: pdfBuffer.toString('base64') },
       });
-
       console.log(`  ✓  ${req.id}  "${req.title}" — ${req.recipientName}`);
     } catch (err) {
       console.error(`  ✗  ${req.id}  "${req.title}":`, err.message);
