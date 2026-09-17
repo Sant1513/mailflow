@@ -17,6 +17,31 @@ interface PublicDocument {
 
 type DrawMode = 'draw' | 'type';
 
+function extractVariableNames(content: string): string[] {
+  const matches = [...content.matchAll(/\{\{(\w+)\}\}/g)];
+  return [...new Set(matches.map((m) => m[1] ?? ''))];
+}
+
+function formatLabel(key: string): string {
+  return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function substituteVars(content: string, values: Record<string, string>): string {
+  let result = content;
+  for (const [key, value] of Object.entries(values)) {
+    const display = value.trim()
+      ? `<mark style="background:#fef3c7;border-radius:2px;padding:0 2px;font-weight:600">${value}</mark>`
+      : `<span style="background:#fee2e2;border-radius:2px;padding:0 2px;color:#991b1b">{{${key}}}</span>`;
+    result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), display);
+  }
+  // Highlight any remaining unfilled placeholders
+  result = result.replace(
+    /\{\{(\w+)\}\}/g,
+    '<span style="background:#fee2e2;border-radius:2px;padding:0 2px;color:#991b1b">{{$1}}</span>'
+  );
+  return result;
+}
+
 export default function SigningPage() {
   const params = useParams<{ token: string }>();
   const router = useRouter();
@@ -30,6 +55,7 @@ export default function SigningPage() {
   const [typedName, setTypedName] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [hasDrawing, setHasDrawing] = useState(false);
+  const [localFieldValues, setLocalFieldValues] = useState<Record<string, string>>({});
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const typeCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -57,18 +83,22 @@ export default function SigningPage() {
         const json = (await res.json()) as PublicDocument;
         setDoc(json);
         setTypedName(json.recipientName);
+        // Pre-populate from admin-set field values
+        setLocalFieldValues(json.fieldValues ?? {});
       })
       .catch(() => {
         setLoadError('Could not load the document. Please try again.');
       });
   }, [params.token]);
 
-  // ── Canvas helpers ────────────────────────────────────────────────────────
+  // ── Canvas helpers (coordinates scaled to canvas intrinsic size) ──────────
   const getPos = (canvas: HTMLCanvasElement, e: MouseEvent | Touch): { x: number; y: number } => {
     const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
     return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
     };
   };
 
@@ -114,7 +144,6 @@ export default function SigningPage() {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // White background
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.fillStyle = '#ffffff';
@@ -165,14 +194,13 @@ export default function SigningPage() {
   }
 
   function getSignatureImage(): string {
-    if (mode === 'draw') {
-      return canvasRef.current?.toDataURL() ?? '';
-    }
+    if (mode === 'draw') return canvasRef.current?.toDataURL() ?? '';
     return typeCanvasRef.current?.toDataURL() ?? '';
   }
 
-  const canSubmit =
-    agreed && (mode === 'draw' ? hasDrawing : typedName.trim().length > 0);
+  const fieldNames = doc ? extractVariableNames(doc.content) : [];
+  const allFieldsFilled = fieldNames.every((name) => (localFieldValues[name] ?? '').trim().length > 0);
+  const canSubmit = agreed && allFieldsFilled && (mode === 'draw' ? hasDrawing : typedName.trim().length > 0);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -185,6 +213,7 @@ export default function SigningPage() {
       body: JSON.stringify({
         signatureImage: getSignatureImage(),
         signerName: doc.recipientName,
+        fieldValues: localFieldValues,
       }),
     });
     setSubmitting(false);
@@ -239,7 +268,9 @@ export default function SigningPage() {
         <div className="max-w-md text-center">
           <div className="mb-4 text-4xl">⏱️</div>
           <h1 className="mb-2 text-xl font-semibold text-gray-900">
-            {doc.status === 'EXPIRED' ? 'This signing link has expired' : 'This request has been voided'}
+            {doc.status === 'EXPIRED'
+              ? 'This signing link has expired'
+              : 'This request has been voided'}
           </h1>
           <p className="text-sm text-gray-500">
             Please contact the sender to request a new signing link.
@@ -249,11 +280,13 @@ export default function SigningPage() {
     );
   }
 
+  const previewContent = substituteVars(doc.content, localFieldValues);
+
   return (
-    <div className="min-h-screen bg-gray-50 py-10 px-4">
+    <div className="min-h-screen bg-gray-50 py-8 px-4">
       <div className="mx-auto max-w-3xl">
         {/* Header */}
-        <div className="mb-8 text-center">
+        <div className="mb-6 text-center">
           <div className="mb-1 text-2xl font-bold tracking-tight text-gray-900">
             masai<span className="text-red-500">.</span>MailFlow
           </div>
@@ -262,36 +295,67 @@ export default function SigningPage() {
 
         <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
           {/* Document title */}
-          <div className="border-b border-gray-100 px-8 py-6">
+          <div className="border-b border-gray-100 px-6 py-5 sm:px-8">
             <h1 className="text-xl font-semibold text-gray-900">{doc.title}</h1>
             <p className="mt-1 text-sm text-gray-500">
               Hi <strong>{doc.recipientName}</strong>, please review and sign this document.
             </p>
           </div>
 
-          {/* Document content */}
-          <div className="px-8 py-6">
-            <div className="eyebrow mb-2 text-xs uppercase tracking-wider text-gray-400">Document</div>
+          {/* Document content with live variable substitution */}
+          <div className="px-6 py-5 sm:px-8">
+            <div className="mb-2 text-xs uppercase tracking-wider text-gray-400">Document</div>
             <div
-              className="max-h-96 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 p-5 text-sm leading-relaxed text-gray-800"
-              dangerouslySetInnerHTML={{ __html: doc.content }}
+              className="max-h-96 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 p-4 sm:p-5 text-sm leading-relaxed text-gray-800"
+              dangerouslySetInnerHTML={{ __html: previewContent }}
             />
           </div>
 
+          {/* Fillable fields (student fills before signing) */}
+          {fieldNames.length > 0 && (
+            <div className="border-t border-gray-100 px-6 py-5 sm:px-8">
+              <div className="mb-2 text-xs uppercase tracking-wider text-gray-400">Required Information</div>
+              <p className="mb-4 text-xs text-gray-500">
+                Fill in all fields below — they will be included in the signed document.
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {fieldNames.map((name) => (
+                  <div key={name}>
+                    <label className="mb-1 block text-xs font-medium text-gray-700">
+                      {formatLabel(name)} <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={localFieldValues[name] ?? ''}
+                      onChange={(e) =>
+                        setLocalFieldValues((prev) => ({ ...prev, [name]: e.target.value }))
+                      }
+                      placeholder={`Enter ${formatLabel(name).toLowerCase()}`}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400 focus:ring-1 focus:ring-gray-300"
+                    />
+                  </div>
+                ))}
+              </div>
+              {!allFieldsFilled && (
+                <p className="mt-3 text-xs text-amber-600">
+                  Please fill in all required fields to enable signing.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Signature section */}
           <form onSubmit={handleSubmit}>
-            <div className="border-t border-gray-100 px-8 py-6">
-              <div className="eyebrow mb-4 text-xs uppercase tracking-wider text-gray-400">Your Signature</div>
+            <div className="border-t border-gray-100 px-6 py-5 sm:px-8">
+              <div className="mb-4 text-xs uppercase tracking-wider text-gray-400">Your Signature</div>
 
               {/* Mode tabs */}
-              <div className="mb-4 flex overflow-hidden rounded-lg border border-gray-200 w-fit">
+              <div className="mb-4 flex w-fit overflow-hidden rounded-lg border border-gray-200">
                 <button
                   type="button"
                   onClick={() => setMode('draw')}
                   className={`px-5 py-2 text-sm font-medium transition ${
-                    mode === 'draw'
-                      ? 'bg-gray-900 text-white'
-                      : 'bg-white text-gray-600 hover:bg-gray-50'
+                    mode === 'draw' ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
                   }`}
                 >
                   Draw
@@ -299,10 +363,8 @@ export default function SigningPage() {
                 <button
                   type="button"
                   onClick={() => setMode('type')}
-                  className={`px-5 py-2 text-sm font-medium transition border-l border-gray-200 ${
-                    mode === 'type'
-                      ? 'bg-gray-900 text-white'
-                      : 'bg-white text-gray-600 hover:bg-gray-50'
+                  className={`border-l border-gray-200 px-5 py-2 text-sm font-medium transition ${
+                    mode === 'type' ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
                   }`}
                 >
                   Type
@@ -313,19 +375,21 @@ export default function SigningPage() {
               {mode === 'draw' && (
                 <div>
                   <div className="mb-2 overflow-hidden rounded-lg border border-gray-200">
+                    {/* canvas width=560 is the drawing buffer; CSS width=100% scales display.
+                        getPos() scales mouse coords back to buffer space. */}
                     <canvas
                       ref={canvasRef}
                       width={560}
                       height={150}
-                      className="block w-full touch-none cursor-crosshair bg-white"
-                      style={{ maxWidth: '100%', height: 150 }}
+                      className="block w-full cursor-crosshair bg-white"
+                      style={{ touchAction: 'none', height: '150px' }}
                     />
                   </div>
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
                       onClick={clearCanvas}
-                      className="text-xs text-gray-500 hover:text-gray-800 underline"
+                      className="text-xs text-gray-500 underline hover:text-gray-800"
                     >
                       Clear
                     </button>
@@ -352,11 +416,11 @@ export default function SigningPage() {
                       width={560}
                       height={90}
                       className="block w-full"
-                      style={{ maxWidth: '100%', height: 90 }}
+                      style={{ height: '90px' }}
                     />
                   </div>
                   <p className="mt-1 text-xs text-gray-400">
-                    Preview of how your typed signature will appear
+                    Preview of your typed signature
                   </p>
                 </div>
               )}

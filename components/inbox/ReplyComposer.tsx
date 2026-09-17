@@ -40,6 +40,13 @@ export interface ComposerAttachment {
   size: number;
 }
 
+interface SignedDocSummary {
+  id: string;
+  title: string;
+  signedAt: string;
+  recipientName: string;
+}
+
 export interface ComposerPayload {
   html: string;
   plainText: string;
@@ -97,6 +104,10 @@ export function ReplyComposer({
   const [cc, setCc] = useState('');
   const [newThread, setNewThread] = useState(false);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [showDocPanel, setShowDocPanel] = useState(false);
+  const [docTab, setDocTab] = useState<'current' | 'old'>('current');
+  const [signedDocs, setSignedDocs] = useState<SignedDocSummary[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [previewWidth, setPreviewWidth] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
@@ -278,6 +289,58 @@ export function ReplyComposer({
   function insertSnippet(s: Snippet) {
     insertHtml(s.rendered ?? s.html);
     if (s.missing.length) toast.warning(`Fill in: ${s.missing.map((m) => `{{${m}}}`).join(', ')}`);
+  }
+
+  async function loadSignedDocs() {
+    setDocsLoading(true);
+    try {
+      const res = await fetch(
+        `/api/e-sign?search=${encodeURIComponent(recipientEmail)}&status=SIGNED`
+      );
+      if (res.ok) {
+        const json = await res.json();
+        setSignedDocs(json.requests ?? []);
+      }
+    } finally {
+      setDocsLoading(false);
+    }
+  }
+
+  async function attachSignedDoc(id: string, title: string) {
+    const res = await fetch(`/api/e-sign/${id}`);
+    if (!res.ok) {
+      toast.error('Could not load document');
+      return;
+    }
+    const json = await res.json();
+    const b64: string | null = json.request?.signedPdfData ?? null;
+    if (!b64) {
+      toast.error('No signed PDF available for this document');
+      return;
+    }
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const size = bytes.length;
+    const filename = `${title.replace(/\s+/g, '_')}_signed.pdf`;
+    const next = [...attachments, { filename, mimeType: 'application/pdf', base64: b64, size }];
+    if (next.reduce((n, a) => n + a.size, 0) > MAX_TOTAL) {
+      toast.error(
+        `The signed PDF (${(size / 1048576).toFixed(1)} MB) would exceed the 4 MB limit.`
+      );
+      return;
+    }
+    setAttachments(next);
+    toast.success(`${title} attached`);
+    setShowDocPanel(false);
+  }
+
+  function toggleDocPanel(tab: 'current' | 'old') {
+    if (showDocPanel && docTab === tab) {
+      setShowDocPanel(false);
+      return;
+    }
+    setDocTab(tab);
+    setShowDocPanel(true);
+    if (tab === 'current') loadSignedDocs();
   }
 
   async function addFiles(list: FileList | null) {
@@ -469,6 +532,22 @@ export function ReplyComposer({
           📎 Attach
           <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
         </label>
+        <button
+          type="button"
+          title="Attach a signed document (Current Document)"
+          onClick={() => toggleDocPanel('current')}
+          className={`btn-secondary !px-2 !py-0.5 text-[11px] normal-case tracking-normal ${showDocPanel && docTab === 'current' ? 'bg-primary/10 text-primary border-primary/30' : ''}`}
+        >
+          📄 Current Document
+        </button>
+        <button
+          type="button"
+          title="Upload a document from before e-sign (Old Document)"
+          onClick={() => toggleDocPanel('old')}
+          className={`btn-secondary !px-2 !py-0.5 text-[11px] normal-case tracking-normal ${showDocPanel && docTab === 'old' ? 'bg-primary/10 text-primary border-primary/30' : ''}`}
+        >
+          📁 Old Document
+        </button>
         <span className="ml-auto">
           <ReplyAssistant conversationId={conversationId} onInsert={insertText} />
         </span>
@@ -510,6 +589,83 @@ export function ReplyComposer({
           </div>
         )}
       </div>
+
+      {/* Document attachment panel — Current Document (e-sign) or Old Document (file upload) */}
+      {showDocPanel && (
+        <div className="border-t border-border-subtle px-3 py-3">
+          <div className="mb-2 flex items-center gap-1 overflow-hidden rounded-md border border-border w-fit">
+            <button
+              type="button"
+              onClick={() => { setDocTab('current'); loadSignedDocs(); }}
+              className={`px-3 py-1 text-[11px] font-medium transition ${docTab === 'current' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-elevated'}`}
+            >
+              Current Document
+            </button>
+            <button
+              type="button"
+              onClick={() => setDocTab('old')}
+              className={`border-l border-border px-3 py-1 text-[11px] font-medium transition ${docTab === 'old' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-elevated'}`}
+            >
+              Old Document
+            </button>
+          </div>
+
+          {docTab === 'current' && (
+            <div>
+              <p className="mb-2 text-[11px] text-muted-foreground">
+                Signed documents from the e-sign system for <strong>{recipientEmail}</strong>
+              </p>
+              {docsLoading ? (
+                <p className="text-[11px] text-muted-foreground">Loading…</p>
+              ) : signedDocs.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  No signed documents found for this recipient.{' '}
+                  <a href="/documents" className="text-primary underline">View all documents →</a>
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {signedDocs.map((doc) => (
+                    <li key={doc.id} className="flex items-center justify-between rounded border border-border bg-card px-2 py-1.5">
+                      <div className="min-w-0 text-[11px]">
+                        <div className="font-medium truncate">{doc.title}</div>
+                        <div className="text-faint">
+                          Signed by {doc.recipientName} ·{' '}
+                          {new Date(doc.signedAt).toLocaleDateString('en-IN')}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => attachSignedDoc(doc.id, doc.title)}
+                        className="ml-2 shrink-0 rounded border border-border px-2 py-0.5 text-[11px] hover:bg-elevated hover:text-primary"
+                      >
+                        Attach
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {docTab === 'old' && (
+            <div>
+              <p className="mb-2 text-[11px] text-muted-foreground">
+                Upload a document from your computer (PDF, Word, image). This is the pre-e-sign attachment method.
+              </p>
+              <label className="btn-secondary !px-3 !py-1 text-[11px] normal-case tracking-normal cursor-pointer">
+                📎 Choose File
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                  onChange={(e) => { addFiles(e.target.files); setShowDocPanel(false); }}
+                />
+              </label>
+            </div>
+          )}
+        </div>
+      )}
 
       {attachments.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2 text-[11px]">

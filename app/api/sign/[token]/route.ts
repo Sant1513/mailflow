@@ -54,6 +54,7 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
 const submitSchema = z.object({
   signatureImage: z.string().min(1),
   signerName: z.string().min(1).max(200),
+  fieldValues: z.record(z.string()).optional(),
 });
 
 /**
@@ -88,19 +89,25 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
 
   const body = submitSchema.parse(await req.json());
 
+  // Merge admin pre-fills with student-submitted values (student values win)
+  const mergedFieldValues: Record<string, string> = {
+    ...((request.fieldValues as Record<string, string>) ?? {}),
+    ...(body.fieldValues ?? {}),
+  };
+
   const signerIp =
     req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
     req.headers.get('x-real-ip') ??
     'unknown';
   const signerAgent = req.headers.get('user-agent') ?? 'unknown';
 
-  // Generate signed PDF
+  // Generate signed PDF with merged field values
   const pdfBuffer = await generateSignedPdf({
     title: request.title,
     content: request.content,
     recipientName: request.recipientName,
     recipientEmail: request.recipientEmail,
-    fieldValues: (request.fieldValues as Record<string, string>) ?? {},
+    fieldValues: mergedFieldValues,
     signatureImage: body.signatureImage,
     signedAt: now,
     signerIp,
@@ -116,6 +123,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
       signedAt: now,
       signatureImage: body.signatureImage,
       signedPdfData: signedPdfBase64,
+      fieldValues: mergedFieldValues,
       signerIp,
       signerAgent,
     },

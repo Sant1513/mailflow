@@ -46,6 +46,7 @@ export default function ESignDocumentsPage() {
   const [status, setStatus] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const load = useCallback(
     async (pg: number) => {
@@ -75,6 +76,46 @@ export default function ESignDocumentsPage() {
     setFrom('');
     setTo('');
     setPage(1);
+    setSelectedIds([]);
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds((prev) => (prev.length === requests.length ? [] : requests.map((r) => r.id)));
+  }
+
+  async function bulkVoid() {
+    if (!confirm(`Void ${selectedIds.length} selected request${selectedIds.length > 1 ? 's' : ''}?`)) return;
+    await Promise.allSettled(
+      selectedIds.map((id) =>
+        fetch(`/api/e-sign/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'void' }),
+        })
+      )
+    );
+    toast.success(`Voided ${selectedIds.length} request${selectedIds.length > 1 ? 's' : ''}`);
+    setSelectedIds([]);
+    load(page);
+  }
+
+  async function bulkResend() {
+    if (!confirm(`Resend ${selectedIds.length} selected request${selectedIds.length > 1 ? 's' : ''}?`)) return;
+    await Promise.allSettled(
+      selectedIds.map((id) =>
+        fetch(`/api/e-sign/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'resend' }),
+        })
+      )
+    );
+    toast.success(`Resent ${selectedIds.length} request${selectedIds.length > 1 ? 's' : ''}`);
+    setSelectedIds([]);
   }
 
   async function viewPdf(id: string) {
@@ -83,8 +124,8 @@ export default function ESignDocumentsPage() {
       toast.error('Could not fetch document');
       return;
     }
-    const json = (await res.json()) as ESignDetail;
-    const b64 = json.signedPdfData;
+    const json = (await res.json()) as { request: ESignDetail };
+    const b64 = json.request?.signedPdfData;
     if (!b64) {
       toast.error('No signed PDF available');
       return;
@@ -210,6 +251,27 @@ export default function ESignDocumentsPage() {
         </div>
       </div>
 
+      {/* Bulk action toolbar */}
+      {selectedIds.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-4 py-2">
+          <span className="text-sm font-medium text-blue-900">
+            {selectedIds.length} selected
+          </span>
+          <button onClick={bulkVoid} className="btn-secondary !px-3 !py-1 text-xs">
+            Void Selected
+          </button>
+          <button onClick={bulkResend} className="btn-secondary !px-3 !py-1 text-xs">
+            Resend Selected
+          </button>
+          <button
+            onClick={() => setSelectedIds([])}
+            className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       {requests.length === 0 && !loading ? (
         <div className="mt-16 text-center text-sm text-muted-foreground">
@@ -221,6 +283,15 @@ export default function ESignDocumentsPage() {
             <table className="w-full min-w-[800px] text-sm">
               <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
                 <tr>
+                  <th className="w-8 px-4 py-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.length === requests.length && requests.length > 0}
+                      onChange={toggleSelectAll}
+                      className="h-4 w-4 accent-gray-900"
+                      aria-label="Select all"
+                    />
+                  </th>
                   <th className="px-4 py-2">Title</th>
                   <th className="px-4 py-2">Recipient</th>
                   <th className="px-4 py-2">Status</th>
@@ -233,6 +304,15 @@ export default function ESignDocumentsPage() {
               <tbody>
                 {requests.map((req, i) => (
                   <tr key={req.id} className={`border-t border-border-subtle ${i % 2 === 1 ? 'bg-muted/30' : ''}`}>
+                    <td className="w-8 px-4 py-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(req.id)}
+                        onChange={() => toggleSelect(req.id)}
+                        className="h-4 w-4 accent-gray-900"
+                        aria-label="Select row"
+                      />
+                    </td>
                     <td className="px-4 py-2 font-medium">{req.title}</td>
                     <td className="px-4 py-2">
                       <div className="text-xs font-medium">{req.recipientName}</div>

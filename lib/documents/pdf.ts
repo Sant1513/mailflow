@@ -11,14 +11,17 @@ export interface SignedPdfInput {
   signerIp: string;
 }
 
-/** Strip basic HTML tags and decode common entities. */
+/** Strip HTML, removing style/script block contents entirely before stripping tags. */
 function stripHtml(html: string): string {
   return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/<[^>]+>/g, '')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&nbsp;/g, ' ')
+    .replace(/&quot;/g, '"')
     .trim();
 }
 
@@ -182,8 +185,12 @@ export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> 
   drawDivider(state);
   state.y -= 8;
 
-  // ── Document content (HTML stripped) ──────────────────────────────────────
-  const plainContent = stripHtml(input.content);
+  // ── Document content (HTML stripped, variables substituted) ───────────────
+  let processedContent = input.content;
+  for (const [key, value] of Object.entries(input.fieldValues)) {
+    processedContent = processedContent.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
+  }
+  const plainContent = stripHtml(processedContent);
   if (plainContent) {
     drawBody(state, plainContent);
   }
