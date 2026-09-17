@@ -87,10 +87,13 @@ body{font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px;line-height:1
 .cert-note{margin-top:14px;font-size:11px;color:#9ca3af;line-height:1.5}
 .hint{text-align:center;margin-top:16px;font-size:12px;color:#9ca3af}
 @media print{
-  body{background:#fff}
-  .banner{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{background:#fff;color:#1f2937}
+  .banner{background:#059669;color:#fff}
   .page{margin:0;padding:0;max-width:none}
-  .card{box-shadow:none;border-radius:0;border:none}
+  .card{box-shadow:none;border-radius:0;border:1px solid #e5e7eb}
+  .doc{background:#f9fafb;color:#1f2937}
+  .sig{background:#f9fafb}
   .hint{display:none}
   @page{margin:14mm 16mm}
 }

@@ -23,6 +23,7 @@ interface SigningRequest {
 interface ESignDetail {
   id: string;
   title: string;
+  token: string;
   signedPdfData: string | null;
 }
 
@@ -125,14 +126,12 @@ export default function ESignDocumentsPage() {
       return;
     }
     const json = (await res.json()) as { request: ESignDetail };
-    const b64 = json.request?.signedPdfData;
-    if (!b64) {
-      toast.error('No signed PDF available');
+    const token = json.request?.token;
+    if (!token) {
+      toast.error('Document not available');
       return;
     }
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    const blob = new Blob([bytes], { type: 'application/pdf' });
-    window.open(URL.createObjectURL(blob), '_blank');
+    window.open(`/api/sign/${token}/download`, '_blank');
   }
 
   async function voidRequest(id: string) {
@@ -356,7 +355,7 @@ export default function ESignDocumentsPage() {
                       <div className="flex flex-wrap gap-2 text-xs">
                         {req.status === 'SIGNED' && (
                           <button onClick={() => viewPdf(req.id)} className="text-primary hover:underline">
-                            View PDF
+                            View Document
                           </button>
                         )}
                         {['SIGNED', 'VOIDED', 'EXPIRED'].includes(req.status) && (
