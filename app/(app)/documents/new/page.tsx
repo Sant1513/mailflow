@@ -38,6 +38,8 @@ export default function NewSigningRequestPage() {
   const [content, setContent] = useState('');
   const [fields, setFields] = useState<FieldPair[]>([{ key: '', value: '' }]);
   const [expiresInDays, setExpiresInDays] = useState(7);
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
 
   // Template picker state
   const [templates, setTemplates] = useState<SigningTemplate[]>([]);
@@ -138,6 +140,8 @@ export default function NewSigningRequestPage() {
         fieldValues,
         ccEmails: ccList,
         expiresInDays,
+        ...(emailSubject.trim() ? { emailSubject: emailSubject.trim() } : {}),
+        ...(emailBody.trim() ? { emailBody: emailBody.trim() } : {}),
       }),
     });
     setSubmitting(false);
@@ -316,6 +320,47 @@ export default function NewSigningRequestPage() {
           <button type="button" onClick={addField} className="mt-3 text-xs text-primary hover:underline">
             + Add field
           </button>
+        </div>
+
+        {/* Email Customization */}
+        <div className="rounded-lg border bg-card p-5 space-y-4">
+          <div className="eyebrow mb-1">Invitation email (optional)</div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Leave blank to use the default template. Available placeholders:{' '}
+            {['{{student_name}}', '{{document_name}}', '{{signing_link}}', '{{admin_name}}'].map((p) => (
+              <code
+                key={p}
+                className="font-mono text-xs bg-muted px-1 py-0.5 rounded mr-1 cursor-pointer hover:bg-primary/10"
+                onClick={() => setEmailSubject((s) => s + p)}
+                title="Click to insert in Subject"
+              >
+                {p}
+              </code>
+            ))}
+          </p>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Subject</label>
+            <input
+              type="text"
+              value={emailSubject}
+              onChange={(e) => setEmailSubject(e.target.value)}
+              placeholder="[Action Required] Please sign: {{document_name}}"
+              className="w-full"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Body (HTML allowed)</label>
+            <textarea
+              value={emailBody}
+              onChange={(e) => setEmailBody(e.target.value)}
+              rows={5}
+              placeholder={`<p>Hi {{student_name}},</p>\n<p>Please review and sign the attached document at your earliest convenience.</p>`}
+              className="w-full font-mono text-sm"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              The signing button and document details are always appended automatically.
+            </p>
+          </div>
         </div>
 
         {/* Document Content */}

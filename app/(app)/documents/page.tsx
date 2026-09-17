@@ -150,6 +150,21 @@ export default function ESignDocumentsPage() {
     load(page);
   }
 
+  async function restartRequest(id: string) {
+    if (!confirm('Create a fresh signing request for the same document and recipient?')) return;
+    const res = await fetch(`/api/e-sign/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'restart' }),
+    });
+    if (!res.ok) {
+      toast.error('Could not restart request');
+      return;
+    }
+    toast.success('New signing request sent');
+    load(page);
+  }
+
   async function resendRequest(id: string) {
     const res = await fetch(`/api/e-sign/${id}`, {
       method: 'PATCH',
@@ -342,6 +357,14 @@ export default function ESignDocumentsPage() {
                         {req.status === 'SIGNED' && (
                           <button onClick={() => viewPdf(req.id)} className="text-primary hover:underline">
                             View PDF
+                          </button>
+                        )}
+                        {['SIGNED', 'VOIDED', 'EXPIRED'].includes(req.status) && (
+                          <button
+                            onClick={() => restartRequest(req.id)}
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            Re-request
                           </button>
                         )}
                         {!['SIGNED', 'VOIDED', 'EXPIRED'].includes(req.status) && (

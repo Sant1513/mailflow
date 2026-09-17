@@ -85,7 +85,18 @@ const createSchema = z.object({
   fieldValues: z.record(z.string()).default({}),
   ccEmails: z.array(z.string().email()).default([]),
   expiresInDays: z.number().int().min(1).max(365).default(7),
+  emailSubject: z.string().max(300).optional(),
+  emailBody: z.string().optional(),
 });
+
+/** Replace {{student_name}}, {{document_name}}, {{signing_link}}, {{admin_name}} in a template. */
+function resolveEmailVars(template: string, vars: Record<string, string>): string {
+  return template
+    .replace(/\{\{student_name\}\}/g, vars.student_name ?? '')
+    .replace(/\{\{document_name\}\}/g, vars.document_name ?? '')
+    .replace(/\{\{signing_link\}\}/g, vars.signing_link ?? '')
+    .replace(/\{\{admin_name\}\}/g, vars.admin_name ?? '');
+}
 
 /** POST /api/e-sign — create and send a new signing request. */
 export const POST = withErrorHandling(async (req) => {
@@ -131,6 +142,22 @@ export const POST = withErrorHandling(async (req) => {
       day: 'numeric',
     });
 
+    const emailVars = {
+      student_name: body.recipientName,
+      document_name: body.title,
+      signing_link: signingUrl,
+      admin_name: session.name,
+    };
+
+    const subject = body.emailSubject
+      ? resolveEmailVars(body.emailSubject, emailVars)
+      : `[Action Required] Please sign: ${body.title}`;
+
+    const introHtml = body.emailBody
+      ? `<p style="font-size:16px;margin-top:0;">Hi ${body.recipientName},</p>${resolveEmailVars(body.emailBody, emailVars)}`
+      : `<p style="font-size:16px;margin-top:0;">Hi ${body.recipientName},</p>
+         <p style="font-size:15px;">You've received a document that requires your signature.</p>`;
+
     const html = `
 <!DOCTYPE html>
 <html>
@@ -140,8 +167,7 @@ export const POST = withErrorHandling(async (req) => {
     <h1 style="color:#fff;margin:0;font-size:22px;">MailFlow · Masai School</h1>
   </div>
   <div style="border:1px solid #e5e7eb;border-top:none;padding:32px 24px;border-radius:0 0 8px 8px;">
-    <p style="font-size:16px;margin-top:0;">Hi ${body.recipientName},</p>
-    <p style="font-size:15px;">You've received a document that requires your signature.</p>
+    ${introHtml}
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:16px 20px;margin:20px 0;">
       <p style="margin:0;font-size:13px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">Document</p>
       <p style="margin:6px 0 0;font-size:18px;font-weight:600;color:#111;">${body.title}</p>
@@ -172,7 +198,7 @@ export const POST = withErrorHandling(async (req) => {
         cc: body.ccEmails.length > 0 ? body.ccEmails : undefined,
         fromName: account.displayName || session.name,
         fromEmail: account.emailAddress,
-        subject: `[Action Required] Please sign: ${body.title}`,
+        subject,
         html,
       });
     } catch (err) {

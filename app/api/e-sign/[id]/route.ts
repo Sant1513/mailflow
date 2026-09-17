@@ -27,10 +27,10 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
 });
 
 const patchSchema = z.object({
-  action: z.enum(['void', 'resend']),
+  action: z.enum(['void', 'resend', 'restart']),
 });
 
-/** PATCH /api/e-sign/[id] — void or resend a signing request. */
+/** PATCH /api/e-sign/[id] — void, resend, or restart a signing request. */
 export const PATCH = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
   requireCanWrite(session);
@@ -58,6 +58,92 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       targetId: existing.id,
     });
     return NextResponse.json({ request: updated });
+  }
+
+  if (body.action === 'restart') {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const newRequest = await prisma.signingRequest.create({
+      data: {
+        workspaceId,
+        title: existing.title,
+        content: existing.content,
+        recipientName: existing.recipientName,
+        recipientEmail: existing.recipientEmail,
+        fieldValues: existing.fieldValues ?? {},
+        ccEmails: existing.ccEmails,
+        status: 'SENT',
+        sentAt: now,
+        expiresAt,
+        sentById: session.userId,
+      },
+    });
+
+    const account = await prisma.emailProviderAccount.findFirst({
+      where: { workspaceId },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (account) {
+      const signingUrl = `${process.env.NEXTAUTH_URL}/sign/${newRequest.token}`;
+      const expiresDateStr = expiresAt.toLocaleDateString('en-IN', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      });
+      const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8" /></head>
+<body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;padding:24px;">
+  <div style="background:#1a56db;padding:20px 24px;border-radius:8px 8px 0 0;">
+    <h1 style="color:#fff;margin:0;font-size:22px;">MailFlow · Masai School</h1>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-top:none;padding:32px 24px;border-radius:0 0 8px 8px;">
+    <p style="font-size:16px;margin-top:0;">Hi ${existing.recipientName},</p>
+    <p style="font-size:15px;">A new signing request has been issued for the document below.</p>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:16px 20px;margin:20px 0;">
+      <p style="margin:0;font-size:13px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">Document</p>
+      <p style="margin:6px 0 0;font-size:18px;font-weight:600;color:#111;">${existing.title}</p>
+    </div>
+    <div style="text-align:center;margin:28px 0;">
+      <a href="${signingUrl}"
+         style="background:#1a56db;color:#fff;text-decoration:none;padding:14px 32px;border-radius:6px;font-size:16px;font-weight:600;display:inline-block;">
+        Review &amp; Sign Document
+      </a>
+    </div>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:4px;">
+      This link expires on <strong>${expiresDateStr}</strong>.
+    </p>
+    <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
+    <p style="font-size:12px;color:#9ca3af;margin:0;">
+      Sent by ${session.name} &middot; placements@masaischool.com
+    </p>
+  </div>
+</body>
+</html>`;
+      try {
+        await new GmailProvider(account).sendEmail({
+          to: existing.recipientEmail,
+          cc: existing.ccEmails.length > 0 ? existing.ccEmails : undefined,
+          fromName: account.displayName || session.name,
+          fromEmail: account.emailAddress,
+          subject: `[Action Required] Please sign: ${existing.title}`,
+          html,
+        });
+      } catch (err) {
+        console.error('[e-sign] failed to send restart invitation email', err);
+      }
+    }
+
+    await audit(session, 'SIGNING_REQUEST_RESTARTED', {
+      targetType: 'SigningRequest',
+      targetId: existing.id,
+      metadata: { newRequestId: newRequest.id },
+    });
+
+    return NextResponse.json({ request: newRequest }, { status: 201 });
   }
 
   // action === 'resend'
