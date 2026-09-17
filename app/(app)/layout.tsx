@@ -3,6 +3,7 @@ import { getOptionalSession } from '@/lib/auth/session';
 import { prisma } from '@/lib/db/client';
 import { AppNav } from '@/components/nav/AppNav';
 import { ViewAsBanner } from '@/components/nav/ViewAsBanner';
+import { KeyboardShortcuts } from '@/components/nav/KeyboardShortcuts';
 import { Role } from '@prisma/client';
 import { reviewScope } from '@/lib/permissions/reviewer';
 
@@ -21,6 +22,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-dvh flex-col lg:flex-row">
+      <KeyboardShortcuts />
       <AppNav user={{ name: session.name, email: session.email, image: null, role: session.role }} pendingApprovals={pendingApprovals} />
       <div className="flex min-w-0 flex-1 flex-col">
         {session.viewingAs && <ViewAsBanner viewingAs={session.viewingAs} />}

@@ -109,6 +109,13 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
     return () => clearInterval(t);
   }, [load]);
 
+  // Update browser tab title with unread count.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const base = 'MailFlow — Masai School';
+    document.title = unread > 0 ? `(${unread}) ${base}` : base;
+  }, [unread]);
+
   // Close on outside click or Escape.
   useEffect(() => {
     if (!open) return;

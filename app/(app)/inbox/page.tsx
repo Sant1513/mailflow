@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { useAutoSync } from '@/components/inbox/useAutoSync';
@@ -44,7 +44,7 @@ function timeAgo(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
-/** §51/§109 Inbox: filter rail + conversation list. */
+/** §51/§109 Inbox: filter rail + conversation list with bulk actions. */
 export default function InboxPage() {
   const [filter, setFilter] = useState('open');
   const [q, setQ] = useState('');
@@ -59,6 +59,13 @@ export default function InboxPage() {
   const [gmail, setGmail] = useState<{ connected: boolean; pushConfigured: boolean; email?: string } | null>(null);
   const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
 
+  // Bulk selection state
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkAssignee, setBulkAssignee] = useState('');
+  const [bulkTag, setBulkTag] = useState('');
+  const tagInputRef = useRef<HTMLInputElement>(null);
+
   const load = useCallback(async (p = page) => {
     setLoading(true);
     const params = new URLSearchParams({ filter, page: String(p), pageSize: String(PAGE_SIZE) });
@@ -71,9 +78,9 @@ export default function InboxPage() {
     setCounts(json.counts ?? {});
     setTotal(json.total ?? 0);
     setLoading(false);
-  }, [filter, q, page]);
+    setSelected(new Set()); // clear selection on reload
+  }, [filter, q, page, assigneeId, tag]);
 
-  // Fetch workspace members once for the assignee dropdown.
   useEffect(() => {
     fetch('/api/members')
       .then((r) => r.json())
@@ -81,7 +88,6 @@ export default function InboxPage() {
       .catch(() => undefined);
   }, []);
 
-  // Reset to page 1 when filter/search changes.
   useEffect(() => {
     setPage(1);
     const t = setTimeout(() => load(1), q ? 250 : 0);
@@ -89,12 +95,7 @@ export default function InboxPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, q, assigneeId, tag]);
 
-  // When page changes (and filter/search didn't), load that page.
-  useEffect(() => {
-    load(page);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
-
+  useEffect(() => { load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
   useAutoSync(() => load(page));
 
   useEffect(() => {
@@ -115,11 +116,43 @@ export default function InboxPage() {
     const res = await fetch('/api/gmail/sync', { method: 'POST' });
     const json = await res.json();
     setSyncing(false);
-    if (!res.ok) {
-      toast.error(json.error ?? 'Sync failed');
-      return;
-    }
+    if (!res.ok) { toast.error(json.error ?? 'Sync failed'); return; }
     toast.success(json.note ?? 'Synced');
+    load(page);
+  }
+
+  // ── Bulk selection ──────────────────────────────────────────────────────
+  const allIds = rows.map((r) => r.id);
+  const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
+  const someSelected = selected.size > 0;
+
+  function toggleRow(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(allIds));
+  }
+
+  async function bulkAction(action: string, extra?: Record<string, string | null>) {
+    if (!selected.size) return;
+    setBulkBusy(true);
+    const res = await fetch('/api/inbox/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [...selected], action, ...extra }),
+    });
+    setBulkBusy(false);
+    const json = await res.json();
+    if (!res.ok) { toast.error(json.error ?? 'Action failed'); return; }
+    toast.success(`${json.updated} conversation${json.updated !== 1 ? 's' : ''} updated.`);
+    setBulkAssignee('');
+    setBulkTag('');
     load(page);
   }
 
@@ -161,40 +194,26 @@ export default function InboxPage() {
           })}
         </nav>
 
-        {/* Assignee filter */}
         {members.length > 0 && (
           <div className="mt-4">
             <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">Assignee</div>
-            <select
-              value={assigneeId}
-              onChange={(e) => setAssigneeId(e.target.value)}
-              className="w-full rounded border bg-background px-2 py-1 text-xs"
-            >
+            <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="w-full rounded border bg-background px-2 py-1 text-xs">
               <option value="">All</option>
               <option value="none">Unassigned</option>
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
+              {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           </div>
         )}
 
-        {/* Tag filter */}
         <div className="mt-3">
           <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">Tag</div>
-          <input
-            value={tag}
-            onChange={(e) => setTag(e.target.value)}
-            placeholder="Filter by tag…"
-            className="w-full rounded border bg-background px-2 py-1 text-xs"
-          />
+          <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Filter by tag…"
+            className="w-full rounded border bg-background px-2 py-1 text-xs" />
         </div>
 
         {(assigneeId || tag) && (
-          <button
-            onClick={() => { setAssigneeId(''); setTag(''); }}
-            className="mt-2 w-full rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-elevated"
-          >
+          <button onClick={() => { setAssigneeId(''); setTag(''); }}
+            className="mt-2 w-full rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-elevated">
             Clear filters
           </button>
         )}
@@ -204,40 +223,68 @@ export default function InboxPage() {
             {gmail.connected ? (
               <>
                 <div className="truncate">Syncing {gmail.email}</div>
-                <div className="mt-0.5">
-                  {gmail.pushConfigured ? 'Live push enabled' : 'Manual sync only — set GMAIL_PUBSUB_TOPIC for live push.'}
-                </div>
+                <div className="mt-0.5">{gmail.pushConfigured ? 'Live push enabled' : 'Manual sync only.'}</div>
               </>
             ) : (
-              <div>
-                No Gmail connected.{' '}
-                <Link href="/settings" className="underline">Connect</Link> to receive replies.
-              </div>
+              <div>No Gmail connected. <Link href="/settings" className="underline">Connect</Link></div>
             )}
           </div>
         )}
-
         <div className="mt-4 rounded-md border bg-muted/40 p-2 text-[11px] text-muted-foreground">
           <p className="font-medium text-foreground">What shows here</p>
-          <p className="mt-0.5">Only threads started by MailFlow campaigns or replied to via MailFlow. Direct emails to your Gmail address are not imported.</p>
+          <p className="mt-0.5">Only threads started by MailFlow campaigns or replied to via MailFlow.</p>
         </div>
       </aside>
 
       {/* CENTER: list */}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center gap-3 border-b bg-card px-4 py-2">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+          <input value={q} onChange={(e) => setQ(e.target.value)}
             placeholder="Search name, email, subject, message text, or thread id…"
-            className="min-w-0 flex-1 btn-secondary"
-          />
+            className="min-w-0 flex-1 btn-secondary" />
           {total > 0 && !loading && (
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {total} conversation{total !== 1 ? 's' : ''}
-            </span>
+            <span className="shrink-0 text-xs text-muted-foreground">{total} conversation{total !== 1 ? 's' : ''}</span>
           )}
         </div>
+
+        {/* Bulk actions toolbar */}
+        {someSelected && (
+          <div className="flex flex-wrap items-center gap-2 border-b bg-elevated/60 px-4 py-2">
+            <span className="text-xs font-medium">{selected.size} selected</span>
+            <button onClick={() => bulkAction('resolve')} disabled={bulkBusy}
+              className="rounded border px-2 py-1 text-xs hover:bg-card">✓ Resolve</button>
+            <button onClick={() => bulkAction('reopen')} disabled={bulkBusy}
+              className="rounded border px-2 py-1 text-xs hover:bg-card">↩ Reopen</button>
+            <button onClick={() => bulkAction('mark_read')} disabled={bulkBusy}
+              className="rounded border px-2 py-1 text-xs hover:bg-card">Mark read</button>
+            <button onClick={() => bulkAction('mark_unread')} disabled={bulkBusy}
+              className="rounded border px-2 py-1 text-xs hover:bg-card">Mark unread</button>
+            {members.length > 0 && (
+              <div className="flex items-center gap-1">
+                <select value={bulkAssignee} onChange={(e) => setBulkAssignee(e.target.value)}
+                  className="rounded border bg-background px-1.5 py-1 text-xs">
+                  <option value="">Assign to…</option>
+                  <option value="__none">Unassign</option>
+                  {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                {bulkAssignee && (
+                  <button onClick={() => bulkAction('assign', { assigneeId: bulkAssignee === '__none' ? null : bulkAssignee })}
+                    disabled={bulkBusy} className="rounded border px-2 py-1 text-xs hover:bg-card">Apply</button>
+                )}
+              </div>
+            )}
+            <div className="flex items-center gap-1">
+              <input ref={tagInputRef} value={bulkTag} onChange={(e) => setBulkTag(e.target.value)}
+                placeholder="Add tag…" className="w-20 rounded border bg-background px-1.5 py-1 text-xs" />
+              {bulkTag && (
+                <button onClick={() => bulkAction('tag', { tagName: bulkTag })} disabled={bulkBusy}
+                  className="rounded border px-2 py-1 text-xs hover:bg-card">Tag</button>
+              )}
+            </div>
+            <button onClick={() => setSelected(new Set())}
+              className="ml-auto text-xs text-muted-foreground hover:text-foreground">✕ Clear</button>
+          </div>
+        )}
 
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 overflow-y-auto">
@@ -246,72 +293,77 @@ export default function InboxPage() {
             ) : rows.length === 0 ? (
               <div className="p-12 text-center text-sm text-muted-foreground">
                 {filter === 'unread' ? "You're all caught up." : 'No conversations yet.'}
-                {gmail?.connected && filter !== 'unread' && (
-                  <div className="mt-2 text-xs">Replies appear here after a sync. Try &quot;Sync now&quot;.</div>
-                )}
               </div>
             ) : (
               <ul>
+                {/* Select-all row */}
+                <li className="flex items-center gap-2 border-b bg-muted/30 px-4 py-1.5">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll}
+                    className="h-3.5 w-3.5 rounded accent-primary" aria-label="Select all" />
+                  <span className="text-[11px] text-muted-foreground">
+                    {allSelected ? 'Deselect all' : `Select all ${rows.length} on this page`}
+                  </span>
+                </li>
+
                 {rows.map((c) => {
-                  // Flag conversations where the first message was inbound (no MailFlow
-                  // campaign preceded it) — these are legacy cold-inbound threads.
                   const isColdInbound = c.firstMessageDirection === 'INBOUND';
+                  const isChecked = selected.has(c.id);
                   return (
-                    <li key={c.id} className="border-b">
-                      <Link
-                        href={`/inbox/${c.id}`}
-                        className={`block px-4 py-3 hover:bg-elevated/60 ${c.unread ? 'bg-primary/5' : ''}`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              {c.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" title="Unread reply" />}
-                              <span className={`truncate text-sm ${c.unread ? 'font-semibold' : 'font-medium'}`}>
-                                {c.contact?.name || c.recipientEmail}
-                              </span>
-                              {c.assignee && (
-                                <span className="shrink-0 rounded bg-muted px-1.5 text-[10px] text-muted-foreground">
-                                  {c.assignee.name}
-                                </span>
-                              )}
-                              {isColdInbound && (
-                                <span
-                                  className="shrink-0 rounded border border-warning/40 bg-warning/10 px-1.5 text-[10px] text-warning"
-                                  title="This conversation was started by a direct inbound email, not a MailFlow campaign. Consider closing it."
-                                >
-                                  direct inbound
-                                </span>
-                              )}
-                            </div>
-                            <div className="truncate text-sm">{c.subject}</div>
-                            <div className="truncate text-xs text-muted-foreground">
-                              {c.lastMessage?.direction === 'OUTBOUND' && <span className="mr-1">You:</span>}
-                              {c.lastMessage?.classification && c.lastMessage.classification !== 'HUMAN_REPLY' && (
-                                <span className="mr-1 rounded bg-warning/15 px-1 text-[10px] text-warning">
-                                  {c.lastMessage.classification.replace(/_/g, ' ').toLowerCase()}
-                                </span>
-                              )}
-                              {c.lastMessage?.snippet ?? ''}
-                            </div>
-                            {c.tags.length > 0 && (
-                              <div className="mt-1 flex flex-wrap gap-1">
-                                {c.tags.map((t) => (
-                                  <span key={t.name} className="rounded px-1.5 text-[10px]" style={{ background: t.color ? `${t.color}22` : undefined, color: t.color ?? undefined }}>
-                                    {t.name}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <div className="shrink-0 text-right text-xs text-muted-foreground">
-                            <div>{timeAgo(c.lastMessageAt)}</div>
-                            <div className="mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px]">
-                              {c.status.replace(/_/g, ' ').toLowerCase()}
-                            </div>
-                            <div className="mt-0.5 text-[10px]">{c.messageCount} msg{c.messageCount !== 1 ? 's' : ''}</div>
-                          </div>
+                    <li key={c.id} className={`border-b ${isChecked ? 'bg-primary/5' : ''}`}>
+                      <div className="flex items-stretch">
+                        {/* Checkbox column */}
+                        <div className="flex shrink-0 items-center px-3" onClick={(e) => { e.preventDefault(); toggleRow(c.id); }}>
+                          <input type="checkbox" checked={isChecked} onChange={() => toggleRow(c.id)}
+                            className="h-3.5 w-3.5 rounded accent-primary" onClick={(e) => e.stopPropagation()} />
                         </div>
-                      </Link>
+                        {/* Conversation link */}
+                        <Link href={`/inbox/${c.id}`}
+                          className={`block min-w-0 flex-1 py-3 pr-4 hover:bg-elevated/60 ${c.unread ? 'bg-primary/5' : ''}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                {c.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" />}
+                                <span className={`truncate text-sm ${c.unread ? 'font-semibold' : 'font-medium'}`}>
+                                  {c.contact?.name || c.recipientEmail}
+                                </span>
+                                {c.assignee && (
+                                  <span className="shrink-0 rounded bg-muted px-1.5 text-[10px] text-muted-foreground">{c.assignee.name}</span>
+                                )}
+                                {isColdInbound && (
+                                  <span className="shrink-0 rounded border border-warning/40 bg-warning/10 px-1.5 text-[10px] text-warning">
+                                    direct inbound
+                                  </span>
+                                )}
+                              </div>
+                              <div className="truncate text-sm">{c.subject}</div>
+                              <div className="truncate text-xs text-muted-foreground">
+                                {c.lastMessage?.direction === 'OUTBOUND' && <span className="mr-1">You:</span>}
+                                {c.lastMessage?.classification && c.lastMessage.classification !== 'HUMAN_REPLY' && (
+                                  <span className="mr-1 rounded bg-warning/15 px-1 text-[10px] text-warning">
+                                    {c.lastMessage.classification.replace(/_/g, ' ').toLowerCase()}
+                                  </span>
+                                )}
+                                {c.lastMessage?.snippet ?? ''}
+                              </div>
+                              {c.tags.length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {c.tags.map((t) => (
+                                    <span key={t.name} className="rounded px-1.5 text-[10px]"
+                                      style={{ background: t.color ? `${t.color}22` : undefined, color: t.color ?? undefined }}>
+                                      {t.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <div className="shrink-0 text-right text-xs text-muted-foreground">
+                              <div>{timeAgo(c.lastMessageAt)}</div>
+                              <div className="mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px]">{c.status.replace(/_/g, ' ').toLowerCase()}</div>
+                              <div className="mt-0.5 text-[10px]">{c.messageCount} msg{c.messageCount !== 1 ? 's' : ''}</div>
+                            </div>
+                          </div>
+                        </Link>
+                      </div>
                     </li>
                   );
                 })}
@@ -319,25 +371,14 @@ export default function InboxPage() {
             )}
           </div>
 
-          {/* Pagination */}
           {totalPages > 1 && (
             <div className="flex items-center justify-between border-t bg-card px-4 py-2 text-xs text-muted-foreground">
               <span>Page {page} of {totalPages}</span>
               <div className="flex gap-2">
-                <button
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                  className="rounded border px-3 py-1 hover:bg-elevated disabled:opacity-40"
-                >
-                  ← Prev
-                </button>
-                <button
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                  className="rounded border px-3 py-1 hover:bg-elevated disabled:opacity-40"
-                >
-                  Next →
-                </button>
+                <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}
+                  className="rounded border px-3 py-1 hover:bg-elevated disabled:opacity-40">← Prev</button>
+                <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}
+                  className="rounded border px-3 py-1 hover:bg-elevated disabled:opacity-40">Next →</button>
               </div>
             </div>
           )}

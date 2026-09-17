@@ -104,6 +104,10 @@ export function ReplyComposer({
   const [ccQuery, setCcQuery] = useState('');
   const [suggOpen, setSuggOpen] = useState(false);
   const [suggIdx, setSuggIdx] = useState(0);
+  const [scheduleFor, setScheduleFor] = useState('');
+  const [scheduling, setScheduling] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState<string | null>(null);
+  const [scheduledReplyId, setScheduledReplyId] = useState<string | null>(null);
   const ccRef = useRef<HTMLInputElement>(null);
   const suggestions = useContactSuggestions(ccQuery);
   const editorRef = useRef<HTMLDivElement>(null);
@@ -297,6 +301,52 @@ export function ReplyComposer({
     if (fileRef.current) fileRef.current.value = '';
   }
 
+  async function scheduleReply() {
+    if (!scheduleFor) return toast.error('Pick a date and time first.');
+    const scheduledDate = new Date(scheduleFor);
+    if (scheduledDate <= new Date()) return toast.error('Scheduled time must be in the future.');
+    if (mode === 'write') syncFromEditor();
+    const body = mode === 'write' ? (editorRef.current?.innerHTML ?? html) : html;
+    if (!body.replace(/<[^>]+>/g, '').trim()) return toast.error('Write something first.');
+    setScheduling(true);
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/scheduled-replies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scheduledFor: scheduledDate.toISOString(),
+          html: body,
+          plainText: htmlToPlainText(body),
+          cc: cc.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean),
+          newThread,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(json.error ?? 'Failed to schedule reply');
+        return;
+      }
+      setScheduledAt(scheduleFor);
+      setScheduledReplyId(json.reply?.id ?? null);
+      setScheduleFor('');
+      toast.success(`Reply scheduled for ${new Date(scheduleFor).toLocaleString()}`);
+    } finally {
+      setScheduling(false);
+    }
+  }
+
+  async function cancelScheduled() {
+    if (!scheduledReplyId) return;
+    const res = await fetch(`/api/conversations/${conversationId}/scheduled-replies/${scheduledReplyId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      toast.error('Failed to cancel scheduled reply');
+      return;
+    }
+    setScheduledAt(null);
+    setScheduledReplyId(null);
+    toast.success('Scheduled reply cancelled');
+  }
+
   async function send() {
     if (mode === 'write') syncFromEditor();
     const body = mode === 'write' ? (editorRef.current?.innerHTML ?? html) : html;
@@ -470,6 +520,36 @@ export function ReplyComposer({
             </span>
           ))}
           <span className="text-faint">{(totalSize / 1048576).toFixed(1)} / 4 MB</span>
+        </div>
+      )}
+
+      {/* Schedule section */}
+      {scheduledAt ? (
+        <div className="flex items-center justify-between border-t border-border-subtle px-3 py-2 text-[11px]">
+          <span className="text-muted-foreground">
+            Scheduled for{' '}
+            <strong className="text-foreground">{new Date(scheduledAt).toLocaleString()}</strong>
+          </span>
+          <button onClick={cancelScheduled} className="rounded border border-destructive/50 px-2 py-0.5 text-destructive hover:bg-destructive/10">
+            Cancel scheduled send
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle px-3 py-2">
+          <span className="text-[11px] text-muted-foreground">Schedule:</span>
+          <input
+            type="datetime-local"
+            value={scheduleFor}
+            onChange={(e) => setScheduleFor(e.target.value)}
+            className="rounded border px-1.5 py-0.5 text-[11px]"
+          />
+          <button
+            onClick={scheduleReply}
+            disabled={scheduling || !scheduleFor}
+            className="rounded border px-2 py-0.5 text-[11px] hover:bg-elevated disabled:opacity-50"
+          >
+            {scheduling ? 'Scheduling…' : 'Schedule'}
+          </button>
         </div>
       )}
 

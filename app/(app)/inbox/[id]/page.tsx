@@ -166,6 +166,69 @@ export default function ConversationPage() {
     load();
   }
 
+  function exportConversation() {
+    const conv = data.conversation;
+    const messages: any[] = conv.messages ?? [];
+
+    const messageCards = messages
+      .map((m: any) => {
+        const ts = new Date(m.sentAt ?? m.receivedAt ?? m.createdAt).toLocaleString();
+        const sender = m.direction === 'OUTBOUND'
+          ? `You (${m.senderEmail})`
+          : `${m.senderName ?? ''} &lt;${m.senderEmail}&gt;`.trim();
+        const body = m.htmlBody ?? m.bodyMain ?? `<p><em>(no content)</em></p>`;
+        return `
+          <div class="message ${m.direction === 'OUTBOUND' ? 'outbound' : 'inbound'}">
+            <div class="message-meta">
+              <strong>${sender}</strong>
+              <span class="ts">${ts}</span>
+              ${m.direction === 'INBOUND' ? '' : '<span class="dir-badge">sent</span>'}
+            </div>
+            <div class="message-body">${body}</div>
+          </div>`;
+      })
+      .join('');
+
+    const printHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>${conv.subject.replace(/</g, '&lt;')}</title>
+  <style>
+    body { font-family: Georgia, serif; font-size: 13px; color: #111; background: #fff; margin: 0; padding: 24px 32px; }
+    .conv-header { border-bottom: 2px solid #333; padding-bottom: 12px; margin-bottom: 20px; }
+    .conv-header h1 { font-size: 18px; margin: 0 0 6px; }
+    .conv-header p { margin: 2px 0; color: #555; font-size: 12px; }
+    .message { border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; margin-bottom: 14px; page-break-inside: avoid; }
+    .message.outbound { margin-left: 48px; background: #f0f4ff; }
+    .message.inbound { margin-right: 48px; background: #fafafa; }
+    .message-meta { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; color: #555; margin-bottom: 8px; border-bottom: 1px solid #e5e5e5; padding-bottom: 6px; }
+    .message-meta strong { color: #222; font-size: 12px; }
+    .dir-badge { background: #dbe8ff; color: #1a4eb5; border-radius: 3px; padding: 1px 5px; font-size: 10px; font-weight: 600; }
+    .message-body { font-size: 13px; line-height: 1.6; }
+    .message-body img { max-width: 100%; }
+    @media print { body { margin: 0; padding: 16px; } }
+  </style>
+</head>
+<body>
+  <div class="conv-header">
+    <h1>${conv.subject.replace(/</g, '&lt;')}</h1>
+    <p>Contact: ${(conv.contact?.name || conv.recipientEmail).replace(/</g, '&lt;')} · ${conv.recipientEmail}</p>
+    <p>Mailbox: ${conv.account.emailAddress} · ${messages.length} message${messages.length === 1 ? '' : 's'}</p>
+  </div>
+  ${messageCards}
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) { toast.error('Pop-up blocked — allow pop-ups and try again.'); return; }
+    win.document.write(printHtml);
+    win.document.close();
+    win.focus();
+    win.print();
+    win.onafterprint = () => win.close();
+  }
+
   if (!data) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   const c = data.conversation;
 
@@ -230,6 +293,9 @@ export default function ConversationPage() {
                 Mark resolved
               </button>
             )}
+            <button onClick={exportConversation} className="rounded border px-2 py-1 hover:bg-elevated" title="Print / export conversation">
+              Export
+            </button>
           </div>
         </div>
 

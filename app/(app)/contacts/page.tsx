@@ -28,10 +28,17 @@ export default function ContactsPage() {
 
   return (
     <div className="p-6">
-      <h1 className="mb-1 text-xl font-semibold">Contacts</h1>
-      <p className="mb-4 text-sm text-muted-foreground">
-        One person, resolved across every dataset and conversation (§18).
-      </p>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h1 className="mb-1 text-xl font-semibold">Contacts</h1>
+          <p className="text-sm text-muted-foreground">
+            One person, resolved across every dataset and conversation (§18).
+          </p>
+        </div>
+        <Link href="/contacts/segments" className="btn-secondary text-sm">
+          Segments
+        </Link>
+      </div>
 
       <input
         value={q}

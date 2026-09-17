@@ -86,6 +86,9 @@ model User {
   documentTemplatesOwned DocumentTemplate[]     @relation("DocumentTemplateOwner")
   datasetsOwned          Dataset[]              @relation("DatasetOwner")
   recordChanges          RecordChangeHistory[]
+  suppressionsAdded      EmailSuppression[]     @relation("SuppressionAddedBy")
+  contactSegments        ContactSegment[]
+  scheduledReplies       ScheduledReply[]
 
   @@index([organizationId])
 }
@@ -152,6 +155,8 @@ model Workspace {
   tags                  Tag[]
   conversations         Conversation[]
   suppressions          EmailSuppression[]
+  scheduledReplies      ScheduledReply[]
+  contactSegments       ContactSegment[]
 
   @@index([organizationId])
 }
@@ -193,6 +198,22 @@ model Contact {
 
   @@unique([workspaceId, primaryEmail])
   @@index([primaryEmail])
+}
+
+model ContactSegment {
+  id          String   @id @default(cuid())
+  workspaceId String
+  createdById String
+  name        String
+  description String?
+  filters     Json     // { primaryEmail?: string, name?: string, hasConversation?: boolean, tags?: string[] }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User      @relation(fields: [createdById], references: [id])
+
+  @@index([workspaceId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -476,6 +497,7 @@ model Campaign {
   emailJobs        EmailJob[]
   documents        CampaignDocument[]
   trackingEvents   EmailTrackingEvent[]
+  emailSuppressions EmailSuppression[]
 
   @@index([workspaceId])
   @@index([status])
@@ -691,10 +713,11 @@ model Conversation {
   account   EmailProviderAccount @relation(fields: [emailProviderAccountId], references: [id])
   assignee  User?                @relation("ConversationAssignee", fields: [assigneeId], references: [id])
 
-  messages  ConversationMessage[]
-  notes     InternalNote[]
-  tags      ConversationTag[]
-  followUps FollowUp[]
+  messages         ConversationMessage[]
+  notes            InternalNote[]
+  tags             ConversationTag[]
+  followUps        FollowUp[]
+  scheduledReplies ScheduledReply[]
 
   @@unique([emailProviderAccountId, gmailThreadId])
   @@index([workspaceId])
@@ -764,6 +787,30 @@ model InternalNote {
   author       User         @relation(fields: [authorId], references: [id])
 
   @@index([conversationId])
+}
+
+model ScheduledReply {
+  id             String    @id @default(cuid())
+  conversationId String
+  workspaceId    String
+  createdById    String
+  scheduledFor   DateTime
+  html           String    @db.Text
+  plainText      String    @db.Text
+  cc             String[]
+  newThread      Boolean   @default(false)
+  status         String    @default("PENDING") // PENDING | SENT | CANCELLED | FAILED
+  errorMessage   String?
+  sentAt         DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id])
+  createdBy    User         @relation(fields: [createdById], references: [id])
+
+  @@index([conversationId])
+  @@index([status, scheduledFor])
 }
 
 model Tag {
@@ -1073,13 +1120,19 @@ model EmailTrackingEvent {
 // ─────────────────────────────────────────────────────────────────────────
 
 model EmailSuppression {
-  id          String   @id @default(cuid())
-  workspaceId String
-  email       String
-  reason      String   @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | COMPLAINT
-  createdAt   DateTime @default(now())
+  id            String   @id @default(cuid())
+  workspaceId   String
+  email         String
+  reason        String   @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | COMPLAINT
+  source        String   @default("MANUAL")       // MANUAL | BOUNCE | UNSUBSCRIBE | COMPLAINT
+  addedByUserId String?
+  detail        String?  @db.Text                 // bounce error message / reason detail
+  campaignId    String?
+  createdAt     DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  addedBy   User?     @relation("SuppressionAddedBy", fields: [addedByUserId], references: [id])
+  campaign  Campaign? @relation(fields: [campaignId], references: [id])
 
   @@unique([workspaceId, email])
   @@index([workspaceId])

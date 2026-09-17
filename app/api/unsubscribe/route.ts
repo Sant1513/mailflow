@@ -11,8 +11,8 @@ export async function POST(req: NextRequest) {
 
   await prisma.emailSuppression.upsert({
     where: { workspaceId_email: { workspaceId: payload.workspaceId, email: payload.email.toLowerCase() } },
-    update: { reason: 'UNSUBSCRIBED', createdAt: new Date() },
-    create: { workspaceId: payload.workspaceId, email: payload.email.toLowerCase(), reason: 'UNSUBSCRIBED' },
+    update: { reason: 'UNSUBSCRIBED', source: 'UNSUBSCRIBE' },
+    create: { workspaceId: payload.workspaceId, email: payload.email.toLowerCase(), reason: 'UNSUBSCRIBED', source: 'UNSUBSCRIBE' },
   });
 
   return NextResponse.json({ ok: true });

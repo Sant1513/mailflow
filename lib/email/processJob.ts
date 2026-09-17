@@ -314,6 +314,40 @@ async function failJob(
     /* record may have been deleted mid-flight */
   });
 
+  // Auto-suppress permanent delivery failures so the address is never retried.
+  if (!retryable && (code === 'DELIVERY_FAILED' || code === 'INVALID_EMAIL' || code === 'QUOTA_EXCEEDED')) {
+    const jobWithWorkspace = await prisma.emailJob.findUnique({
+      where: { id: emailJobId },
+      select: { toEmail: true, campaignId: true, campaign: { select: { workspaceId: true } } },
+    });
+    if (jobWithWorkspace?.toEmail && jobWithWorkspace.campaign?.workspaceId) {
+      await prisma.emailSuppression.upsert({
+        where: {
+          workspaceId_email: {
+            workspaceId: jobWithWorkspace.campaign.workspaceId,
+            email: jobWithWorkspace.toEmail,
+          },
+        },
+        create: {
+          workspaceId: jobWithWorkspace.campaign.workspaceId,
+          email: jobWithWorkspace.toEmail,
+          source: 'BOUNCE',
+          reason: 'BOUNCED',
+          detail: `${code}: ${message}`,
+          campaignId: jobWithWorkspace.campaignId ?? undefined,
+        },
+        update: {
+          source: 'BOUNCE',
+          reason: 'BOUNCED',
+          detail: `${code}: ${message}`,
+          campaignId: jobWithWorkspace.campaignId ?? undefined,
+        },
+      }).catch((err) => {
+        console.error('[email] auto-suppress failed', { emailJobId, err });
+      });
+    }
+  }
+
   console.error('[email] job failed', { emailJobId, code, retryable, message });
 }
 
