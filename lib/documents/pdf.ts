@@ -11,6 +11,27 @@ export interface SignedPdfInput {
   signerIp: string;
 }
 
+/**
+ * Replace characters outside WinAnsi (the encoding used by pdf-lib's standard fonts)
+ * so drawText never throws. Covers the most common Unicode used in Indian HR docs.
+ */
+function sanitizeForPdf(text: string): string {
+  return text
+    .replace(/₹/g, 'Rs.')
+    .replace(/€/g, 'EUR ')
+    .replace(/£/g, 'GBP ')
+    .replace(/—/g, '--')        // em dash
+    .replace(/–/g, '-')         // en dash
+    .replace(/[‘’]/g, "'") // curly single quotes
+    .replace(/[“”]/g, '"') // curly double quotes
+    .replace(/…/g, '...')       // ellipsis
+    .replace(/•/g, '*')         // bullet
+    .replace(/©/g, '(c)')       // ©
+    .replace(/®/g, '(R)')       // ®
+    .replace(/™/g, '(TM)')      // ™
+    .replace(/[^\x00-\xFF]/g, '?');  // any remaining non-Latin → ?
+}
+
 /** Strip HTML, removing style/script block contents entirely before stripping tags. */
 function stripHtml(html: string): string {
   return html
@@ -98,6 +119,7 @@ function ensureSpace(state: DrawState, needed: number): void {
 }
 
 function drawHeading(state: DrawState, text: string): void {
+  text = sanitizeForPdf(text);
   ensureSpace(state, LINE_HEIGHT_HEADING + 8);
   state.y -= 8;
   state.page.drawText(text, {
@@ -111,6 +133,7 @@ function drawHeading(state: DrawState, text: string): void {
 }
 
 function drawBody(state: DrawState, text: string): void {
+  text = sanitizeForPdf(text);
   const lines = wrapText(text, MAX_CHARS);
   for (const line of lines) {
     ensureSpace(state, LINE_HEIGHT_BODY);
@@ -128,7 +151,7 @@ function drawBody(state: DrawState, text: string): void {
 }
 
 function drawLabelValue(state: DrawState, label: string, value: string): void {
-  const fullLine = `${label}: ${value}`;
+  const fullLine = sanitizeForPdf(`${label}: ${value}`);
   const lines = wrapLine(fullLine, MAX_CHARS);
   for (const line of lines) {
     ensureSpace(state, LINE_HEIGHT_BODY);

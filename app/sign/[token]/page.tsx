@@ -139,8 +139,12 @@ export default function SigningPage() {
     lastPos.current = null;
   }, []);
 
-  // Attach canvas event listeners
+  // Attach canvas event listeners.
+  // Must depend on `doc` and `mode` because the canvas element only mounts
+  // after doc loads AND mode === 'draw'. Without these deps the effect ran
+  // before the canvas was in the DOM and canvasRef.current was null.
   useEffect(() => {
+    if (mode !== 'draw') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -167,7 +171,7 @@ export default function SigningPage() {
       canvas.removeEventListener('touchmove', draw);
       canvas.removeEventListener('touchend', stopDraw);
     };
-  }, [startDraw, draw, stopDraw]);
+  }, [startDraw, draw, stopDraw, doc, mode]);
 
   // Render typed name onto type canvas
   useEffect(() => {
