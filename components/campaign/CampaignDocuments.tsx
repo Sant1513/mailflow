@@ -97,7 +97,7 @@ export function CampaignDocuments({
             Every recipient gets their own copy with their details filled in, attached to their email.
           </p>
         </div>
-        <Link href="/documents" className="text-xs text-primary hover:underline">
+        <Link href="/documents/library" className="text-xs text-primary hover:underline">
           Manage documents
         </Link>
       </div>

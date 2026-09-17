@@ -197,7 +197,7 @@ export default function CampaignsPage() {
             {documents.length === 0 ? (
               <p className="text-xs text-muted-foreground">
                 None in the library yet.{' '}
-                <Link href="/documents" className="text-primary hover:underline">
+                <Link href="/documents/library" className="text-primary hover:underline">
                   Upload an agreement or form
                 </Link>{' '}
                 to attach a filled copy to every email.
