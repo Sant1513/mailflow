@@ -48,6 +48,8 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
     fieldValues: request.fieldValues,
     status: request.status === 'SENT' ? 'VIEWED' : request.status,
     expiresAt: request.expiresAt,
+    // Include signed PDF for already-signed docs so signers can re-download
+    signedPdfData: request.status === 'SIGNED' ? request.signedPdfData : null,
   });
 });
 

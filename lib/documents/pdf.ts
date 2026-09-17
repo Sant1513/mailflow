@@ -32,17 +32,30 @@ function sanitizeForPdf(text: string): string {
     .replace(/[^\x00-\xFF]/g, '?');  // any remaining non-Latin → ?
 }
 
-/** Strip HTML, removing style/script block contents entirely before stripping tags. */
+/** Strip HTML to plain text, preserving paragraph and line-break structure. */
 function stripHtml(html: string): string {
   return html
+    // Remove style/script block contents (not just the tags)
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    // Block-level elements → newline so paragraphs don't run together
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/h[1-6]>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    // Strip remaining tags
     .replace(/<[^>]+>/g, '')
+    // Decode entities
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&nbsp;/g, ' ')
     .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    // Collapse 3+ consecutive blank lines to a single blank line
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
@@ -78,13 +91,15 @@ function wrapLine(line: string, maxChars: number): string[] {
 function wrapText(text: string, maxChars: number): string[] {
   const paragraphs = text.split(/\n{2,}/);
   const result: string[] = [];
-  for (const para of paragraphs) {
+  for (let pi = 0; pi < paragraphs.length; pi++) {
+    const para = paragraphs[pi]!;
     const rawLines = para.split('\n');
     for (const rawLine of rawLines) {
       const wrapped = wrapLine(rawLine.trim(), maxChars);
       result.push(...wrapped);
     }
-    result.push(''); // blank line between paragraphs
+    // Add one blank line between paragraphs (skip after the last one)
+    if (pi < paragraphs.length - 1) result.push('');
   }
   return result;
 }
