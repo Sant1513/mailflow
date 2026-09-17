@@ -98,43 +98,81 @@ export default function NewBulkSendPage() {
     );
   }
 
-  // ── CSV parser ────────────────────────────────────────────────────────────
+  // ── Sample CSV download ───────────────────────────────────────────────────
 
-  const handleCsvFile = useCallback((file: File) => {
-    setCsvError(null);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = (e.target?.result as string) ?? '';
-      const lines = text.split(/\r?\n/).filter((l) => l.trim());
-      if (lines.length < 2) {
-        setCsvError('CSV must have a header row and at least one data row.');
-        return;
-      }
-      const headers = lines[0]!
-        .split(',')
-        .map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ''));
-      const nameIdx = headers.indexOf('name');
-      const emailIdx = headers.indexOf('email');
-      if (nameIdx === -1 || emailIdx === -1) {
-        setCsvError('CSV must include "name" and "email" columns.');
-        return;
-      }
-      const parsed: Recipient[] = [];
-      for (let row = 1; row < lines.length; row++) {
-        const cols = lines[row]!.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
-        const name = cols[nameIdx] ?? '';
-        const email = cols[emailIdx] ?? '';
-        if (!name || !email) continue;
-        parsed.push({ name, email, fieldValues: {} });
-      }
-      if (parsed.length === 0) {
-        setCsvError('No valid rows found in CSV.');
-        return;
-      }
-      setCsvRows(parsed);
-    };
-    reader.readAsText(file);
-  }, []);
+  function downloadSampleCsv() {
+    const headers = ['name', 'email', ...fieldDefs.map((fd) => fd.key)];
+    const sampleRow = [
+      'John Doe',
+      'john@example.com',
+      ...fieldDefs.map((fd) => fd.defaultValue ?? fd.label),
+    ];
+    const escape = (v: string) => (v.includes(',') ? `"${v.replace(/"/g, '""')}"` : v);
+    const csv = [headers.map(escape).join(','), sampleRow.map(escape).join(',')].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${selectedTemplate?.title ?? 'bulk-send'}-sample.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // ── CSV parser — reads name, email + any field key columns ───────────────
+
+  const handleCsvFile = useCallback(
+    (file: File) => {
+      setCsvError(null);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = (e.target?.result as string) ?? '';
+        const lines = text.split(/\r?\n/).filter((l) => l.trim());
+        if (lines.length < 2) {
+          setCsvError('CSV must have a header row and at least one data row.');
+          return;
+        }
+        const headers = lines[0]!
+          .split(',')
+          .map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ''));
+        const nameIdx = headers.indexOf('name');
+        const emailIdx = headers.indexOf('email');
+        if (nameIdx === -1 || emailIdx === -1) {
+          setCsvError('CSV must include "name" and "email" columns.');
+          return;
+        }
+
+        // Map field keys to column indices
+        const fieldColIdx: Record<string, number> = {};
+        for (const fd of fieldDefs) {
+          const idx = headers.indexOf(fd.key.toLowerCase());
+          if (idx !== -1) fieldColIdx[fd.key] = idx;
+        }
+
+        const parsed: Recipient[] = [];
+        for (let row = 1; row < lines.length; row++) {
+          const cols = lines[row]!.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+          const name = cols[nameIdx] ?? '';
+          const email = cols[emailIdx] ?? '';
+          if (!name || !email) continue;
+
+          const fieldValues: Record<string, string> = {};
+          for (const fd of fieldDefs) {
+            const idx = fieldColIdx[fd.key];
+            fieldValues[fd.key] = idx !== undefined ? (cols[idx] ?? '') : (fd.defaultValue ?? '');
+          }
+
+          parsed.push({ name, email, fieldValues });
+        }
+        if (parsed.length === 0) {
+          setCsvError('No valid rows found in CSV.');
+          return;
+        }
+        setCsvRows(parsed);
+      };
+      reader.readAsText(file);
+    },
+    [fieldDefs],
+  );
 
   function acceptCsvRows() {
     if (csvRows) {
@@ -256,7 +294,12 @@ export default function NewBulkSendPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium">Template (optional)</label>
+            <div className="mb-1 flex items-center justify-between">
+              <label className="text-sm font-medium">Template (optional)</label>
+              <Link href="/documents/templates/new" className="text-xs text-primary hover:underline">
+                + Create template
+              </Link>
+            </div>
             <select
               value={templateId}
               onChange={(e) => setTemplateId(e.target.value)}
@@ -269,7 +312,39 @@ export default function NewBulkSendPage() {
                 </option>
               ))}
             </select>
+            {templates.length === 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                No templates yet.{' '}
+                <Link href="/documents/templates/new" className="text-primary hover:underline">
+                  Create one
+                </Link>{' '}
+                to pre-fill document content and define fields for each recipient.
+              </p>
+            )}
           </div>
+
+          {/* Template fields summary */}
+          {selectedTemplate && fieldDefs.length > 0 && (
+            <div className="rounded-md border bg-muted/30 p-3">
+              <div className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Template variables ({fieldDefs.length})
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {fieldDefs.map((fd) => (
+                  <span key={fd.key} className="inline-flex items-center rounded border bg-background px-2 py-0.5 text-xs">
+                    <code className="font-mono text-primary">{fd.key}</code>
+                    <span className="ml-1 text-muted-foreground">— {fd.label}</span>
+                    {fd.defaultValue && (
+                      <span className="ml-1 text-faint">({fd.defaultValue})</span>
+                    )}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                These columns will appear in the recipient table and in the sample CSV.
+              </p>
+            </div>
+          )}
 
           {selectedTemplate && (
             <div>
@@ -337,24 +412,46 @@ export default function NewBulkSendPage() {
           <div className="eyebrow mb-3">Recipients</div>
 
           {/* CSV Upload */}
-          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-dashed p-3">
-            <div className="flex-1 min-w-[180px]">
-              <p className="text-xs font-medium">Upload CSV</p>
-              <p className="text-xs text-muted-foreground">
-                Must include <code className="font-mono">name</code> and{' '}
-                <code className="font-mono">email</code> columns.
-              </p>
+          <div className="mb-4 rounded-md border border-dashed p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium">Upload CSV</p>
+                <p className="text-xs text-muted-foreground">
+                  Must include <code className="font-mono">name</code> and{' '}
+                  <code className="font-mono">email</code> columns
+                  {fieldDefs.length > 0 && (
+                    <>
+                      {' '}plus{' '}
+                      {fieldDefs.map((fd, i) => (
+                        <span key={fd.key}>
+                          <code className="font-mono">{fd.key}</code>
+                          {i < fieldDefs.length - 1 ? ', ' : ''}
+                        </span>
+                      ))}
+                    </>
+                  )}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={downloadSampleCsv}
+                className="text-xs text-primary hover:underline shrink-0"
+              >
+                ↓ Download sample CSV
+              </button>
             </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".csv"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handleCsvFile(f);
-              }}
-              className="text-xs"
-            />
+            <div className="mt-3">
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".csv"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleCsvFile(f);
+                }}
+                className="text-xs"
+              />
+            </div>
           </div>
 
           {csvError && <p className="mb-3 text-xs text-destructive">{csvError}</p>}
@@ -371,6 +468,9 @@ export default function NewBulkSendPage() {
                     <tr className="text-muted-foreground text-left">
                       <th className="px-2 py-1">Name</th>
                       <th className="px-2 py-1">Email</th>
+                      {fieldDefs.map((fd) => (
+                        <th key={fd.key} className="px-2 py-1">{fd.label}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
@@ -378,11 +478,16 @@ export default function NewBulkSendPage() {
                       <tr key={i} className="border-t border-border-subtle">
                         <td className="px-2 py-1">{r.name}</td>
                         <td className="px-2 py-1">{r.email}</td>
+                        {fieldDefs.map((fd) => (
+                          <td key={fd.key} className="px-2 py-1 text-muted-foreground">
+                            {r.fieldValues[fd.key] ?? '—'}
+                          </td>
+                        ))}
                       </tr>
                     ))}
                     {csvRows.length > 20 && (
                       <tr>
-                        <td colSpan={2} className="px-2 py-1 text-muted-foreground italic">
+                        <td colSpan={2 + fieldDefs.length} className="px-2 py-1 text-muted-foreground italic">
                           … and {csvRows.length - 20} more
                         </td>
                       </tr>

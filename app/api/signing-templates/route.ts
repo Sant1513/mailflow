@@ -20,6 +20,7 @@ export const GET = withErrorHandling(async () => {
       id: true,
       title: true,
       description: true,
+      content: true,
       fieldDefs: true,
       archived: true,
       createdAt: true,
