@@ -8,6 +8,7 @@ import { generateJobDocuments, type GeneratedAttachment } from '@/lib/documents/
 import { DocumentRenderError } from '@/lib/documents/render';
 import { DocumentFileError } from '@/lib/documents/inspect';
 import { injectTracking } from '@/lib/email/tracking';
+import crypto from 'crypto';
 
 /**
  * Processes exactly one EmailJob. This is THE send path — the BullMQ worker
@@ -127,8 +128,20 @@ export async function processEmailJob(
   }
 
   try {
+    // Generate an unsubscribe token for this job if it doesn't already have one.
+    const unsubscribeToken: string = job.unsubscribeToken ?? crypto.randomUUID();
+    const baseUrl = (process.env.NEXTAUTH_URL ?? process.env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    const unsubscribeUrl = `${baseUrl}/api/unsubscribe/${unsubscribeToken}`;
+
+    // Build the footer — appended unconditionally so every campaign email has an unsubscribe link.
+    const unsubscribeFooter = `<p style="font-size:11px;color:#999;text-align:center;margin-top:32px;">
+  <a href="${unsubscribeUrl}" style="color:#999;">Unsubscribe</a>
+</p>`;
+
+    const htmlWithFooter = job.html + unsubscribeFooter;
+
     const trackedHtml = injectTracking(
-      job.html,
+      htmlWithFooter,
       { campaignId: job.campaignId, emailJobId: job.id, email: job.toEmail },
       job.batch.campaign.workspaceId
     );
@@ -156,6 +169,7 @@ export async function processEmailJob(
         data: {
           status: EmailJobStatus.SENT,
           sentAt: new Date(),
+          unsubscribeToken,
           gmailMessageId: result.providerMessageId,
           gmailThreadId: result.threadId,
           messageIdHeader: result.messageIdHeader,

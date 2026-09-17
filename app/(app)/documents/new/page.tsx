@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 
 interface FieldPair {
@@ -10,8 +10,23 @@ interface FieldPair {
   value: string;
 }
 
+interface FieldDef {
+  key: string;
+  label: string;
+  defaultValue?: string;
+}
+
+interface SigningTemplate {
+  id: string;
+  title: string;
+  description?: string | null;
+  content: string;
+  fieldDefs: FieldDef[];
+}
+
 export default function NewSigningRequestPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [submitting, setSubmitting] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
@@ -23,6 +38,64 @@ export default function NewSigningRequestPage() {
   const [content, setContent] = useState('');
   const [fields, setFields] = useState<FieldPair[]>([{ key: '', value: '' }]);
   const [expiresInDays, setExpiresInDays] = useState(7);
+
+  // Template picker state
+  const [templates, setTemplates] = useState<SigningTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [templateLoading, setTemplateLoading] = useState(false);
+
+  /** Load all templates for the dropdown. */
+  useEffect(() => {
+    fetch('/api/signing-templates')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { templates: SigningTemplate[] } | null) => {
+        if (data) setTemplates(data.templates);
+      })
+      .catch(() => {});
+  }, []);
+
+  /** If ?templateId= is set in the URL, pre-fill the form from that template. */
+  useEffect(() => {
+    const templateId = searchParams.get('templateId');
+    if (!templateId) return;
+
+    setTemplateLoading(true);
+    fetch(`/api/signing-templates/${templateId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { template: SigningTemplate } | null) => {
+        if (data?.template) {
+          applyTemplate(data.template);
+          setSelectedTemplateId(data.template.id);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setTemplateLoading(false));
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function applyTemplate(tpl: SigningTemplate) {
+    setTitle(tpl.title);
+    setContent(tpl.content);
+    const newFields: FieldPair[] = tpl.fieldDefs.map((fd) => ({
+      key: fd.key,
+      value: fd.defaultValue ?? '',
+    }));
+    setFields(newFields.length > 0 ? newFields : [{ key: '', value: '' }]);
+  }
+
+  async function handleTemplateSelect(id: string) {
+    setSelectedTemplateId(id);
+    if (!id) return;
+    setTemplateLoading(true);
+    const res = await fetch(`/api/signing-templates/${id}`);
+    if (res.ok) {
+      const data = (await res.json()) as { template: SigningTemplate };
+      applyTemplate(data.template);
+      toast.success(`Template "${data.template.title}" loaded.`);
+    } else {
+      toast.error('Could not load template.');
+    }
+    setTemplateLoading(false);
+  }
 
   function addField() {
     setFields((prev) => [...prev, { key: '', value: '' }]);
@@ -99,6 +172,35 @@ export default function NewSigningRequestPage() {
         </Link>
         <h1 className="text-xl font-semibold">New Signing Request</h1>
       </div>
+
+      {/* Template picker */}
+      {templates.length > 0 && (
+        <div className="mb-6 rounded-lg border bg-card p-4 flex items-center gap-3">
+          <label className="text-sm font-medium shrink-0">Load from template</label>
+          <select
+            value={selectedTemplateId}
+            onChange={(e) => handleTemplateSelect(e.target.value)}
+            disabled={templateLoading}
+            className="flex-1 text-sm"
+          >
+            <option value="">— choose a template —</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.title}
+              </option>
+            ))}
+          </select>
+          {templateLoading && (
+            <span className="text-xs text-muted-foreground">Loading…</span>
+          )}
+          <Link
+            href="/documents/templates"
+            className="text-xs text-primary hover:underline shrink-0"
+          >
+            Manage templates
+          </Link>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Basic Info */}

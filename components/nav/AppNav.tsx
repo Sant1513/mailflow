@@ -19,6 +19,7 @@ const MAIN_ITEMS = [
   { href: '/batches', label: 'Batches' },
   { href: '/suppressions', label: 'Suppressions' },
   { href: '/performance', label: 'Performance' },
+  { href: '/reports', label: 'Reports' },
   { href: '/history', label: 'History' },
 ];
 

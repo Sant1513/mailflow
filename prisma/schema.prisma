@@ -91,6 +91,7 @@ model User {
   scheduledReplies       ScheduledReply[]
   slaRules               SlaRule[]
   signingRequestsSent    SigningRequest[]        @relation("SigningRequestsSentBy")
+  signingTemplatesCreated SigningTemplate[]      @relation("SigningTemplateCreatedBy")
 
   @@index([organizationId])
 }
@@ -162,6 +163,8 @@ model Workspace {
   slaRules              SlaRule[]
   webhookEndpoints      WebhookEndpoint[]
   signingRequests       SigningRequest[]
+  signingTemplates      SigningTemplate[]
+  signingBatches        SigningBatch[]
 
   @@index([organizationId])
 }
@@ -598,9 +601,10 @@ model EmailJob {
   retryCount       Int       @default(0)
   lastAttemptAt    DateTime?
 
-  sentAt    DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  sentAt           DateTime?
+  unsubscribeToken String?   @unique
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   batch                Batch                 @relation(fields: [batchId], references: [id])
   campaign             Campaign              @relation(fields: [campaignId], references: [id])
@@ -1220,6 +1224,7 @@ enum SigningRequestStatus {
 model SigningRequest {
   id             String               @id @default(cuid())
   workspaceId    String
+  batchId        String?
   title          String
   content        String               @db.Text
   recipientName  String
@@ -1233,6 +1238,8 @@ model SigningRequest {
   viewedAt       DateTime?
   signedAt       DateTime?
   voidedAt       DateTime?
+  reminderSentAt DateTime?
+  reminderCount  Int                  @default(0)
   signatureImage String?              @db.Text
   signedPdfData  String?              @db.Text
   signerIp       String?
@@ -1241,10 +1248,53 @@ model SigningRequest {
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  sentBy    User      @relation("SigningRequestsSentBy", fields: [sentById], references: [id])
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sentBy    User         @relation("SigningRequestsSentBy", fields: [sentById], references: [id])
+  batch     SigningBatch? @relation(fields: [batchId], references: [id])
 
   @@index([workspaceId])
   @@index([token])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIGNING TEMPLATES & BATCHES
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SigningTemplate {
+  id          String   @id @default(cuid())
+  workspaceId String
+  title       String
+  description String?
+  content     String   @db.Text
+  fieldDefs   Json     @default("[]") // [{key, label, defaultValue?}]
+  archived    Boolean  @default(false)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User         @relation("SigningTemplateCreatedBy", fields: [createdById], references: [id])
+  batches   SigningBatch[]
+
+  @@index([workspaceId])
+}
+
+model SigningBatch {
+  id          String   @id @default(cuid())
+  workspaceId String
+  templateId  String?
+  title       String
+  totalCount  Int      @default(0)
+  sentCount   Int      @default(0)
+  signedCount Int      @default(0)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  template  SigningTemplate? @relation(fields: [templateId], references: [id])
+  requests  SigningRequest[]
+
+  @@index([workspaceId])
 }
 
