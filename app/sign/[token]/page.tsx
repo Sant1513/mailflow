@@ -254,18 +254,7 @@ export default function SigningPage() {
   }
 
   if (doc.status === 'SIGNED') {
-    function downloadSignedPdf() {
-      if (!doc?.signedPdfData) return;
-      const bytes = Uint8Array.from(atob(doc.signedPdfData), (c) => c.charCodeAt(0));
-      const blob = new Blob([bytes], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${doc.title.replace(/\s+/g, '_')}_signed.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-
+    const token = params.token;
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
         <div className="max-w-md text-center">
@@ -275,19 +264,19 @@ export default function SigningPage() {
           <p className="mb-6 text-sm text-gray-500">
             This document has already been signed. A copy was emailed to you.
           </p>
-          {doc.signedPdfData && (
-            <button
-              onClick={downloadSignedPdf}
-              className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-gray-800 transition"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="7 10 12 15 17 10"/>
-                <line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-              Download Signed PDF
-            </button>
-          )}
+          <a
+            href={`/api/sign/${token}/download`}
+            download
+            className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-gray-800 transition"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download Signed Document
+          </a>
+          <p className="mt-3 text-xs text-gray-400">Opens in browser · print to save as PDF</p>
         </div>
       </div>
     );
