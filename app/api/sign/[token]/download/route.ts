@@ -29,13 +29,10 @@ export const GET = withErrorHandling(
       signerIp: request.signerIp ?? 'unknown',
     });
 
-    const filename = `${request.title.replace(/[^a-zA-Z0-9._-]/g, '_')}_signed.html`;
-
     return new NextResponse(html, {
       status: 200,
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${filename}"`,
       },
     });
   }
