@@ -6,7 +6,21 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
+import type { EmailAttachment } from '@/lib/email/provider';
 import type { Prisma } from '@prisma/client';
+
+interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
+
+async function fetchEmailAttachments(metas: AttachmentMeta[]): Promise<EmailAttachment[]> {
+  const results = await Promise.allSettled(
+    metas.map(async (m) => {
+      const res = await fetch(m.url);
+      const buf = Buffer.from(await res.arrayBuffer());
+      return { filename: m.name, mimeType: m.contentType, content: buf } satisfies EmailAttachment;
+    })
+  );
+  return results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+}
 
 const PAGE_SIZE = 20;
 
@@ -77,12 +91,20 @@ export const GET = withErrorHandling(async (req) => {
   return NextResponse.json({ requests, total, page });
 });
 
+const attachmentSchema = z.object({
+  name: z.string(),
+  url: z.string().url(),
+  contentType: z.string(),
+  size: z.number(),
+});
+
 const createSchema = z.object({
   title: z.string().min(1).max(200),
   content: z.string().min(1),
   recipientName: z.string().min(1).max(200),
   recipientEmail: z.string().email(),
   fieldValues: z.record(z.string()).default({}),
+  attachments: z.array(attachmentSchema).default([]),
   ccEmails: z.array(z.string().email()).default([]),
   expiresInDays: z.number().int().min(1).max(365).default(7),
   emailSubject: z.string().max(300).optional(),
@@ -120,6 +142,7 @@ export const POST = withErrorHandling(async (req) => {
       recipientName: body.recipientName,
       recipientEmail: body.recipientEmail,
       fieldValues: body.fieldValues,
+      attachments: body.attachments,
       ccEmails: body.ccEmails,
       status: 'SENT',
       sentAt: now,
@@ -193,6 +216,9 @@ export const POST = withErrorHandling(async (req) => {
 </html>`;
 
     try {
+      const extraAttachments = body.attachments.length
+        ? await fetchEmailAttachments(body.attachments)
+        : [];
       await new GmailProvider(account).sendEmail({
         to: body.recipientEmail,
         cc: body.ccEmails.length > 0 ? body.ccEmails : undefined,
@@ -200,6 +226,7 @@ export const POST = withErrorHandling(async (req) => {
         fromEmail: account.emailAddress,
         subject,
         html,
+        attachments: extraAttachments.length > 0 ? extraAttachments : undefined,
       });
     } catch (err) {
       console.error('[e-sign] failed to send invitation email', err);

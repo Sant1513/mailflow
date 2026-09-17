@@ -27,6 +27,7 @@ interface Recipient {
 export default function NewBulkSendPage() {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Form state
@@ -34,6 +35,7 @@ export default function NewBulkSendPage() {
   const [templateId, setTemplateId] = useState('');
   const [ccEmails, setCcEmails] = useState('placements@masaischool.com');
   const [expiresInDays, setExpiresInDays] = useState(7);
+  const [attachments, setAttachments] = useState<{ name: string; url: string; contentType: string; size: number }[]>([]);
 
   // Templates
   const [templates, setTemplates] = useState<SigningTemplate[]>([]);
@@ -147,6 +149,26 @@ export default function NewBulkSendPage() {
     if (fileRef.current) fileRef.current.value = '';
   }
 
+  async function handleAttachFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    setUploading(true);
+    for (const file of files) {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/e-sign/attachments', { method: 'POST', body: fd });
+      if (res.ok) {
+        const meta = (await res.json()) as { name: string; url: string; contentType: string; size: number };
+        setAttachments((prev) => [...prev, meta]);
+      } else {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(j.error ?? `Failed to upload ${file.name}`);
+      }
+    }
+    setUploading(false);
+    e.target.value = '';
+  }
+
   // ── Submit ────────────────────────────────────────────────────────────────
 
   async function handleSubmit(e: React.FormEvent) {
@@ -184,6 +206,7 @@ export default function NewBulkSendPage() {
           email: r.email.trim(),
           fieldValues: r.fieldValues,
         })),
+        attachments,
         ccEmails: ccList,
         expiresInDays,
       }),
@@ -284,6 +307,29 @@ export default function NewBulkSendPage() {
               <option value={30}>30 days</option>
             </select>
           </div>
+        </div>
+
+        {/* ── Attachments ───────────────────────────────────────────────── */}
+        <div className="rounded-lg border bg-card p-5 space-y-3">
+          <div className="eyebrow mb-1">Additional attachments <span className="text-muted-foreground font-normal normal-case text-xs">(optional)</span></div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Included in the signing email and post-signing confirmation for every recipient. PDF, Word, JPEG, PNG — max 10 MB each.
+          </p>
+          {attachments.length > 0 && (
+            <ul className="space-y-1">
+              {attachments.map((a, i) => (
+                <li key={i} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 truncate">{a.name}</span>
+                  <span className="text-xs text-muted-foreground">{(a.size / 1024).toFixed(0)} KB</span>
+                  <button type="button" onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))} className="text-xs text-muted-foreground hover:text-destructive">✕</button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <label className="inline-flex items-center gap-2 cursor-pointer rounded border border-dashed px-4 py-2 text-sm text-muted-foreground hover:text-primary hover:border-primary transition">
+            {uploading ? 'Uploading…' : '+ Attach files'}
+            <input type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" className="sr-only" onChange={handleAttachFiles} disabled={uploading} />
+          </label>
         </div>
 
         {/* ── Recipients ────────────────────────────────────────────────── */}

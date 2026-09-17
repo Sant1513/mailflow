@@ -40,6 +40,8 @@ export default function NewSigningRequestPage() {
   const [expiresInDays, setExpiresInDays] = useState(7);
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
+  const [attachments, setAttachments] = useState<{ name: string; url: string; contentType: string; size: number }[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   // Template picker state
   const [templates, setTemplates] = useState<SigningTemplate[]>([]);
@@ -138,6 +140,7 @@ export default function NewSigningRequestPage() {
         recipientName: recipientName.trim(),
         recipientEmail: recipientEmail.trim(),
         fieldValues,
+        attachments,
         ccEmails: ccList,
         expiresInDays,
         ...(emailSubject.trim() ? { emailSubject: emailSubject.trim() } : {}),
@@ -154,6 +157,26 @@ export default function NewSigningRequestPage() {
 
     toast.success('Signing request sent successfully');
     router.push('/documents');
+  }
+
+  async function handleAttachFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    setUploading(true);
+    for (const file of files) {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/e-sign/attachments', { method: 'POST', body: fd });
+      if (res.ok) {
+        const meta = (await res.json()) as { name: string; url: string; contentType: string; size: number };
+        setAttachments((prev) => [...prev, meta]);
+      } else {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(j.error ?? `Failed to upload ${file.name}`);
+      }
+    }
+    setUploading(false);
+    e.target.value = '';
   }
 
   /** Replace {{variable}} placeholders in content with field values for preview */
@@ -361,6 +384,33 @@ export default function NewSigningRequestPage() {
               The signing button and document details are always appended automatically.
             </p>
           </div>
+        </div>
+
+        {/* Additional Attachments */}
+        <div className="rounded-lg border bg-card p-5 space-y-3">
+          <div className="eyebrow mb-1">Additional attachments <span className="text-muted-foreground font-normal normal-case text-xs">(optional)</span></div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Files attached here are included in the signing email AND the post-signing confirmation email. PDF, Word, JPEG, PNG — max 10 MB each.
+          </p>
+          {attachments.length > 0 && (
+            <ul className="space-y-1">
+              {attachments.map((a, i) => (
+                <li key={i} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 truncate">{a.name}</span>
+                  <span className="text-xs text-muted-foreground">{(a.size / 1024).toFixed(0)} KB</span>
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                    className="text-xs text-muted-foreground hover:text-destructive"
+                  >✕</button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <label className="inline-flex items-center gap-2 cursor-pointer rounded border border-dashed px-4 py-2 text-sm text-muted-foreground hover:text-primary hover:border-primary transition">
+            {uploading ? 'Uploading…' : '+ Attach files'}
+            <input type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" className="sr-only" onChange={handleAttachFiles} disabled={uploading} />
+          </label>
         </div>
 
         {/* Document Content */}

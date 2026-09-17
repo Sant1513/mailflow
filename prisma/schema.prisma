@@ -1230,6 +1230,7 @@ model SigningRequest {
   recipientName  String
   recipientEmail String
   fieldValues    Json                 @default("{}")
+  attachments    Json                 @default("[]")
   ccEmails       String[]             @default([])
   token          String               @unique @default(cuid())
   status         SigningRequestStatus @default(DRAFT)

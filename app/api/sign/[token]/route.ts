@@ -4,7 +4,21 @@ import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
+import type { EmailAttachment } from '@/lib/email/provider';
 import { generateSignedPdf } from '@/lib/documents/pdf';
+
+interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
+
+async function fetchEmailAttachments(metas: AttachmentMeta[]): Promise<EmailAttachment[]> {
+  const results = await Promise.allSettled(
+    metas.map(async (m) => {
+      const res = await fetch(m.url);
+      const buf = Buffer.from(await res.arrayBuffer());
+      return { filename: m.name, mimeType: m.contentType, content: buf } satisfies EmailAttachment;
+    })
+  );
+  return results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+}
 
 // Public route — no requireSession() calls.
 
@@ -216,6 +230,14 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
 </html>`;
 
     try {
+      const storedAttachments = Array.isArray(request.attachments)
+        ? (request.attachments as unknown as AttachmentMeta[])
+        : [];
+      const extraAttachments = storedAttachments.length
+        ? await fetchEmailAttachments(storedAttachments)
+        : [];
+      const allAttachments = [pdfAttachment, ...extraAttachments];
+
       await Promise.allSettled([
         new GmailProvider(account).sendEmail({
           to: request.recipientEmail,
@@ -223,7 +245,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
           fromEmail: account.emailAddress,
           subject: `Document Signed: ${request.title}`,
           html: recipientHtml,
-          attachments: [pdfAttachment],
+          attachments: allAttachments,
         }),
         new GmailProvider(account).sendEmail({
           to: notifyTo,
@@ -232,7 +254,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
           fromEmail: account.emailAddress,
           subject: `[Signed] ${request.recipientName} has signed: ${request.title}`,
           html: teamHtml,
-          attachments: [pdfAttachment],
+          attachments: allAttachments,
         }),
       ]);
     } catch (err) {

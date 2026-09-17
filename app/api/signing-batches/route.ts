@@ -6,6 +6,20 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
+import type { EmailAttachment } from '@/lib/email/provider';
+
+interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
+
+async function fetchEmailAttachments(metas: AttachmentMeta[]): Promise<EmailAttachment[]> {
+  const results = await Promise.allSettled(
+    metas.map(async (m) => {
+      const res = await fetch(m.url);
+      const buf = Buffer.from(await res.arrayBuffer());
+      return { filename: m.name, mimeType: m.contentType, content: buf } satisfies EmailAttachment;
+    })
+  );
+  return results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+}
 
 /** GET /api/signing-batches — list batches for the current workspace. */
 export const GET = withErrorHandling(async () => {
@@ -29,10 +43,18 @@ const recipientSchema = z.object({
   fieldValues: z.record(z.string()).optional().default({}),
 });
 
+const attachmentSchema = z.object({
+  name: z.string(),
+  url: z.string().url(),
+  contentType: z.string(),
+  size: z.number(),
+});
+
 const createSchema = z.object({
   title: z.string().min(1).max(200),
   templateId: z.string().optional(),
   recipients: z.array(recipientSchema).min(1).max(200),
+  attachments: z.array(attachmentSchema).default([]),
   ccEmails: z.array(z.string().email()).default(['placements@masaischool.com']),
   expiresInDays: z.number().int().min(1).max(365).default(7),
 });
@@ -86,6 +108,7 @@ export const POST = withErrorHandling(async (req) => {
           recipientName: r.name,
           recipientEmail: r.email,
           fieldValues: r.fieldValues,
+          attachments: body.attachments,
           ccEmails: body.ccEmails,
           status: 'SENT',
           sentAt: now,
@@ -111,6 +134,11 @@ export const POST = withErrorHandling(async (req) => {
       day: 'numeric',
     });
 
+    // Fetch extra attachments once — shared across all recipients
+    const extraAttachments = body.attachments.length
+      ? await fetchEmailAttachments(body.attachments)
+      : [];
+
     // Send invitation emails in parallel — allSettled so one failure doesn't abort the rest
     const results = await Promise.allSettled(
       requests.map((sigReq) => {
@@ -129,6 +157,7 @@ export const POST = withErrorHandling(async (req) => {
           fromEmail: account.emailAddress,
           subject: `[Action Required] Please sign: ${body.title}`,
           html,
+          attachments: extraAttachments.length > 0 ? extraAttachments : undefined,
         });
       }),
     );
