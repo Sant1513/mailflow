@@ -190,6 +190,9 @@ export default function ESignDocumentsPage() {
         </div>
         <div className="flex items-center gap-2">
           {loading && <span className="text-xs text-muted-foreground">Loading…</span>}
+          <Link href="/documents/bulk/new" className="btn-secondary">
+            Bulk Send
+          </Link>
           <Link href="/documents/new" className="btn-primary">
             New Request
           </Link>
