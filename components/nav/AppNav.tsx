@@ -15,6 +15,7 @@ const MAIN_ITEMS = [
   { href: '/campaigns', label: 'Campaigns' },
   { href: '/templates', label: 'Templates' },
   { href: '/documents', label: 'Documents' },
+  { href: '/documents/templates', label: 'Doc Templates' },
   { href: '/documents/library', label: 'PDF Library' },
   { href: '/automations', label: 'Automations' },
   { href: '/batches', label: 'Batches' },
