@@ -3,6 +3,7 @@ import { classifyInbound, countsAsReply } from '@/lib/conversations/classify';
 import { classifyStoredMessage } from '@/lib/ai/context';
 import { normalizeSubject, type ParsedMessage } from '@/lib/gmail/parseMessage';
 import { MessageDirection, MessageClassification, type EmailProviderAccount } from '@prisma/client';
+import { dispatchWebhook } from '@/lib/webhooks/dispatch';
 
 /**
  * §47-§50 inbound ingestion. Given an already-parsed Gmail message and the
@@ -268,6 +269,13 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
       organizationId: account.organizationId,
       workspaceId: account.workspaceId,
     });
+
+    dispatchWebhook(account.workspaceId, 'conversation.message.received', {
+      conversationId: result.conversationId,
+      messageId: result.messageId,
+      senderEmail: fromEmail,
+      classification: cls.classification,
+    }).catch(() => undefined);
   }
 
   return { status: 'STORED', ...result, classification: cls.classification };

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { decodeUnsubToken } from '@/lib/email/tracking';
+import { dispatchWebhook } from '@/lib/webhooks/dispatch';
 
 export async function POST(req: NextRequest) {
   const { token } = await req.json().catch(() => ({}));
@@ -14,6 +15,10 @@ export async function POST(req: NextRequest) {
     update: { reason: 'UNSUBSCRIBED', source: 'UNSUBSCRIBE' },
     create: { workspaceId: payload.workspaceId, email: payload.email.toLowerCase(), reason: 'UNSUBSCRIBED', source: 'UNSUBSCRIBE' },
   });
+
+  dispatchWebhook(payload.workspaceId, 'email.unsubscribed', {
+    email: payload.email.toLowerCase(),
+  }).catch(() => undefined);
 
   return NextResponse.json({ ok: true });
 }

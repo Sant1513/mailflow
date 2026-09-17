@@ -9,6 +9,7 @@ import { loadConversationForSession } from '@/lib/conversations/access';
 import { splitMessageBody } from '@/lib/conversations/messageView';
 import { notifyAssignment, notifyResolution } from '@/lib/conversations/notify';
 import { ConversationStatus } from '@prisma/client';
+import { dispatchWebhook } from '@/lib/webhooks/dispatch';
 
 export const GET = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
@@ -84,6 +85,13 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     // §57/§87: closure goes to the assignee in the same email + Slack threads.
     if (body.status === ConversationStatus.RESOLVED || body.status === ConversationStatus.CLOSED) {
       notify.resolution = await notifyResolution(conversation.id, body.status, session);
+    }
+    if (body.status === ConversationStatus.RESOLVED && conversation.workspaceId) {
+      dispatchWebhook(conversation.workspaceId, 'conversation.resolved', {
+        conversationId: conversation.id,
+        status: body.status,
+        resolvedBy: session.userId,
+      }).catch(() => undefined);
     }
   }
 

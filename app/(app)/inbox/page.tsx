@@ -18,6 +18,8 @@ interface InboxRow {
   tags: { name: string; color: string | null }[];
   lastMessage: { snippet: string | null; direction: string; classification: string; senderName: string | null } | null;
   firstMessageDirection: string | null;
+  slaBreached?: boolean;
+  slaMinutesOverdue?: number;
 }
 
 const FILTERS: { key: string; label: string; countKey?: 'unread' | 'mine' | 'open' | 'waiting' }[] = [
@@ -332,6 +334,14 @@ export default function InboxPage() {
                                 {isColdInbound && (
                                   <span className="shrink-0 rounded border border-warning/40 bg-warning/10 px-1.5 text-[10px] text-warning">
                                     direct inbound
+                                  </span>
+                                )}
+                                {c.slaBreached && (
+                                  <span
+                                    className="shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 text-[10px] font-medium text-destructive"
+                                    title={`SLA breached — ${c.slaMinutesOverdue}m overdue`}
+                                  >
+                                    SLA
                                   </span>
                                 )}
                               </div>

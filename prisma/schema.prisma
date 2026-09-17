@@ -1,4 +1,4 @@
-// MailFlow — Prisma schema
+// MailFlow â€” Prisma schema
 // See ARCHITECTURE.md for the relationship rules and indexing rationale.
 
 generator client {
@@ -15,9 +15,9 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // ORG / AUTH
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 enum Role {
   SUPER_ADMIN
@@ -53,7 +53,7 @@ model User {
   organizationId String
   // Optional: the authoritative Google subject lives in Account.providerAccountId.
   // NextAuth's adapter creates the User before any account is linked, so this
-  // cannot be required — making it so broke sign-in with OAuthAccountNotLinked.
+  // cannot be required â€” making it so broke sign-in with OAuthAccountNotLinked.
   googleId       String?    @unique
   email          String     @unique
   name           String
@@ -66,7 +66,7 @@ model User {
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
   lastLoginAt    DateTime?
-  // Slack member id (U…): mentions in assignment / resolution notifications.
+  // Slack member id (Uâ€¦): mentions in assignment / resolution notifications.
   slackUserId      String?
   emailSignature   String?  @db.Text
 
@@ -89,11 +89,12 @@ model User {
   suppressionsAdded      EmailSuppression[]     @relation("SuppressionAddedBy")
   contactSegments        ContactSegment[]
   scheduledReplies       ScheduledReply[]
+  slaRules               SlaRule[]
 
   @@index([organizationId])
 }
 
-// NextAuth (Auth.js) adapter models — database session strategy.
+// NextAuth (Auth.js) adapter models â€” database session strategy.
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -157,6 +158,8 @@ model Workspace {
   suppressions          EmailSuppression[]
   scheduledReplies      ScheduledReply[]
   contactSegments       ContactSegment[]
+  slaRules              SlaRule[]
+  webhookEndpoints      WebhookEndpoint[]
 
   @@index([organizationId])
 }
@@ -174,9 +177,9 @@ model WorkspaceMember {
   @@unique([workspaceId, userId])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // CONTACTS
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 model Contact {
   id             String   @id @default(cuid())
@@ -216,9 +219,9 @@ model ContactSegment {
   @@index([workspaceId])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // DATASETS / RECORDS
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 enum ColumnType {
   TEXT
@@ -263,7 +266,7 @@ model DatasetColumn {
   label     String
   type      ColumnType
   options   Json? // for SINGLE_SELECT/MULTI_SELECT: string[]; FORMULA: { expr }
-  isSystem  Boolean    @default(false) // e.g. email status fields, §14
+  isSystem  Boolean    @default(false) // e.g. email status fields, Â§14
   order     Int        @default(0)
   hidden    Boolean    @default(false)
   width     Int?
@@ -280,8 +283,8 @@ model Record {
   id                         String    @id @default(cuid())
   datasetId                  String
   contactId                  String?
-  data                       Json // { [columnKey]: value } — business fields only
-  // System email fields (§14) kept out of `data` so business Status is
+  data                       Json // { [columnKey]: value } â€” business fields only
+  // System email fields (Â§14) kept out of `data` so business Status is
   // never overwritten by the send pipeline:
   emailStatus                String? // NOT_SENT | QUEUED | SENT | FAILED | SKIPPED
   lastEmailSentAt            DateTime?
@@ -342,9 +345,9 @@ model RecordChangeHistory {
   @@index([recordId])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // TEMPLATES
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 model Template {
   id             String   @id @default(cuid())
@@ -386,9 +389,9 @@ model TemplateVersion {
   @@index([templateId])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // EMAIL PROVIDER (Gmail) ACCOUNTS
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 enum EmailProvider {
   GMAIL
@@ -429,9 +432,9 @@ model EmailProviderAccount {
   @@index([workspaceId])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // CAMPAIGNS / BATCHES / EMAIL JOBS
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 enum CampaignStatus {
   DRAFT
@@ -457,8 +460,8 @@ model Campaign {
   templateVersionId        String
   automationId             String?
   senderAccountId          String?
-  // §22 sender/recipient settings. The From ADDRESS is never configurable —
-  // it is pinned to the connected mailbox (§28) — but the display name,
+  // Â§22 sender/recipient settings. The From ADDRESS is never configurable â€”
+  // it is pinned to the connected mailbox (Â§28) â€” but the display name,
   // Reply-To and Cc/Bcc are. Cc/Bcc are added to every message in the
   // campaign, so they are for supervisors/archives, not per-recipient.
   fromName                 String?
@@ -472,7 +475,7 @@ model Campaign {
   approvedById             String?
   approvedAt               DateTime?
   rejectionReason          String?
-  // Approval workflow (§36) — request/decision emails live in one Gmail thread.
+  // Approval workflow (Â§36) â€” request/decision emails live in one Gmail thread.
   submittedAt              DateTime?
   rejectedAt               DateTime?
   reviewedById             String?
@@ -570,7 +573,7 @@ model EmailJob {
   emailProviderAccountId String?
   status                 EmailJobStatus @default(QUEUED)
 
-  // immutable send snapshot (§89)
+  // immutable send snapshot (Â§89)
   toEmail   String
   ccEmails  String[]
   bccEmails String[]
@@ -610,9 +613,9 @@ model EmailJob {
   @@index([status])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // AUTOMATIONS
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 model Automation {
   id             String   @id @default(cuid())
@@ -671,9 +674,9 @@ model AutomationRun {
   @@index([recordId])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // CONVERSATIONS / INBOX
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 enum ConversationStatus {
   OPEN
@@ -746,7 +749,7 @@ model ConversationMessage {
   direction                MessageDirection
   classification           MessageClassification @default(UNKNOWN)
   classificationConfidence Float?
-  // §80 AI intent — stored beside the header-first classification, never in place of it.
+  // Â§80 AI intent â€” stored beside the header-first classification, never in place of it.
   aiIntent                 String?
   aiIntentConfidence       Float?
   aiIntentReason           String?
@@ -891,9 +894,9 @@ model Attachment {
   @@index([campaignDocumentId])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PERSONALISED DOCUMENTS (PDF agreements / forms attached to campaigns)
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Immutable uploaded PDF bytes, content-addressed per organisation. Never
 /// updated in place: replacing a document's PDF creates a new row, so a
@@ -974,15 +977,15 @@ model CampaignDocument {
   @@index([campaignId])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // NOTIFICATIONS / AUDIT / AI
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 model Notification {
   id          String   @id @default(cuid())
   workspaceId String
   userId      String
-  type        String // NEW_REPLY | ASSIGNMENT | FOLLOW_UP_DUE | ... (§87)
+  type        String // NEW_REPLY | ASSIGNMENT | FOLLOW_UP_DUE | ... (Â§87)
   title       String
   body        String?
   link        String?
@@ -1033,14 +1036,14 @@ model AiUsage {
   @@index([organizationId, createdAt])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// RETENTION (§130)
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// RETENTION (Â§130)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Per-organization retention policy. Null days = keep forever. Configuring
 // a policy never deletes anything by itself: enforcement is a separate,
 // explicit, audited step ("Do not delete historical communication
-// accidentally" — §130). This table records intent plus who set it.
+// accidentally" â€” Â§130). This table records intent plus who set it.
 
 model RetentionPolicy {
   id               String   @id @default(cuid())
@@ -1058,9 +1061,9 @@ model RetentionPolicy {
   organization Organization @relation(fields: [organizationId], references: [id])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // INTEGRATIONS / SNIPPETS
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Per-organisation Slack settings. The bot token itself is SLACK_BOT_TOKEN in
 // the environment and never stored here.
@@ -1092,9 +1095,9 @@ model ReplySnippet {
   @@index([workspaceId])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // EMAIL TRACKING (open / click events)
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 model EmailTrackingEvent {
   id         String   @id @default(cuid())
@@ -1115,9 +1118,32 @@ model EmailTrackingEvent {
   @@index([email])
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// SLA RULES
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+model SlaRule {
+  id                   String   @id @default(cuid())
+  workspaceId          String
+  name                 String
+  firstResponseMinutes Int      // minutes to first reply
+  resolutionMinutes    Int      // minutes to resolution
+  appliesTo            String   @default("ALL") // ALL | TAG | ASSIGNEE
+  tagName              String?  // if appliesTo=TAG
+  assigneeId           String?  // if appliesTo=ASSIGNEE
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assignee  User?     @relation(fields: [assigneeId], references: [id])
+
+  @@index([workspaceId])
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // EMAIL SUPPRESSION (unsubscribes, bounces)
-// ─────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 model EmailSuppression {
   id            String   @id @default(cuid())
@@ -1137,3 +1163,42 @@ model EmailSuppression {
   @@unique([workspaceId, email])
   @@index([workspaceId])
 }
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// OUTBOUND WEBHOOKS
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+model WebhookEndpoint {
+  id          String   @id @default(cuid())
+  workspaceId String
+  url         String
+  secret      String   // HMAC-SHA256 signing secret (generated on create)
+  events      String[] // e.g. ["conversation.resolved", "email.bounced"]
+  active      Boolean  @default(true)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace  Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([workspaceId])
+}
+
+model WebhookDelivery {
+  id           String    @id @default(cuid())
+  endpointId   String
+  event        String
+  payload      Json
+  status       String    @default("PENDING") // PENDING | SUCCESS | FAILED
+  statusCode   Int?
+  responseBody String?   @db.Text
+  attemptCount Int       @default(0)
+  lastAttemptAt DateTime?
+  createdAt    DateTime  @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId])
+}
+

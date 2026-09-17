@@ -42,6 +42,12 @@ interface DatasetOption {
   name: string;
 }
 
+interface ContactSearchResult {
+  id: string;
+  name: string | null;
+  primaryEmail: string;
+}
+
 export default function TemplateEditorPage() {
   const params = useParams<{ id: string }>();
   const [template, setTemplate] = useState<TemplateDetail | null>(null);
@@ -73,6 +79,12 @@ export default function TemplateEditorPage() {
   const [records, setRecords] = useState<{ id: string; label: string }[]>([]);
   const [recordId, setRecordId] = useState('');
   const [datasetColumns, setDatasetColumns] = useState<string[]>([]);
+
+  // "Preview as contact" — mutually exclusive with dataset/record picker.
+  const [contactQuery, setContactQuery] = useState('');
+  const [contactResults, setContactResults] = useState<ContactSearchResult[]>([]);
+  const [contactId, setContactId] = useState('');
+  const [contactDropdownOpen, setContactDropdownOpen] = useState(false);
 
   const latest = template?.versions[0] ?? null;
 
@@ -131,18 +143,42 @@ export default function TemplateEditorPage() {
       });
   }, [datasetId]);
 
+  // Debounced contact search for "Preview as contact".
+  useEffect(() => {
+    const q = contactQuery.trim();
+    if (!q) {
+      setContactResults([]);
+      setContactDropdownOpen(false);
+      return;
+    }
+    const t = setTimeout(async () => {
+      const res = await fetch(`/api/contacts?q=${encodeURIComponent(q)}`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const results: ContactSearchResult[] = (json.contacts ?? []).slice(0, 20).map((c: any) => ({
+        id: c.id,
+        name: c.name ?? null,
+        primaryEmail: c.primaryEmail,
+      }));
+      setContactResults(results);
+      setContactDropdownOpen(results.length > 0);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [contactQuery]);
+
   const refreshPreview = useCallback(async () => {
     const res = await fetch(`/api/templates/${params.id}/preview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         draft: { subject, html, css: css || null },
-        ...(recordId ? { recordId } : {}),
+        // contactId takes precedence; fall back to dataset recordId.
+        ...(contactId ? { contactId } : recordId ? { recordId } : {}),
       }),
     });
     if (!res.ok) return;
     setPreview(await res.json());
-  }, [params.id, subject, html, css, recordId]);
+  }, [params.id, subject, html, css, recordId, contactId]);
 
   // Debounced live preview as the user types.
   useEffect(() => {
@@ -291,7 +327,13 @@ export default function TemplateEditorPage() {
           <label className="mb-1 block text-xs font-medium">Preview as</label>
           <select
             value={datasetId}
-            onChange={(e) => setDatasetId(e.target.value)}
+            onChange={(e) => {
+              setDatasetId(e.target.value);
+              // Clear contact selection when switching to dataset mode.
+              setContactId('');
+              setContactQuery('');
+              setContactResults([]);
+            }}
             className="mb-2 w-full rounded-md border px-2 py-1.5 text-xs"
           >
             <option value="">— no dataset —</option>
@@ -309,6 +351,64 @@ export default function TemplateEditorPage() {
                 <option key={r.id} value={r.id}>{r.label}</option>
               ))}
             </select>
+          )}
+
+          {/* Contact picker — alternative to the dataset/record approach. */}
+          <div className="my-2 flex items-center gap-2">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-[10px] text-muted-foreground">or</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+          <label className="mb-1 block text-xs font-medium">Preview as contact</label>
+          <div className="relative">
+            <input
+              value={contactQuery}
+              onChange={(e) => {
+                setContactQuery(e.target.value);
+                if (!e.target.value) {
+                  setContactId('');
+                  setContactResults([]);
+                }
+              }}
+              onFocus={() => contactResults.length > 0 && setContactDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setContactDropdownOpen(false), 150)}
+              placeholder="Search by name or email…"
+              className="w-full rounded-md border px-2 py-1.5 text-xs"
+              aria-label="Search contacts for preview"
+            />
+            {contactDropdownOpen && contactResults.length > 0 && (
+              <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border bg-card shadow-lg">
+                {contactResults.map((c) => (
+                  <button
+                    key={c.id}
+                    className="flex w-full flex-col px-2 py-1.5 text-left text-xs hover:bg-elevated"
+                    onMouseDown={() => {
+                      setContactId(c.id);
+                      setContactQuery(c.name ?? c.primaryEmail);
+                      setContactDropdownOpen(false);
+                      // Clear dataset/record when switching to contact mode.
+                      setDatasetId('');
+                      setRecordId('');
+                    }}
+                  >
+                    <span className="font-medium">{c.name ?? '(no name)'}</span>
+                    <span className="text-muted-foreground">{c.primaryEmail}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {contactId && (
+            <button
+              onClick={() => {
+                setContactId('');
+                setContactQuery('');
+                setContactResults([]);
+              }}
+              className="mt-1 text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              Clear contact
+            </button>
           )}
 
           {/* Always-visible dataset variables — shown as clickable chips so users know exact names to use. */}

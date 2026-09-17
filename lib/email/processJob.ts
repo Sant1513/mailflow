@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db/client';
 import { GmailProvider } from '@/lib/email/gmail';
+import { dispatchWebhook } from '@/lib/webhooks/dispatch';
 import { SendEmailError, type EmailProvider } from '@/lib/email/provider';
 import { buildReferences } from '@/lib/email/mime';
 import { EmailJobStatus, BatchStatus, CampaignStatus, MessageDirection } from '@prisma/client';
@@ -345,6 +346,16 @@ async function failJob(
       }).catch((err) => {
         console.error('[email] auto-suppress failed', { emailJobId, err });
       });
+
+      // Fire-and-forget webhook for permanent bounce.
+      if (jobWithWorkspace?.toEmail && jobWithWorkspace.campaign?.workspaceId) {
+        dispatchWebhook(jobWithWorkspace.campaign.workspaceId, 'email.bounced', {
+          emailJobId,
+          email: jobWithWorkspace.toEmail,
+          errorCode: code,
+          errorMessage: message,
+        }).catch(() => undefined);
+      }
     }
   }
 

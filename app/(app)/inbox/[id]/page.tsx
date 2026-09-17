@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -21,6 +21,14 @@ export default function ConversationPage() {
   const [tagInput, setTagInput] = useState('');
   const [followUpDate, setFollowUpDate] = useState('');
   const [followUpNote, setFollowUpNote] = useState('');
+
+  // §merge: state for the merge-conversations modal
+  const [showMerge, setShowMerge] = useState(false);
+  const [mergeQ, setMergeQ] = useState('');
+  const [mergeResults, setMergeResults] = useState<any[]>([]);
+  const [mergeSelected, setMergeSelected] = useState<any | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const mergeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/conversations/${params.id}`);
@@ -166,6 +174,55 @@ export default function ConversationPage() {
     load();
   }
 
+  function handleMergeSearch(q: string) {
+    setMergeQ(q);
+    setMergeResults([]);
+    setMergeSelected(null);
+    if (mergeTimerRef.current) clearTimeout(mergeTimerRef.current);
+    if (!q.trim()) return;
+    mergeTimerRef.current = setTimeout(async () => {
+      const res = await fetch(`/api/inbox?q=${encodeURIComponent(q)}&filter=all&pageSize=10`);
+      if (!res.ok) return;
+      const json = await res.json();
+      // Exclude the current conversation from results.
+      setMergeResults((json.conversations ?? []).filter((c: any) => c.id !== params.id));
+    }, 300);
+  }
+
+  function openMerge() {
+    setShowMerge(true);
+    setMergeQ('');
+    setMergeResults([]);
+    setMergeSelected(null);
+  }
+
+  function closeMerge() {
+    if (mergeTimerRef.current) clearTimeout(mergeTimerRef.current);
+    setShowMerge(false);
+    setMergeQ('');
+    setMergeResults([]);
+    setMergeSelected(null);
+  }
+
+  async function confirmMerge() {
+    if (!mergeSelected) return;
+    setMergeBusy(true);
+    const res = await fetch(`/api/conversations/${mergeSelected.id}/merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetId: params.id }),
+    });
+    setMergeBusy(false);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast.error(json.error ?? 'Merge failed');
+      return;
+    }
+    toast.success('Conversations merged');
+    closeMerge();
+    load();
+  }
+
   function exportConversation() {
     const conv = data.conversation;
     const messages: any[] = conv.messages ?? [];
@@ -295,6 +352,9 @@ export default function ConversationPage() {
             )}
             <button onClick={exportConversation} className="rounded border px-2 py-1 hover:bg-elevated" title="Print / export conversation">
               Export
+            </button>
+            <button onClick={openMerge} className="rounded border px-2 py-1 hover:bg-elevated" title="Merge another conversation into this one">
+              Merge
             </button>
           </div>
         </div>
@@ -448,6 +508,74 @@ export default function ConversationPage() {
           </dl>
         </aside>
       </div>
+
+      {/* Merge conversations modal */}
+      {showMerge && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={(e) => { if (e.target === e.currentTarget) closeMerge(); }}
+        >
+          <div className="w-full max-w-lg rounded-lg border bg-card p-5 shadow-xl">
+            <h2 className="mb-1 text-sm font-semibold">Merge conversation</h2>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Search for another conversation to merge into <strong>{c.subject}</strong>.
+              All messages, notes, and follow-ups will move here; the other conversation will be deleted.
+            </p>
+
+            <input
+              autoFocus
+              type="search"
+              value={mergeQ}
+              onChange={(e) => handleMergeSearch(e.target.value)}
+              placeholder="Search by subject, email or name…"
+              className="w-full rounded border px-2 py-1.5 text-sm"
+            />
+
+            {mergeResults.length > 0 && (
+              <ul className="mt-2 max-h-52 overflow-y-auto rounded border text-xs divide-y">
+                {mergeResults.map((r) => (
+                  <li
+                    key={r.id}
+                    onClick={() => setMergeSelected(r)}
+                    className={`cursor-pointer px-3 py-2 hover:bg-muted/60 ${mergeSelected?.id === r.id ? 'bg-muted' : ''}`}
+                  >
+                    <div className="font-medium truncate">{r.subject}</div>
+                    <div className="text-muted-foreground truncate">
+                      {r.contact?.name || r.recipientEmail} · {r.recipientEmail} · {r.status.replace(/_/g, ' ').toLowerCase()}
+                      {r.lastMessageAt ? ` · ${new Date(r.lastMessageAt).toLocaleDateString()}` : ''}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {mergeQ.trim() && mergeResults.length === 0 && (
+              <p className="mt-2 text-xs text-muted-foreground">No matching conversations found.</p>
+            )}
+
+            {mergeSelected && (
+              <div className="mt-3 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                <strong>Warning — cannot be undone.</strong> All messages from{' '}
+                <em>&ldquo;{mergeSelected.subject}&rdquo;</em> will move into{' '}
+                <em>&ldquo;{c.subject}&rdquo;</em> and the other conversation will be permanently deleted.
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={closeMerge} className="rounded border px-3 py-1.5 text-xs hover:bg-elevated">
+                Cancel
+              </button>
+              <button
+                onClick={confirmMerge}
+                disabled={!mergeSelected || mergeBusy}
+                className="rounded bg-destructive px-3 py-1.5 text-xs text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+              >
+                {mergeBusy ? 'Merging…' : 'Merge into this conversation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

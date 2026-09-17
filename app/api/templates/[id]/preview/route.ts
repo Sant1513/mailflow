@@ -11,6 +11,8 @@ import { Role } from '@prisma/client';
 const previewSchema = z.object({
   // Preview against a real record ("Preview as: Rahul Sharma", §25) …
   recordId: z.string().optional(),
+  // … or against a contact, mapping its fields to template variables.
+  contactId: z.string().optional(),
   // … or against ad-hoc values / unsaved editor content.
   data: z.record(z.any()).optional(),
   versionId: z.string().optional(),
@@ -48,7 +50,28 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   // Resolve the data to personalize with.
   let data: Record<string, unknown> = body.data ?? {};
   let recordLabel: string | null = null;
-  if (body.recordId) {
+  if (body.contactId) {
+    // Preview as a real contact: map standard contact fields to template
+    // variables, and merge any linked dataset record for extra columns.
+    const contact = await prisma.contact.findUnique({
+      where: { id: body.contactId },
+      include: { records: { take: 1, orderBy: { createdAt: 'desc' } } },
+    });
+    if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+    if (contact.workspaceId !== session.workspaceId && session.role !== Role.SUPER_ADMIN) {
+      throw new ForbiddenError();
+    }
+    // Seed with any linked record data so dataset-specific columns resolve,
+    // then overlay the canonical contact fields so they always win.
+    const linkedRecord = contact.records[0];
+    data = {
+      ...(linkedRecord ? (linkedRecord.data as Record<string, unknown>) : {}),
+      name: contact.name ?? '',
+      email: contact.primaryEmail,
+      phone: contact.phone ?? '',
+    };
+    recordLabel = contact.name ?? contact.primaryEmail;
+  } else if (body.recordId) {
     const record = await prisma.record.findUnique({
       where: { id: body.recordId },
       include: { dataset: true },
