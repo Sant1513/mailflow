@@ -7,7 +7,14 @@ import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
 import type { EmailAttachment } from '@/lib/email/provider';
-import { mergeSigningFieldDefs, normalizeBulkSigners, publicSigningFieldValues, type BulkSignerConfig } from '@/lib/signing/fields';
+import {
+  effectiveAssignedFields,
+  lockedKeysForSigner,
+  mergeSigningFieldDefs,
+  normalizeBulkSigners,
+  publicSigningFieldValues,
+  type BulkSignerConfig,
+} from '@/lib/signing/fields';
 
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
@@ -108,28 +115,37 @@ export const POST = withErrorHandling(async (req) => {
     if (s.assignedFields?.length) signerFieldMap.set(s.index, s.assignedFields);
   }
 
-  const missing: string[] = [];
+  // Blank document variables are allowed: the signer fills them in on the
+  // signing page. Only the values the sender provided get locked.
   const expandedRecipients = body.recipients.flatMap((r, rowIndex) => {
+    const rowValues: Record<string, string> = { ...r.fieldValues };
     for (const key of fieldKeys) {
-      const value = r.fieldValues[key] ?? templateFields.find((f) => f.key === key)?.defaultValue ?? '';
-      if (!value.trim()) missing.push(`Row ${rowIndex + 1}: missing ${key}`);
+      const provided = r.fieldValues[key];
+      rowValues[key] = provided ?? templateFields.find((f) => f.key === key)?.defaultValue ?? '';
     }
     const rowSigners = r.signers?.length
       ? r.signers
       : [{ name: r.name, email: r.email, role: signers[0]?.role ?? 'Signer 1' }];
-    return rowSigners.map((s, signerIndex) => ({
-      rowIndex,
-      signerIndex: signerIndex + 1,
-      name: s.name,
-      email: s.email,
-      role: s.role,
-      fieldValues: r.fieldValues,
-      assignedFields: signerFieldMap.get(signerIndex + 1) ?? [],
-    }));
+    const rowIsMulti = rowSigners.length > 1;
+    const assignments = effectiveAssignedFields(
+      fieldKeys,
+      rowValues,
+      rowSigners.map((_, i) => signerFieldMap.get(i + 1) ?? []),
+    );
+    return rowSigners.map((s, signerIndex) => {
+      const assignedFields = assignments[signerIndex] ?? [];
+      return {
+        rowIndex,
+        signerIndex: signerIndex + 1,
+        name: s.name,
+        email: s.email,
+        role: s.role,
+        fieldValues: rowValues,
+        assignedFields,
+        lockedFields: lockedKeysForSigner(fieldKeys, rowValues, assignedFields, rowIsMulti),
+      };
+    });
   });
-  if (missing.length) {
-    return NextResponse.json({ error: 'CSV/document variables are incomplete.', issues: missing.slice(0, 50) }, { status: 400 });
-  }
 
   const now = new Date();
   const expiresAt = new Date(now.getTime() + body.expiresInDays * 24 * 60 * 60 * 1000);
@@ -170,9 +186,6 @@ export const POST = withErrorHandling(async (req) => {
   const requests = await Promise.all(
     expandedRecipients.map((r) => {
       const publicValues = publicSigningFieldValues(r.fieldValues);
-      for (const field of templateFields) {
-        if (publicValues[field.key] === undefined && field.defaultValue) publicValues[field.key] = field.defaultValue;
-      }
       const groupId = rowGroupMap.get(r.rowIndex) ?? null;
       const isFirstSigner = r.signerIndex === 1;
       const shouldSendNow = !isMultiSigner || isFirstSigner || signingOrder === 'PARALLEL';
@@ -190,7 +203,7 @@ export const POST = withErrorHandling(async (req) => {
           recipientEmail: r.email,
           fieldValues: {
             ...publicValues,
-            __lockedFields: fieldKeys,
+            __lockedFields: r.lockedFields,
             __bulkRow: String(r.rowIndex + 1),
             __signerIndex: String(r.signerIndex),
             __signerRole: r.role,

@@ -118,6 +118,49 @@ export function computeLockedFieldsForSigner(
   return allFieldKeys.filter((k) => !assignedFields.includes(k));
 }
 
+function isFilled(values: Record<string, string>, key: string): boolean {
+  return (values[key] ?? '').trim().length > 0;
+}
+
+/**
+ * Per-signer assignments for one document row. Blank fields that nobody was
+ * explicitly assigned go to the first signer, so every blank field has exactly
+ * one owner on the signing page.
+ */
+export function effectiveAssignedFields(
+  fieldKeys: string[],
+  values: Record<string, string>,
+  explicitBySigner: string[][],
+): string[][] {
+  if (explicitBySigner.length <= 1) return explicitBySigner.map((a) => [...a]);
+  const claimed = new Set(explicitBySigner.flat());
+  const orphanBlanks = fieldKeys.filter((k) => !isFilled(values, k) && !claimed.has(k));
+  return explicitBySigner.map((assigned, i) => (i === 0 ? [...new Set([...assigned, ...orphanBlanks])] : [...assigned]));
+}
+
+/**
+ * Fields a signer may not edit: everything the sender filled in, plus (for
+ * multi-signer documents) blank fields owned by another signer.
+ */
+export function lockedKeysForSigner(
+  fieldKeys: string[],
+  values: Record<string, string>,
+  assignedFields: string[],
+  isMultiSigner: boolean,
+): string[] {
+  const filled = fieldKeys.filter((k) => isFilled(values, k));
+  if (!isMultiSigner) return filled;
+  const othersBlanks = fieldKeys.filter((k) => !isFilled(values, k) && !assignedFields.includes(k));
+  return [...filled, ...othersBlanks];
+}
+
+export function lockedFieldsOf(values: unknown): string[] {
+  if (!values || typeof values !== 'object') return [];
+  const raw = (values as Record<string, unknown>).__lockedFields;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is string => typeof v === 'string');
+}
+
 export function mergeGroupFieldValues(
   existingValues: Record<string, string>,
   signerValues: Record<string, string>,

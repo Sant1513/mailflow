@@ -5,6 +5,17 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { defaultBulkSigners, mergeSigningFieldDefs, normalizeBulkSigners, type BulkSignerConfig, type SigningOrderType } from '@/lib/signing/fields';
+import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
+import { SigningPreviewModal } from '@/components/documents/SigningDocPreview';
+
+function LockIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-muted-foreground" aria-hidden="true">
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </svg>
+  );
+}
 
 interface FieldDef {
   key: string;
@@ -32,13 +43,15 @@ interface Recipient {
   name: string;
   email: string;
   fieldValues: Record<string, string>;
+  /** Fields that came filled from the CSV; read-only in the table. */
+  lockedFields?: string[];
   signers?: { name: string; email: string; role: string }[];
 }
 
 interface CsvIssue {
   row?: number;
   message: string;
-  severity: 'error' | 'warning';
+  severity: 'error' | 'warning' | 'info';
 }
 
 function parseCsv(text: string): string[][] {
@@ -139,6 +152,7 @@ export default function NewBulkSendPage() {
   const [csvRows, setCsvRows] = useState<Recipient[] | null>(null);
   const [csvError, setCsvError] = useState<string | null>(null);
   const [csvIssues, setCsvIssues] = useState<CsvIssue[]>([]);
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
   // Load templates on mount
   useEffect(() => {
@@ -267,27 +281,42 @@ export default function NewBulkSendPage() {
           return;
         }
         const headers = rows[0]!.map((h) => h.trim().toLowerCase());
-        const requiredHeaders = [...fieldDefs.map((fd) => fd.key.toLowerCase()), ...signerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn])];
-        const missingHeaders = requiredHeaders.filter((h) => !headers.includes(h));
-        if (missingHeaders.length > 0) {
-          setCsvError(`CSV is missing required column${missingHeaders.length !== 1 ? 's' : ''}: ${missingHeaders.join(', ')}`);
-          setCsvIssues(missingHeaders.map((h) => ({ severity: 'error', message: `Missing column ${h}` })));
+        // Signer columns are mandatory: we can't send without knowing who signs.
+        const signerHeaders = signerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn]);
+        const missingSignerHeaders = signerHeaders.filter((h) => !headers.includes(h));
+        if (missingSignerHeaders.length > 0) {
+          setCsvError(`CSV is missing signer column${missingSignerHeaders.length !== 1 ? 's' : ''}: ${missingSignerHeaders.join(', ')}`);
+          setCsvIssues(missingSignerHeaders.map((h) => ({ severity: 'error', message: `Missing column ${h}` })));
+          setCsvRows(null);
           return;
         }
 
+        // Document variables are optional: absent columns and blank cells are
+        // left for the signer to fill in on the signing page.
         const issues: CsvIssue[] = [];
+        const missingFieldColumns = fieldDefs.filter((fd) => !headers.includes(fd.key.toLowerCase()));
+        if (missingFieldColumns.length > 0) {
+          issues.push({
+            severity: 'info',
+            message: `Not in CSV (signer will fill): ${missingFieldColumns.map((fd) => fd.key).join(', ')}`,
+          });
+        }
+
         const emailSeen = new Set<string>();
         const parsed: Recipient[] = [];
+        let blankCells = 0;
         for (let row = 1; row < rows.length; row++) {
           const cols = rows[row]!;
           const rowNumber = row + 1;
 
           const fieldValues: Record<string, string> = {};
+          const lockedFields: string[] = [];
           for (const fd of fieldDefs) {
             const idx = headers.indexOf(fd.key.toLowerCase());
-            const value = (cols[idx] ?? '').trim();
-            if (!value) issues.push({ row: rowNumber, severity: 'error', message: `Missing ${fd.key}` });
+            const value = idx >= 0 ? (cols[idx] ?? '').trim() : (fd.defaultValue ?? '').trim();
             fieldValues[fd.key] = value;
+            if (value) lockedFields.push(fd.key);
+            else if (idx >= 0) blankCells++;
           }
 
           const rowSigners = signerConfigs.map((s) => {
@@ -303,7 +332,13 @@ export default function NewBulkSendPage() {
           });
 
           const first = rowSigners[0]!;
-          parsed.push({ name: first.name, email: first.email, fieldValues, signers: rowSigners });
+          parsed.push({ name: first.name, email: first.email, fieldValues, lockedFields, signers: rowSigners });
+        }
+        if (blankCells > 0) {
+          issues.push({
+            severity: 'info',
+            message: `${blankCells} blank cell${blankCells !== 1 ? 's' : ''} will be filled in by the signer. You can also type values in the table before sending.`,
+          });
         }
         const errors = issues.filter((i) => i.severity === 'error');
         setCsvIssues(issues);
@@ -317,7 +352,7 @@ export default function NewBulkSendPage() {
       };
       reader.readAsText(file);
     },
-    [fieldDefs],
+    [fieldDefs, signerConfigs],
   );
 
   function acceptCsvRows() {
@@ -416,6 +451,10 @@ export default function NewBulkSendPage() {
   }
 
   const validCount = recipients.filter((r) => r.name.trim() && r.email.trim()).length;
+  const signerFillCount = recipients
+    .filter((r) => r.name.trim() && r.email.trim())
+    .reduce((n, r) => n + fieldDefs.filter((fd) => !(r.fieldValues[fd.key] ?? '').trim()).length, 0);
+  const previewRecipient = previewIndex !== null ? recipients[previewIndex] : undefined;
 
   return (
     <div className="mx-auto max-w-4xl p-6">
@@ -495,14 +534,15 @@ export default function NewBulkSendPage() {
                       <tr key={fd.key} className="border-t border-border-subtle">
                         <td className="px-2 py-1"><code className="font-mono text-primary">{fd.key}</code></td>
                         <td className="px-2 py-1"><code className="font-mono">{fd.key}</code></td>
-                        <td className="px-2 py-1 text-muted-foreground">CSV, locked for signer</td>
+                        <td className="px-2 py-1 text-muted-foreground">CSV value locked · blank = signer fills</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                These values are filled from the uploaded CSV and are read-only on the signing page.
+                Values present in the CSV are read-only on the signing page. Blank cells or missing columns are filled in by the
+                signer before they can sign.
               </p>
             </div>
           )}
@@ -529,9 +569,12 @@ export default function NewBulkSendPage() {
               <div
                 className="rounded-md border bg-background p-3 prose prose-sm max-w-none overflow-auto max-h-36 text-foreground text-xs"
                 dangerouslySetInnerHTML={{
-                  __html: signerConfigs.length > 1
-                    ? coloredTemplatePreview(selectedTemplate.content, fieldAssignments, signerConfigs)
-                    : selectedTemplate.content,
+                  __html: renderSignatureTokensHtml(
+                    signerConfigs.length > 1
+                      ? coloredTemplatePreview(selectedTemplate.content, fieldAssignments, signerConfigs)
+                      : selectedTemplate.content,
+                    signerConfigs.map((s) => ({ signerIndex: s.index, role: s.role })),
+                  ),
                 }}
               />
             </div>
@@ -642,7 +685,8 @@ export default function NewBulkSendPage() {
                 <div className="space-y-2">
                   <div className="text-xs font-medium">Field assignment <span className="text-muted-foreground font-normal">(which signer fills which fields on the signing page)</span></div>
                   <p className="text-xs text-muted-foreground">
-                    CSV-populated fields are always locked. These fields are for signers to fill on the signing page. Leave blank to let any signer fill all fields.
+                    Fields with a CSV value are always locked. Tick which signer fills each field when its cell is blank. Unticked
+                    blank fields go to {signerConfigs[0]?.role ?? 'Signer 1'}.
                   </p>
                   <div className="overflow-x-auto rounded border bg-background">
                     <table className="w-full text-xs">
@@ -712,8 +756,8 @@ export default function NewBulkSendPage() {
               <div>
                 <p className="text-xs font-medium">Upload CSV</p>
                 <p className="text-xs text-muted-foreground">
-                  Must include every document variable plus signer columns:{' '}
-                  {[...fieldDefs.map((fd) => fd.key), ...signerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn])].map((h, i, arr) => (
+                  Required signer columns:{' '}
+                  {signerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn]).map((h, i, arr) => (
                     <span key={h}>
                       <code className="font-mono">{h}</code>
                       {i < arr.length - 1 ? ', ' : ''}
@@ -721,6 +765,18 @@ export default function NewBulkSendPage() {
                   ))}
                   .
                 </p>
+                {fieldDefs.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Document columns (optional, blank = signer fills):{' '}
+                    {fieldDefs.map((fd, i, arr) => (
+                      <span key={fd.key}>
+                        <code className="font-mono">{fd.key}</code>
+                        {i < arr.length - 1 ? ', ' : ''}
+                      </span>
+                    ))}
+                    .
+                  </p>
+                )}
               </div>
               <button
                 type="button"
@@ -754,7 +810,16 @@ export default function NewBulkSendPage() {
               </div>
               <ul className="max-h-28 space-y-1 overflow-y-auto text-xs text-muted-foreground">
                 {csvIssues.slice(0, 20).map((issue, i) => (
-                  <li key={i} className={issue.severity === 'error' ? 'text-destructive' : ''}>
+                  <li
+                    key={i}
+                    className={
+                      issue.severity === 'error'
+                        ? 'text-destructive'
+                        : issue.severity === 'warning'
+                          ? 'text-amber-700'
+                          : 'text-blue-700'
+                    }
+                  >
                     {issue.row ? `Row ${issue.row}: ` : ''}{issue.message}
                   </li>
                 ))}
@@ -769,7 +834,7 @@ export default function NewBulkSendPage() {
               <p className="mb-2 text-xs font-medium text-muted-foreground">
                 {csvRows.length} row{csvRows.length !== 1 ? 's' : ''} parsed — review before sending:
               </p>
-              <div className="max-h-40 overflow-y-auto">
+              <div className="max-h-40 overflow-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-muted-foreground text-left">
@@ -790,8 +855,12 @@ export default function NewBulkSendPage() {
                           {(r.signers ?? [{ name: r.name, email: r.email, role: 'Signer 1' }]).map((s) => `${s.role}: ${s.name}`).join(' / ')}
                         </td>
                         {fieldDefs.map((fd) => (
-                          <td key={fd.key} className="px-2 py-1 text-muted-foreground">
-                            {r.fieldValues[fd.key] ?? '—'}
+                          <td key={fd.key} className="px-2 py-1 text-muted-foreground whitespace-nowrap">
+                            {r.fieldValues[fd.key] ? (
+                              r.fieldValues[fd.key]
+                            ) : (
+                              <span className="rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">Signer fills</span>
+                            )}
                           </td>
                         ))}
                       </tr>
@@ -833,16 +902,16 @@ export default function NewBulkSendPage() {
                   <th className="px-2 py-1 text-left min-w-[160px]">Name</th>
                   <th className="px-2 py-1 text-left min-w-[180px]">Email</th>
                   {fieldDefs.map((fd) => (
-                    <th key={fd.key} className="px-2 py-1 text-left min-w-[120px]">
+                    <th key={fd.key} className="px-2 py-1 text-left min-w-[140px]">
                       {fd.label}
                     </th>
                   ))}
-                  <th className="px-2 py-1 w-8" />
+                  <th className="px-2 py-1 w-24" />
                 </tr>
               </thead>
               <tbody>
                 {recipients.map((r, i) => (
-                  <tr key={i} className="border-t border-border-subtle">
+                  <tr key={i} className="border-t border-border-subtle align-top">
                     <td className="px-2 py-1">
                       <input
                         type="text"
@@ -851,6 +920,15 @@ export default function NewBulkSendPage() {
                         placeholder="Full name"
                         className="w-full text-sm"
                       />
+                      {(r.signers?.length ?? 0) > 1 && (
+                        <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+                          {r.signers!.slice(1).map((s, si) => (
+                            <div key={si} className="truncate" title={s.email}>
+                              + {s.role}: {s.name}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-2 py-1">
                       <input
@@ -861,23 +939,46 @@ export default function NewBulkSendPage() {
                         className="w-full text-sm"
                       />
                     </td>
-                    {fieldDefs.map((fd) => (
-                      <td key={fd.key} className="px-2 py-1">
-                        <input
-                          type="text"
-                          value={r.fieldValues[fd.key] ?? ''}
-                          onChange={(e) => updateRecipientCustomField(i, fd.key, e.target.value)}
-                          placeholder={fd.defaultValue ?? fd.label}
-                          className="w-full text-sm"
-                        />
-                      </td>
-                    ))}
-                    <td className="px-2 py-1">
+                    {fieldDefs.map((fd) => {
+                      const locked = r.lockedFields?.includes(fd.key) && !!r.fieldValues[fd.key];
+                      return (
+                        <td key={fd.key} className="px-2 py-1">
+                          {locked ? (
+                            <div
+                              className="flex items-center gap-1 rounded border border-transparent bg-muted/60 px-2 py-1.5 text-sm text-foreground"
+                              title="From CSV · locked for the signer"
+                            >
+                              <LockIcon />
+                              <span className="truncate">{r.fieldValues[fd.key]}</span>
+                            </div>
+                          ) : (
+                            <input
+                              type="text"
+                              value={r.fieldValues[fd.key] ?? ''}
+                              onChange={(e) => updateRecipientCustomField(i, fd.key, e.target.value)}
+                              placeholder="Signer fills"
+                              title="Leave blank for the signer to fill, or type a value to lock it"
+                              className={`w-full text-sm ${r.fieldValues[fd.key] ? '' : 'border-dashed !border-amber-300 bg-amber-50/40'}`}
+                            />
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="px-2 py-1 whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewIndex(i)}
+                        disabled={!selectedTemplate}
+                        className="text-xs text-primary hover:underline disabled:text-muted-foreground disabled:no-underline"
+                        title={selectedTemplate ? 'Preview the generated document' : 'Select a template to preview'}
+                      >
+                        Preview
+                      </button>
                       {recipients.length > 1 && (
                         <button
                           type="button"
                           onClick={() => removeRecipient(i)}
-                          className="text-xs text-muted-foreground hover:text-primary px-1"
+                          className="ml-2 text-xs text-muted-foreground hover:text-primary px-1"
                           aria-label="Remove recipient"
                         >
                           ✕
@@ -900,6 +1001,14 @@ export default function NewBulkSendPage() {
 
           <p className="mt-3 text-xs text-muted-foreground">
             {validCount} valid recipient{validCount !== 1 ? 's' : ''} · max 200 per batch
+            {signerFillCount > 0 && (
+              <>
+                {' '}· <span className="text-amber-700">{signerFillCount} blank field{signerFillCount !== 1 ? 's' : ''} will be filled by signers</span>
+              </>
+            )}
+          </p>
+          <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+            <LockIcon /> Values from the CSV are locked for the signer. Dashed cells are blank: type a value to lock it, or leave it for the signer.
           </p>
         </div>
 
@@ -915,6 +1024,23 @@ export default function NewBulkSendPage() {
           </button>
         </div>
       </form>
+
+      {previewRecipient && selectedTemplate && (
+        <SigningPreviewModal
+          payload={{
+            title: title.trim() || selectedTemplate.title,
+            content: selectedTemplate.content,
+            fieldValues: previewRecipient.fieldValues,
+            recipientName: previewRecipient.name,
+            recipientEmail: previewRecipient.email,
+            signers: (previewRecipient.signers?.length
+              ? previewRecipient.signers
+              : [{ name: previewRecipient.name, email: previewRecipient.email, role: signerConfigs[0]?.role ?? 'Signer 1' }]
+            ).map((s) => ({ role: s.role, name: s.name })),
+          }}
+          onClose={() => setPreviewIndex(null)}
+        />
+      )}
     </div>
   );
 }

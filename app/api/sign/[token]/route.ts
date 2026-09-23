@@ -6,7 +6,7 @@ import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
 import type { EmailAttachment } from '@/lib/email/provider';
 import { generateSignedPdf } from '@/lib/documents/pdf';
-import { publicSigningFieldValues, mergeGroupFieldValues } from '@/lib/signing/fields';
+import { lockedFieldsOf, publicSigningFieldValues, mergeGroupFieldValues } from '@/lib/signing/fields';
 
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
@@ -61,8 +61,9 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
   }
 
   // For multi-signer groups, gather previous signers' info
-  let previousSignatures: { signerName: string; signerRole: string; signedAt: string }[] = [];
+  let previousSignatures: { signerName: string; signerRole: string; signedAt: string; signerIndex: number }[] = [];
   let groupProgress: { current: number; total: number } | null = null;
+  let groupSigners: { signerIndex: number; role: string; name: string }[] = [];
 
   if (request.groupId) {
     const group = await prisma.signingGroup.findUnique({
@@ -71,20 +72,24 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
     if (group) {
       groupProgress = { current: request.signerOrder + 1, total: group.totalSigners };
     }
-    const prevSigners = await prisma.signingRequest.findMany({
-      where: {
-        groupId: request.groupId,
-        status: 'SIGNED',
-        signerOrder: { lt: request.signerOrder },
-      },
+    const members = await prisma.signingRequest.findMany({
+      where: { groupId: request.groupId, status: { not: 'VOIDED' } },
       orderBy: { signerOrder: 'asc' },
-      select: { recipientName: true, signerRole: true, signedAt: true },
+      select: { recipientName: true, signerRole: true, signedAt: true, signerOrder: true, status: true, id: true },
     });
-    previousSignatures = prevSigners.map((s) => ({
-      signerName: s.recipientName,
-      signerRole: s.signerRole ?? '',
-      signedAt: s.signedAt?.toISOString() ?? '',
+    groupSigners = members.map((m) => ({
+      signerIndex: m.signerOrder + 1,
+      role: m.signerRole ?? `Signer ${m.signerOrder + 1}`,
+      name: m.recipientName,
     }));
+    previousSignatures = members
+      .filter((s) => s.status === 'SIGNED' && s.id !== request.id)
+      .map((s) => ({
+        signerName: s.recipientName,
+        signerRole: s.signerRole ?? '',
+        signedAt: s.signedAt?.toISOString() ?? '',
+        signerIndex: s.signerOrder + 1,
+      }));
   }
 
   return NextResponse.json({
@@ -96,6 +101,8 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
     lockedFields: lockedFieldsOf(request.fieldValues),
     assignedFields: request.assignedFields ?? [],
     signerRole: request.signerRole,
+    signerIndex: request.signerOrder + 1,
+    groupSigners,
     groupProgress,
     previousSignatures,
     status: request.status === 'SENT' ? 'VIEWED' : request.status,
@@ -142,7 +149,11 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
 
   const body = submitSchema.parse(await req.json());
   const lockedFields = lockedFieldsOf(request.fieldValues);
-  const attemptedLockedEdit = Object.keys(body.fieldValues ?? {}).find((key) => lockedFields.includes(key));
+  const storedValues = publicSigningFieldValues(request.fieldValues as Record<string, unknown>);
+  // Echoing a locked value back unchanged is fine; changing it is not.
+  const attemptedLockedEdit = Object.entries(body.fieldValues ?? {}).find(
+    ([key, value]) => lockedFields.includes(key) && (storedValues[key] ?? '') !== value,
+  )?.[0];
   if (attemptedLockedEdit) {
     return NextResponse.json(
       { error: `Field "${attemptedLockedEdit}" is locked and cannot be changed by the signer.` },
@@ -166,10 +177,22 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
 
   // Merge admin pre-fills with signer-submitted values, but locked CSV/template
   // variables remain server-owned and cannot be overwritten by the public link.
+  const signerFilled = Object.fromEntries(
+    Object.entries(body.fieldValues ?? {}).filter(([key]) => !lockedFields.includes(key) && !key.startsWith('__')),
+  );
   const mergedFieldValues: Record<string, string> = {
     ...((request.fieldValues as Record<string, string>) ?? {}),
-    ...(body.fieldValues ?? {}),
+    ...signerFilled,
   };
+
+  const signerIndex = request.signerOrder + 1;
+  const earlierGroupSignatures = request.groupId
+    ? await prisma.signingRequest.findMany({
+        where: { groupId: request.groupId, status: 'SIGNED', id: { not: request.id } },
+        orderBy: { signerOrder: 'asc' },
+        select: { signerOrder: true, signerRole: true, recipientName: true, signatureImage: true, signedAt: true },
+      })
+    : [];
 
   const signerIp =
     req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
@@ -187,6 +210,22 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
     signatureImage: body.signatureImage,
     signedAt: now,
     signerIp,
+    signatureSlots: [
+      ...earlierGroupSignatures.map((r) => ({
+        signerIndex: r.signerOrder + 1,
+        role: r.signerRole ?? `Signer ${r.signerOrder + 1}`,
+        name: r.recipientName,
+        image: r.signatureImage ?? undefined,
+        signedAt: r.signedAt ?? undefined,
+      })),
+      {
+        signerIndex,
+        role: request.signerRole ?? `Signer ${signerIndex}`,
+        name: request.recipientName,
+        image: body.signatureImage,
+        signedAt: now,
+      },
+    ],
   });
 
   const signedPdfBase64 = pdfBuffer.toString('base64');
@@ -257,6 +296,12 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
           for (const [k, v] of Object.entries(publicMerged)) {
             nextFieldValues[k] = v;
           }
+          // Whatever earlier signers filled in is final for later signers.
+          const nextLocked = new Set(lockedFieldsOf(nextSignerRequest.fieldValues));
+          for (const [k, v] of Object.entries(publicMerged)) {
+            if (v.trim()) nextLocked.add(k);
+          }
+          (nextFieldValues as Record<string, unknown>).__lockedFields = [...nextLocked];
 
           // Extend expiry for next signer using the same window as the current signer
           const windowMs = request.expiresAt && request.sentAt
@@ -309,6 +354,13 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
             signedAt: r.signedAt ?? now,
             signerIp: r.signerIp ?? 'unknown',
             signerOrder: r.signerOrder,
+          })),
+          signatureSlots: allGroupRequests.map((r) => ({
+            signerIndex: r.signerOrder + 1,
+            role: r.signerRole ?? `Signer ${r.signerOrder + 1}`,
+            name: r.recipientName,
+            image: r.signatureImage ?? undefined,
+            signedAt: r.signedAt ?? undefined,
           })),
         });
 
@@ -536,13 +588,6 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
 
   return NextResponse.json({ signed: true });
 });
-
-function lockedFieldsOf(values: unknown): string[] {
-  if (!values || typeof values !== 'object') return [];
-  const raw = (values as Record<string, unknown>).__lockedFields;
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((v): v is string => typeof v === 'string');
-}
 
 function buildGroupCompletionHtml({
   title,

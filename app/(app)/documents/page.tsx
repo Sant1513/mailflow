@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { EditSigningRequestModal } from '@/components/documents/EditSigningRequestModal';
 
 const PAGE_SIZE = 20;
 
@@ -48,6 +49,7 @@ export default function ESignDocumentsPage() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(
     async (pg: number) => {
@@ -364,6 +366,16 @@ export default function ESignDocumentsPage() {
                             View Document
                           </button>
                         )}
+                        {['DRAFT', 'SENT', 'VIEWED'].includes(req.status) && (
+                          <button onClick={() => setEditingId(req.id)} className="text-primary hover:underline">
+                            Preview / Edit
+                          </button>
+                        )}
+                        {['VOIDED', 'EXPIRED'].includes(req.status) && (
+                          <button onClick={() => setEditingId(req.id)} className="text-muted-foreground hover:text-foreground">
+                            Preview
+                          </button>
+                        )}
                         {['SIGNED', 'VOIDED', 'EXPIRED'].includes(req.status) && (
                           <button
                             onClick={() => restartRequest(req.id)}
@@ -418,6 +430,14 @@ export default function ESignDocumentsPage() {
             </div>
           )}
         </>
+      )}
+
+      {editingId && (
+        <EditSigningRequestModal
+          requestId={editingId}
+          onClose={() => setEditingId(null)}
+          onSaved={() => load(page)}
+        />
       )}
     </div>
   );

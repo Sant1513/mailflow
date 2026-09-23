@@ -1,5 +1,16 @@
 import { PDFDocument, PDFFont, rgb, StandardFonts } from 'pdf-lib';
-import { publicSigningFieldValues, renderSigningContent } from '@/lib/signing/fields';
+import {
+  extractSigningVariables,
+  labelForSigningField,
+  publicSigningFieldValues,
+  renderSigningContent,
+} from '@/lib/signing/fields';
+import {
+  parseSignatureToken,
+  signatureTokenRegex,
+  type SignatureAlign,
+  type SignatureSlot,
+} from '@/lib/signing/signature-tokens';
 
 // ─── Public interface ─────────────────────────────────────────────────────────
 
@@ -23,6 +34,10 @@ export interface SignedPdfInput {
   signedAt: Date;
   signerIp: string;
   additionalSignatures?: SignedPdfSignature[];
+  /** Signatures drawn inline where the content has [[signature]] tokens. */
+  signatureSlots?: SignatureSlot[];
+  /** Unsigned preview: no certificate page, blank fields shown as [Label]. */
+  preview?: boolean;
 }
 
 // ─── Internal types ───────────────────────────────────────────────────────────
@@ -423,6 +438,88 @@ function block(
   };
 }
 
+// ─── Inline signature slots ───────────────────────────────────────────────────
+
+const SIG_MARK_RE = /@@SIG_([1-3])_(left|center|right)@@/g;
+
+type ContentPiece = { type: 'block'; block: Block } | { type: 'sig'; signerIndex: number; align: SignatureAlign };
+
+/** Splits blocks at signature markers so a slot can be drawn between text. */
+function splitAtSignatureMarks(blocks: Block[]): ContentPiece[] {
+  const out: ContentPiece[] = [];
+  for (const blk of blocks) {
+    let current: Block = { ...blk, runs: [] };
+    let sawMark = false;
+    for (const run of blk.runs) {
+      let last = 0;
+      for (const m of run.text.matchAll(SIG_MARK_RE)) {
+        sawMark = true;
+        const before = run.text.slice(last, m.index);
+        if (before) current.runs.push({ ...run, text: before });
+        if (current.runs.some((r) => r.text.trim())) out.push({ type: 'block', block: current });
+        out.push({ type: 'sig', signerIndex: Number(m[1]), align: m[2] as SignatureAlign });
+        current = { ...blk, runs: [] };
+        last = (m.index ?? 0) + m[0].length;
+      }
+      const rest = run.text.slice(last);
+      if (rest) current.runs.push({ ...run, text: rest });
+    }
+    if (!sawMark) out.push({ type: 'block', block: blk });
+    else if (current.runs.some((r) => r.text.trim())) out.push({ type: 'block', block: current });
+  }
+  return out;
+}
+
+function rawPng(image: string): string {
+  return image.startsWith('data:') ? image.replace(/^data:image\/png;base64,/, '') : image;
+}
+
+async function drawSignatureSlot(
+  s: DrawState,
+  align: SignatureAlign,
+  signerIndex: number,
+  slot: SignatureSlot | undefined,
+  preview: boolean,
+): Promise<void> {
+  const BOX_W = 200;
+  const IMG_MAX_H = 50;
+  ensureSpace(s, IMG_MAX_H + 50);
+  s.y -= 10;
+  const x = align === 'center' ? (PAGE_W - BOX_W) / 2 : align === 'right' ? PAGE_W - MARGIN - BOX_W : MARGIN;
+  const top = s.y;
+  const label = slot?.role || `Signer ${signerIndex}`;
+
+  let drewImage = false;
+  if (slot?.image) {
+    try {
+      const png = await s.doc.embedPng(Buffer.from(rawPng(slot.image), 'base64'));
+      const { width: iw, height: ih } = png.scale(1);
+      const scale = Math.min(BOX_W / iw, IMG_MAX_H / ih, 1);
+      s.page.drawImage(png, { x, y: top - ih * scale, width: iw * scale, height: ih * scale });
+      drewImage = true;
+    } catch {
+      drewImage = false;
+    }
+  }
+  if (!drewImage) {
+    s.page.drawText(san(preview ? `${label} signs here` : 'Awaiting signature'), {
+      x: x + 4, y: top - 32, size: 9, font: s.fonts.ital, color: rgb(0.6, 0.6, 0.6),
+    });
+  }
+
+  s.y = top - IMG_MAX_H - 4;
+  s.page.drawLine({ start: { x, y: s.y }, end: { x: x + BOX_W, y: s.y }, thickness: 0.8, color: rgb(0.45, 0.45, 0.45) });
+  s.y -= 11;
+  const caption = san(`${label}${slot?.name ? ` - ${slot.name}` : ''}`);
+  s.page.drawText(caption, { x, y: s.y, size: 8.5, font: s.fonts.bold, color: rgb(0.2, 0.2, 0.2) });
+  if (drewImage && slot?.signedAt) {
+    s.y -= 10;
+    const when = typeof slot.signedAt === 'string' ? new Date(slot.signedAt) : slot.signedAt;
+    s.page.drawText(san(`Signed: ${when.toUTCString()}`), { x, y: s.y, size: 7.5, font: s.fonts.reg, color: rgb(0.45, 0.45, 0.45) });
+  }
+  s.y -= 14;
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> {
@@ -445,29 +542,49 @@ export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> 
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });
 
   const signedDateStr = input.signedAt.toUTCString();
-  drawBlock(s, {
-    kind: 'p', align: 'left', indent: 0,
-    runs: [
-      { text: 'Signed by: ', bold: true, italic: false },
-      { text: `${input.recipientName} <${input.recipientEmail}>`, bold: false, italic: false },
-    ],
-  });
-  drawBlock(s, {
-    kind: 'p', align: 'left', indent: 0,
-    runs: [
-      { text: 'Signed on: ', bold: true, italic: false },
-      { text: signedDateStr, bold: false, italic: false },
-    ],
-  });
+  if (input.preview) {
+    drawBlock(s, block('p', 'PREVIEW - NOT SIGNED', { bold: true }));
+    drawBlock(s, block('p', `Prepared for: ${input.recipientName}${input.recipientEmail ? ` <${input.recipientEmail}>` : ''}. Fields in [brackets] are completed by the signer.`, { italic: true }));
+  } else {
+    drawBlock(s, {
+      kind: 'p', align: 'left', indent: 0,
+      runs: [
+        { text: 'Signed by: ', bold: true, italic: false },
+        { text: `${input.recipientName} <${input.recipientEmail}>`, bold: false, italic: false },
+      ],
+    });
+    drawBlock(s, {
+      kind: 'p', align: 'left', indent: 0,
+      runs: [
+        { text: 'Signed on: ', bold: true, italic: false },
+        { text: signedDateStr, bold: false, italic: false },
+      ],
+    });
+  }
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });
 
   // ── Document content (HTML rendered, variables substituted) ──────────────────
   const publicValues = publicSigningFieldValues(input.fieldValues);
-  const processedContent = renderSigningContent(input.content, publicValues).replace(/\{\{\w+\}\}/g, '');
-
-  for (const blk of parseHtml(processedContent)) {
-    drawBlock(s, blk);
+  const renderValues = { ...publicValues };
+  if (input.preview) {
+    for (const key of extractSigningVariables(input.content)) {
+      if (!(renderValues[key] ?? '').trim()) renderValues[key] = `[${labelForSigningField(key)}]`;
+    }
   }
+  const processedContent = renderSigningContent(input.content, renderValues)
+    .replace(/\{\{\w+\}\}/g, '')
+    .replace(signatureTokenRegex(), (_m, signer?: string, align?: string) => {
+      const tok = parseSignatureToken(signer, align);
+      return ` @@SIG_${tok.signerIndex}_${tok.align}@@ `;
+    });
+
+  const slotsBySigner = new Map((input.signatureSlots ?? []).map((slot) => [slot.signerIndex, slot]));
+  for (const piece of splitAtSignatureMarks(parseHtml(processedContent))) {
+    if (piece.type === 'block') drawBlock(s, piece.block);
+    else await drawSignatureSlot(s, piece.align, piece.signerIndex, slotsBySigner.get(piece.signerIndex), !!input.preview);
+  }
+
+  if (input.preview) return Buffer.from(await doc.save());
 
   // ── Certificate of completion (new page) ─────────────────────────────────────
   newPage(s);

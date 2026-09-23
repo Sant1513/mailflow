@@ -1,9 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { SignatureTokenInserter } from '@/components/documents/SignatureTokenInserter';
+import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
 
 interface FieldDef {
   key: string;
@@ -19,6 +21,7 @@ export default function NewTemplatePage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [content, setContent] = useState('');
+  const contentRef = useRef<HTMLTextAreaElement>(null);
   const [fieldDefs, setFieldDefs] = useState<FieldDef[]>([
     { key: '', label: '', defaultValue: '' },
   ]);
@@ -45,7 +48,7 @@ export default function NewTemplatePage() {
         out = out.replaceAll(`{{${fd.key.trim()}}}`, fd.defaultValue);
       }
     }
-    return out;
+    return renderSignatureTokensHtml(out, []);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -200,7 +203,9 @@ export default function NewTemplatePage() {
             HTML or plain text. Use <code className="font-mono">{'{{key}}'}</code> placeholders
             matching the field keys above.
           </p>
+          <SignatureTokenInserter textareaRef={contentRef} content={content} onChange={setContent} />
           <textarea
+            ref={contentRef}
             value={content}
             onChange={(e) => setContent(e.target.value)}
             rows={18}

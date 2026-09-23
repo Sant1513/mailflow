@@ -1,4 +1,5 @@
 import { publicSigningFieldValues, renderSigningContent } from '@/lib/signing/fields';
+import { hasSignatureTokens, renderSignatureTokensHtml, type SignatureSlot } from '@/lib/signing/signature-tokens';
 
 export interface SignedHtmlSignature {
   signerName: string;
@@ -20,6 +21,7 @@ export interface SignedHtmlInput {
   signedAt: Date;
   signerIp: string;
   additionalSignatures?: SignedHtmlSignature[];
+  signatureSlots?: SignatureSlot[];
 }
 
 function esc(s: string): string {
@@ -35,6 +37,12 @@ export function generateSignedHtml(input: SignedHtmlInput): string {
   // Substitute variables with yellow highlight — identical to signing preview
   let html = renderSigningContent(input.content, publicValues, { highlight: true });
   html = html.replace(/\{\{\w+\}\}/g, '');
+  const inlineSignatures = hasSignatureTokens(input.content);
+  if (inlineSignatures) {
+    html = renderSignatureTokensHtml(html, input.signatureSlots ?? [], {
+      placeholderLabel: () => 'Awaiting signature',
+    });
+  }
 
   const sigSrc = input.signatureImage.startsWith('data:')
     ? input.signatureImage
@@ -122,7 +130,7 @@ body{font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px;line-height:1
       <div class="doc-label">Document</div>
       <div class="doc">${html}</div>
     </div>
-    ${buildSignaturesSectionHtml(input, sigSrc, signedDate)}
+    ${inlineSignatures ? '' : buildSignaturesSectionHtml(input, sigSrc, signedDate)}
     ${buildCertificateSectionHtml(input, signedDate, fieldRows)}
   </div>
   <p class="hint">Ctrl+P / Cmd+P → Save as PDF to export</p>

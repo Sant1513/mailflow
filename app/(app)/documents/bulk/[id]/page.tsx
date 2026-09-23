@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
+import { EditSigningRequestModal } from '@/components/documents/EditSigningRequestModal';
 
 type SigningStatus = 'DRAFT' | 'SENT' | 'VIEWED' | 'SIGNED' | 'EXPIRED' | 'VOIDED';
 
@@ -64,6 +65,7 @@ export default function BulkSendDetailPage() {
   const [batch, setBatch] = useState<BatchDetail | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/signing-batches/${batchId}`);
@@ -249,14 +251,22 @@ export default function BulkSendDetailPage() {
                           {fmt(req.signedAt)}
                         </td>
                         <td className="px-4 py-2">
-                          {['SENT', 'VIEWED'].includes(req.status) && (
+                          <div className="flex gap-3">
                             <button
-                              onClick={() => resend(req.id)}
-                              className="text-xs text-muted-foreground hover:text-foreground"
+                              onClick={() => setEditingId(req.id)}
+                              className="text-xs text-primary hover:underline"
                             >
-                              Resend
+                              {['DRAFT', 'SENT', 'VIEWED'].includes(req.status) ? 'Preview / Edit' : 'Preview'}
                             </button>
-                          )}
+                            {['SENT', 'VIEWED'].includes(req.status) && (
+                              <button
+                                onClick={() => resend(req.id)}
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                              >
+                                Resend
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -286,14 +296,22 @@ export default function BulkSendDetailPage() {
                     {fmt(req.signedAt)}
                   </td>
                   <td className="px-4 py-2">
-                    {['SENT', 'VIEWED'].includes(req.status) && (
+                    <div className="flex gap-3">
                       <button
-                        onClick={() => resend(req.id)}
-                        className="text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => setEditingId(req.id)}
+                        className="text-xs text-primary hover:underline"
                       >
-                        Resend
+                        {['DRAFT', 'SENT', 'VIEWED'].includes(req.status) ? 'Preview / Edit' : 'Preview'}
                       </button>
-                    )}
+                      {['SENT', 'VIEWED'].includes(req.status) && (
+                        <button
+                          onClick={() => resend(req.id)}
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          Resend
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
@@ -301,6 +319,10 @@ export default function BulkSendDetailPage() {
           </tbody>
         </table>
       </div>
+
+      {editingId && (
+        <EditSigningRequestModal requestId={editingId} onClose={() => setEditingId(null)} onSaved={load} />
+      )}
     </div>
   );
 }

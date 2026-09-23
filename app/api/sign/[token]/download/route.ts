@@ -18,6 +18,20 @@ export const GET = withErrorHandling(
       return NextResponse.json({ error: 'Document not found or not yet signed.' }, { status: 404 });
     }
 
+    const groupSigned = request.groupId
+      ? await prisma.signingRequest.findMany({
+          where: { groupId: request.groupId, status: 'SIGNED' },
+          orderBy: { signerOrder: 'asc' },
+          select: { signerOrder: true, signerRole: true, recipientName: true, signatureImage: true, signedAt: true },
+        })
+      : [{
+          signerOrder: request.signerOrder,
+          signerRole: request.signerRole,
+          recipientName: request.recipientName,
+          signatureImage: request.signatureImage,
+          signedAt: request.signedAt,
+        }];
+
     const html = generateSignedHtml({
       title: request.title,
       content: request.content,
@@ -27,6 +41,13 @@ export const GET = withErrorHandling(
       signatureImage: request.signatureImage ?? '',
       signedAt: request.signedAt ?? new Date(),
       signerIp: request.signerIp ?? 'unknown',
+      signatureSlots: groupSigned.map((r) => ({
+        signerIndex: r.signerOrder + 1,
+        role: r.signerRole ?? `Signer ${r.signerOrder + 1}`,
+        name: r.recipientName,
+        image: r.signatureImage ?? undefined,
+        signedAt: r.signedAt ?? undefined,
+      })),
     });
 
     return new NextResponse(html, {

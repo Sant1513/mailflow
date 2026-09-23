@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { renderSigningContent } from '@/lib/signing/fields';
+import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
 
 type SigningStatus = 'DRAFT' | 'SENT' | 'VIEWED' | 'SIGNED' | 'EXPIRED' | 'VOIDED';
 
@@ -10,6 +11,13 @@ interface PreviousSignature {
   signerName: string;
   signerRole: string;
   signedAt: string;
+  signerIndex: number;
+}
+
+interface GroupSigner {
+  signerIndex: number;
+  role: string;
+  name: string;
 }
 
 interface PublicDocument {
@@ -21,6 +29,8 @@ interface PublicDocument {
   lockedFields: string[];
   assignedFields: string[];
   signerRole: string | null;
+  signerIndex: number;
+  groupSigners: GroupSigner[];
   groupProgress: { current: number; total: number } | null;
   previousSignatures: PreviousSignature[];
   status: SigningStatus;
@@ -39,8 +49,25 @@ function formatLabel(key: string): string {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function substituteVars(content: string, values: Record<string, string>): string {
-  return renderSigningContent(content, values, { highlight: true });
+function substituteVars(content: string, values: Record<string, string>, doc: PublicDocument): string {
+  const withValues = renderSigningContent(content, values, { highlight: true });
+  const own = doc.signerIndex ?? 1;
+  const signers: GroupSigner[] = doc.groupSigners?.length
+    ? doc.groupSigners
+    : [{ signerIndex: own, role: doc.signerRole ?? 'Signer', name: doc.recipientName }];
+  const signedBy = new Map((doc.previousSignatures ?? []).map((p) => [p.signerIndex, p.signerName]));
+  return renderSignatureTokensHtml(
+    withValues,
+    signers.map((s) => ({ signerIndex: s.signerIndex, role: s.role, name: s.name })),
+    {
+      highlightSigner: own,
+      placeholderLabel: (index, slot) => {
+        if (index === own) return 'Your signature will appear here';
+        const signer = signedBy.get(index);
+        return signer ? `Signed by ${signer}` : `${slot?.role ?? `Signer ${index}`} signs here`;
+      },
+    },
+  );
 }
 
 export default function SigningPage() {
@@ -207,12 +234,13 @@ export default function SigningPage() {
   }
 
   const allVarNames = doc ? extractVariableNames(doc.content) : [];
-  const lockedFieldNames = doc ? allVarNames.filter((name) => (doc.lockedFields ?? []).includes(name)) : [];
-  // When assignedFields is set, only those are fillable; otherwise all unlocked fields are fillable
+  const locked = doc?.lockedFields ?? [];
+  const lockedFieldNames = doc ? allVarNames.filter((name) => locked.includes(name)) : [];
+  // Fillable = not locked, and (when this signer has an assignment) assigned to them.
   const fieldNames = doc
-    ? (doc.assignedFields?.length
-        ? allVarNames.filter((name) => doc.assignedFields.includes(name))
-        : allVarNames.filter((name) => !(doc.lockedFields ?? []).includes(name)))
+    ? allVarNames.filter(
+        (name) => !locked.includes(name) && (!doc.assignedFields?.length || doc.assignedFields.includes(name)),
+      )
     : [];
   const allFieldsFilled = fieldNames.every((name) => (localFieldValues[name] ?? '').trim().length > 0);
   const canSubmit = agreed && allFieldsFilled && (mode === 'draw' ? hasDrawing : typedName.trim().length > 0);
@@ -228,7 +256,7 @@ export default function SigningPage() {
       body: JSON.stringify({
         signatureImage: getSignatureImage(),
         signerName: doc.recipientName,
-        fieldValues: localFieldValues,
+        fieldValues: Object.fromEntries(fieldNames.map((name) => [name, (localFieldValues[name] ?? '').trim()])),
       }),
     });
     setSubmitting(false);
@@ -309,7 +337,7 @@ export default function SigningPage() {
     );
   }
 
-  const previewContent = substituteVars(doc.content, localFieldValues);
+  const previewContent = substituteVars(doc.content, localFieldValues, doc);
 
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4">
@@ -346,7 +374,7 @@ export default function SigningPage() {
                 {doc.previousSignatures.map((sig, i) => (
                   <div key={i} className="flex items-center gap-2 text-sm">
                     <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-xs text-green-700">
-                      {i + 1}
+                      {sig.signerIndex ?? i + 1}
                     </span>
                     <span className="font-medium text-gray-800">{sig.signerName}</span>
                     {sig.signerRole && <span className="text-gray-500">({sig.signerRole})</span>}
@@ -379,7 +407,9 @@ export default function SigningPage() {
                 {lockedFieldNames.map((name) => (
                   <div key={name} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
                     <div className="text-[11px] font-medium text-gray-500">{formatLabel(name)}</div>
-                    <div className="mt-0.5 text-sm font-medium text-gray-900">{localFieldValues[name] || '—'}</div>
+                    <div className="mt-0.5 text-sm font-medium text-gray-900">
+                      {localFieldValues[name] || <span className="font-normal italic text-gray-400">Filled by another signer</span>}
+                    </div>
                   </div>
                 ))}
               </div>
