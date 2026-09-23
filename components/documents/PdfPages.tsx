@@ -27,6 +27,7 @@ function loadPdfJs(): Promise<PdfJs> {
  */
 export function PdfPages({
   src,
+  data,
   pages,
   scale,
   reloadKey,
@@ -34,7 +35,9 @@ export function PdfPages({
   onPageClick,
   cursor,
 }: {
-  src: string;
+  src?: string;
+  /** PDF bytes already in memory (e.g. a generated preview); used instead of `src`. */
+  data?: ArrayBuffer;
   pages: PageInfo[];
   scale: number;
   reloadKey?: string | number;
@@ -51,7 +54,8 @@ export function PdfPages({
     setDoc(null);
     setError(null);
     loadPdfJs()
-      .then((lib) => lib.getDocument({ url: src, withCredentials: true }).promise)
+      // pdf.js transfers the buffer it is given, so hand it a copy.
+      .then((lib) => (data ? lib.getDocument({ data: data.slice(0) }) : lib.getDocument({ url: src, withCredentials: true })).promise)
       .then((d) => {
         loaded = d;
         if (cancelled) void d.destroy();
@@ -64,7 +68,7 @@ export function PdfPages({
       cancelled = true;
       if (loaded) void loaded.destroy();
     };
-  }, [src, reloadKey]);
+  }, [src, data, reloadKey]);
 
   if (error) {
     return <div className="p-6 text-sm text-primary">The PDF could not be displayed ({error}). Try reloading the page.</div>;

@@ -1,11 +1,12 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { SignatureTokenInserter } from '@/components/documents/SignatureTokenInserter';
+import { TemplateSignaturePositions } from '@/components/documents/TemplateSignaturePositions';
 import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
+import type { SignaturePlacement } from '@/lib/signing/placements';
 
 interface FieldDef {
   key: string;
@@ -21,7 +22,7 @@ export default function NewTemplatePage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [content, setContent] = useState('');
-  const contentRef = useRef<HTMLTextAreaElement>(null);
+  const [signaturePlacements, setSignaturePlacements] = useState<SignaturePlacement[]>([]);
   const [fieldDefs, setFieldDefs] = useState<FieldDef[]>([
     { key: '', label: '', defaultValue: '' },
   ]);
@@ -73,6 +74,7 @@ export default function NewTemplatePage() {
           label: fd.label.trim(),
           ...(fd.defaultValue.trim() ? { defaultValue: fd.defaultValue.trim() } : {}),
         })),
+        signaturePlacements,
       }),
     });
     setSubmitting(false);
@@ -203,9 +205,7 @@ export default function NewTemplatePage() {
             HTML or plain text. Use <code className="font-mono">{'{{key}}'}</code> placeholders
             matching the field keys above.
           </p>
-          <SignatureTokenInserter textareaRef={contentRef} content={content} onChange={setContent} />
           <textarea
-            ref={contentRef}
             value={content}
             onChange={(e) => setContent(e.target.value)}
             rows={18}
@@ -214,6 +214,15 @@ export default function NewTemplatePage() {
             className="w-full font-mono text-sm"
           />
         </div>
+
+        <TemplateSignaturePositions
+          title={title}
+          content={content}
+          sampleValues={Object.fromEntries(fieldDefs.filter((fd) => fd.key.trim()).map((fd) => [fd.key.trim(), fd.defaultValue]))}
+          roles={[]}
+          value={signaturePlacements}
+          onChange={setSignaturePlacements}
+        />
 
         {/* Preview */}
         <div className="rounded-lg border bg-card">

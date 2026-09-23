@@ -6,6 +6,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { mergeSigningFieldDefs } from '@/lib/signing/fields';
+import { signaturePlacementsSchema } from '@/lib/signing/placements';
 import type { Prisma } from '@prisma/client';
 
 /** GET /api/signing-templates — list non-archived templates for current workspace. */
@@ -25,6 +26,7 @@ export const GET = withErrorHandling(async () => {
       content: true,
       fieldDefs: true,
       signerPresets: true,
+      signaturePlacements: true,
       archived: true,
       createdAt: true,
       updatedAt: true,
@@ -55,6 +57,7 @@ const createSchema = z.object({
   content: z.string().min(1),
   fieldDefs: z.array(fieldDefSchema).default([]),
   signerPresets: z.array(signerPresetSchema).max(3).default([]),
+  signaturePlacements: signaturePlacementsSchema.default([]),
 });
 
 /** POST /api/signing-templates — create a new template. */
@@ -75,6 +78,7 @@ export const POST = withErrorHandling(async (req) => {
       content: body.content,
       fieldDefs: mergeSigningFieldDefs(body.content, body.fieldDefs) as unknown as Prisma.InputJsonValue,
       signerPresets: body.signerPresets as unknown as Prisma.InputJsonValue,
+      signaturePlacements: body.signaturePlacements as unknown as Prisma.InputJsonValue,
       createdById: session.userId,
     },
   });

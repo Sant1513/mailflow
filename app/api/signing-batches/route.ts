@@ -15,6 +15,7 @@ import {
   publicSigningFieldValues,
   type BulkSignerConfig,
 } from '@/lib/signing/fields';
+import { parsePlacements, signaturePlacementsSchema, type SignaturePlacement } from '@/lib/signing/placements';
 
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
@@ -78,6 +79,8 @@ const createSchema = z.object({
   attachments: z.array(attachmentSchema).default([]),
   ccEmails: z.array(z.string().email()).default(['placements@masaischool.com']),
   expiresInDays: z.number().int().min(1).max(365).default(7),
+  /** Omitted = use the template's saved positions. */
+  signaturePlacements: signaturePlacementsSchema.optional(),
 });
 
 /** POST /api/signing-batches — create a batch and send signing requests. */
@@ -94,6 +97,7 @@ export const POST = withErrorHandling(async (req) => {
   // Look up template content if templateId is provided
   let templateContent: string | null = null;
   let templateFields: { key: string; label: string; defaultValue?: string }[] = [];
+  let templatePlacements: SignaturePlacement[] = [];
   if (body.templateId) {
     const tpl = await prisma.signingTemplate.findFirst({
       where: { id: body.templateId, workspaceId },
@@ -102,12 +106,14 @@ export const POST = withErrorHandling(async (req) => {
       return NextResponse.json({ error: 'Template not found.' }, { status: 404 });
     }
     templateContent = tpl.content;
+    templatePlacements = parsePlacements(tpl.signaturePlacements);
     templateFields = mergeSigningFieldDefs(tpl.content, Array.isArray(tpl.fieldDefs) ? tpl.fieldDefs as { key: string; label: string; defaultValue?: string }[] : []);
   }
   const fieldKeys = templateFields.map((f) => f.key);
   const signers = normalizeBulkSigners((body.signers ?? []) as BulkSignerConfig[]);
   const isMultiSigner = signers.length > 1;
   const signingOrder = body.signingOrder;
+  const placements = (body.signaturePlacements ?? templatePlacements).filter((p) => p.signerIndex <= signers.length);
 
   // Build a lookup of signer index → assigned field keys
   const signerFieldMap = new Map<number, string[]>();
@@ -204,6 +210,7 @@ export const POST = withErrorHandling(async (req) => {
           fieldValues: {
             ...publicValues,
             __lockedFields: r.lockedFields,
+            ...(placements.length ? { __signaturePlacements: placements } : {}),
             __bulkRow: String(r.rowIndex + 1),
             __signerIndex: String(r.signerIndex),
             __signerRole: r.role,

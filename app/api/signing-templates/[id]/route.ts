@@ -6,6 +6,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { mergeSigningFieldDefs } from '@/lib/signing/fields';
+import { signaturePlacementsSchema } from '@/lib/signing/placements';
 import type { Prisma } from '@prisma/client';
 
 /** GET /api/signing-templates/[id] — fetch one template for the current workspace. */
@@ -47,6 +48,7 @@ const patchSchema = z.object({
   content: z.string().min(1).optional(),
   fieldDefs: z.array(fieldDefSchema).optional(),
   signerPresets: z.array(signerPresetSchema).max(3).optional(),
+  signaturePlacements: signaturePlacementsSchema.optional(),
   archived: z.boolean().optional(),
 });
 
@@ -81,6 +83,9 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       ...(body.content !== undefined && { content: body.content }),
       ...(nextFieldDefs !== undefined && { fieldDefs: nextFieldDefs as unknown as Prisma.InputJsonValue }),
       ...(body.signerPresets !== undefined && { signerPresets: body.signerPresets as unknown as Prisma.InputJsonValue }),
+      ...(body.signaturePlacements !== undefined && {
+        signaturePlacements: body.signaturePlacements as unknown as Prisma.InputJsonValue,
+      }),
       ...(body.archived !== undefined && { archived: body.archived }),
     },
   });

@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { extractSigningVariables, labelForSigningField, renderSigningContent } from '@/lib/signing/fields';
-import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
+import { renderSignatureTokensHtml, stripSignatureTokens } from '@/lib/signing/signature-tokens';
+import { placedSignerIndices, type SignaturePlacement } from '@/lib/signing/placements';
 
 export interface PreviewSigner {
   role: string;
@@ -17,6 +18,7 @@ export interface PreviewPayload {
   signers: PreviewSigner[];
   recipientName?: string;
   recipientEmail?: string;
+  placements?: SignaturePlacement[];
 }
 
 export function renderPreviewHtml(
@@ -34,11 +36,22 @@ export function renderPreviewHtml(
 }
 
 export function DocumentHtmlPane({ payload, className = '' }: { payload: PreviewPayload; className?: string }) {
+  const placed = placedSignerIndices(payload.placements ?? []);
   return (
-    <div
-      className={`rounded-md border bg-white p-5 text-sm leading-relaxed text-gray-800 ${className}`}
-      dangerouslySetInnerHTML={{ __html: renderPreviewHtml(payload.content, payload.fieldValues, payload.signers) }}
-    />
+    <>
+      {placed.length > 0 && (
+        <p className="mb-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs text-blue-900">
+          Signature positions for {placed.map((i) => payload.signers[i - 1]?.role ?? `Signer ${i}`).join(', ')} are set on
+          the page. Open the PDF tab to see exactly where they land.
+        </p>
+      )}
+      <div
+        className={`rounded-md border bg-white p-5 text-sm leading-relaxed text-gray-800 ${className}`}
+        dangerouslySetInnerHTML={{
+          __html: renderPreviewHtml(stripSignatureTokens(payload.content, placed), payload.fieldValues, payload.signers),
+        }}
+      />
+    </>
   );
 }
 

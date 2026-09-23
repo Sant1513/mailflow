@@ -22,6 +22,7 @@ interface SigningTemplate {
   description?: string | null;
   content: string;
   fieldDefs: FieldDef[];
+  signaturePlacements?: unknown[];
 }
 
 export default function NewSigningRequestPage() {
@@ -47,6 +48,7 @@ export default function NewSigningRequestPage() {
   const [templates, setTemplates] = useState<SigningTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [templateLoading, setTemplateLoading] = useState(false);
+  const [signaturePlacements, setSignaturePlacements] = useState<unknown[]>([]);
 
   /** Load all templates for the dropdown. */
   useEffect(() => {
@@ -79,6 +81,7 @@ export default function NewSigningRequestPage() {
   function applyTemplate(tpl: SigningTemplate) {
     setTitle(tpl.title);
     setContent(tpl.content);
+    setSignaturePlacements(Array.isArray(tpl.signaturePlacements) ? tpl.signaturePlacements : []);
     const newFields: FieldPair[] = tpl.fieldDefs.map((fd) => ({
       key: fd.key,
       value: fd.defaultValue ?? '',
@@ -88,7 +91,10 @@ export default function NewSigningRequestPage() {
 
   async function handleTemplateSelect(id: string) {
     setSelectedTemplateId(id);
-    if (!id) return;
+    if (!id) {
+      setSignaturePlacements([]);
+      return;
+    }
     setTemplateLoading(true);
     const res = await fetch(`/api/signing-templates/${id}`);
     if (res.ok) {
@@ -143,6 +149,7 @@ export default function NewSigningRequestPage() {
         attachments,
         ccEmails: ccList,
         expiresInDays,
+        signaturePlacements,
         ...(emailSubject.trim() ? { emailSubject: emailSubject.trim() } : {}),
         ...(emailBody.trim() ? { emailBody: emailBody.trim() } : {}),
       }),

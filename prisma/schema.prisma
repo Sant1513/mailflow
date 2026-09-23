@@ -1276,6 +1276,7 @@ model SigningTemplate {
   content     String   @db.Text
   fieldDefs     Json     @default("[]") // [{key, label, defaultValue?}]
   signerPresets Json     @default("[]") // [{index, role, nameColumn, emailColumn, assignedFields?}]
+  signaturePlacements Json @default("[]") // [{signerIndex, page, x, y, width, height}] in PDF points
   archived      Boolean  @default(false)
   createdById String
   createdAt   DateTime @default(now())

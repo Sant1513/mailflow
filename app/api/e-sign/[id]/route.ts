@@ -15,6 +15,7 @@ import {
   lockedKeysForSigner,
   publicSigningFieldValues,
 } from '@/lib/signing/fields';
+import { placementsOf } from '@/lib/signing/placements';
 
 /** GET /api/e-sign/[id] — fetch a single signing request for the current workspace. */
 export const GET = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
@@ -49,6 +50,7 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
       fieldValues: publicSigningFieldValues(request.fieldValues as Record<string, unknown>),
       lockedFields: lockedFieldsOf(request.fieldValues),
       fieldKeys: fieldKeysFor(request.content, request.fieldValues),
+      signaturePlacements: placementsOf(request.fieldValues),
       hasSignedPdf: !!_pdf,
     },
     groupMembers,

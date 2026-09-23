@@ -8,6 +8,7 @@ import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
 import type { EmailAttachment } from '@/lib/email/provider';
 import type { Prisma } from '@prisma/client';
+import { signaturePlacementsSchema } from '@/lib/signing/placements';
 
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
@@ -109,6 +110,7 @@ const createSchema = z.object({
   expiresInDays: z.number().int().min(1).max(365).default(7),
   emailSubject: z.string().max(300).optional(),
   emailBody: z.string().optional(),
+  signaturePlacements: signaturePlacementsSchema.default([]),
 });
 
 /** Replace {{student_name}}, {{document_name}}, {{signing_link}}, {{admin_name}} in a template. */
@@ -141,7 +143,13 @@ export const POST = withErrorHandling(async (req) => {
       content: body.content,
       recipientName: body.recipientName,
       recipientEmail: body.recipientEmail,
-      fieldValues: body.fieldValues,
+      fieldValues: {
+        ...body.fieldValues,
+        // A single request has one signer: keep only their boxes.
+        ...(body.signaturePlacements.some((p) => p.signerIndex === 1)
+          ? { __signaturePlacements: body.signaturePlacements.filter((p) => p.signerIndex === 1) }
+          : {}),
+      },
       attachments: body.attachments,
       ccEmails: body.ccEmails,
       status: 'SENT',

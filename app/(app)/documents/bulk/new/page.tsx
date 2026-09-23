@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { defaultBulkSigners, mergeSigningFieldDefs, normalizeBulkSigners, type BulkSignerConfig, type SigningOrderType } from '@/lib/signing/fields';
 import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
 import { SigningPreviewModal } from '@/components/documents/SigningDocPreview';
+import { SignaturePlacementEditor, signerColor } from '@/components/documents/SignaturePlacementEditor';
+import { parsePlacements, type SignaturePlacement } from '@/lib/signing/placements';
 
 function LockIcon() {
   return (
@@ -37,7 +39,10 @@ interface SigningTemplate {
   content: string;
   fieldDefs: FieldDef[];
   signerPresets?: SignerPreset[];
+  signaturePlacements?: unknown;
 }
+
+const BLANK_DOCUMENT = '<p>Please sign this document.</p>';
 
 interface Recipient {
   name: string;
@@ -152,7 +157,10 @@ export default function NewBulkSendPage() {
   const [csvRows, setCsvRows] = useState<Recipient[] | null>(null);
   const [csvError, setCsvError] = useState<string | null>(null);
   const [csvIssues, setCsvIssues] = useState<CsvIssue[]>([]);
-  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<Recipient | null>(null);
+  const [placements, setPlacements] = useState<SignaturePlacement[]>([]);
+  const [placementEditorOpen, setPlacementEditorOpen] = useState(false);
+  const [saveToTemplate, setSaveToTemplate] = useState(true);
 
   // Load templates on mount
   useEffect(() => {
@@ -168,10 +176,12 @@ export default function NewBulkSendPage() {
   useEffect(() => {
     if (!templateId) {
       setSelectedTemplate(null);
+      setPlacements([]);
       return;
     }
     const tpl = templates.find((t) => t.id === templateId) ?? null;
     setSelectedTemplate(tpl);
+    setPlacements(parsePlacements(tpl?.signaturePlacements));
     if (tpl?.signerPresets && tpl.signerPresets.length > 0) {
       setSigners(normalizeBulkSigners(tpl.signerPresets as BulkSignerConfig[]));
       const assignments: Record<number, string[]> = {};
@@ -184,8 +194,11 @@ export default function NewBulkSendPage() {
     }
   }, [templateId, templates]);
 
-  const fieldDefs: FieldDef[] = selectedTemplate ? mergeSigningFieldDefs(selectedTemplate.content, selectedTemplate.fieldDefs) : [];
-  const signerConfigs = normalizeBulkSigners(signers);
+  const fieldDefs: FieldDef[] = useMemo(
+    () => (selectedTemplate ? mergeSigningFieldDefs(selectedTemplate.content, selectedTemplate.fieldDefs) : []),
+    [selectedTemplate],
+  );
+  const signerConfigs = useMemo(() => normalizeBulkSigners(signers), [signers]);
 
   // ── Recipient helpers ─────────────────────────────────────────────────────
 
@@ -229,6 +242,13 @@ export default function NewBulkSendPage() {
 
   function removeSigner(index: number) {
     setSigners((prev) => normalizeBulkSigners(prev.filter((_, i) => i !== index)));
+    // Signers are renumbered after a removal; keep each box with its signer.
+    const removed = index + 1;
+    setPlacements((prev) =>
+      prev
+        .filter((p) => p.signerIndex !== removed)
+        .map((p) => (p.signerIndex > removed ? { ...p, signerIndex: p.signerIndex - 1 } : p)),
+    );
     setFieldAssignments((prev) => {
       const next = { ...prev };
       delete next[index + 1];
@@ -431,6 +451,7 @@ export default function NewBulkSendPage() {
           assignedFields: fieldAssignments[s.index] ?? [],
         })),
         signingOrder: signerConfigs.length > 1 ? signingOrder : 'SEQUENTIAL',
+        signaturePlacements: activePlacements,
         attachments,
         ccEmails: ccList,
         expiresInDays,
@@ -454,7 +475,27 @@ export default function NewBulkSendPage() {
   const signerFillCount = recipients
     .filter((r) => r.name.trim() && r.email.trim())
     .reduce((n, r) => n + fieldDefs.filter((fd) => !(r.fieldValues[fd.key] ?? '').trim()).length, 0);
-  const previewRecipient = previewIndex !== null ? recipients[previewIndex] : undefined;
+  const documentContent = selectedTemplate?.content ?? BLANK_DOCUMENT;
+  const activePlacements = placements.filter((p) => p.signerIndex <= signerConfigs.length);
+  const placementSampleValues = (csvRows?.[0] ?? recipients.find((r) => Object.values(r.fieldValues).some((v) => v.trim())))
+    ?.fieldValues ?? Object.fromEntries(fieldDefs.map((fd) => [fd.key, fd.defaultValue ?? '']));
+
+  async function savePlacements(next: SignaturePlacement[]) {
+    setPlacements(next);
+    setPlacementEditorOpen(false);
+    if (saveToTemplate && selectedTemplate) {
+      const res = await fetch(`/api/signing-templates/${selectedTemplate.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signaturePlacements: next }),
+      });
+      if (!res.ok) {
+        toast.error('Positions are set for this batch, but saving them to the template failed');
+        return;
+      }
+      setTemplates((prev) => prev.map((t) => (t.id === selectedTemplate.id ? { ...t, signaturePlacements: next } : t)));
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl p-6">
@@ -721,6 +762,53 @@ export default function NewBulkSendPage() {
               )}
             </div>
           )}
+
+          {/* Visual signature placement */}
+          <div className="mt-3 rounded-md border bg-muted/20 p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-medium">Signature positions</div>
+                <p className="text-xs text-muted-foreground">
+                  Drag a box onto the document for each signer and resize it. Each signature is drawn inside its box on the
+                  signed PDF.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPlacementEditorOpen(true)}
+                disabled={!selectedTemplate}
+                className="btn-secondary !px-3 !py-1 text-xs disabled:opacity-50"
+                title={selectedTemplate ? undefined : 'Select a template first'}
+              >
+                {activePlacements.length ? 'Edit positions' : 'Place signatures on document'}
+              </button>
+            </div>
+            {!selectedTemplate ? (
+              <p className="text-xs text-muted-foreground">Select a template above to place signatures.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {signerConfigs.map((s) => {
+                  const boxes = activePlacements.filter((p) => p.signerIndex === s.index);
+                  const c = signerColor(s.index);
+                  return (
+                    <span
+                      key={s.index}
+                      className="inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px]"
+                      style={{ borderColor: boxes.length ? c.border : undefined }}
+                    >
+                      <span className="h-2.5 w-2.5 rounded-sm" style={{ background: c.bg, border: `1.5px dashed ${c.border}` }} />
+                      {s.role}:{' '}
+                      {boxes.length ? (
+                        <span>page {[...new Set(boxes.map((b) => b.page + 1))].join(', ')}</span>
+                      ) : (
+                        <span className="text-muted-foreground">not placed (completion page only)</span>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ── Attachments ───────────────────────────────────────────────── */}
@@ -844,6 +932,7 @@ export default function NewBulkSendPage() {
                       {fieldDefs.map((fd) => (
                         <th key={fd.key} className="px-2 py-1">{fd.label}</th>
                       ))}
+                      <th className="px-2 py-1 text-right">Document</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -863,11 +952,20 @@ export default function NewBulkSendPage() {
                             )}
                           </td>
                         ))}
+                        <td className="px-2 py-1 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewTarget(r)}
+                            className="whitespace-nowrap font-medium text-primary hover:underline"
+                          >
+                            Preview
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {csvRows.length > 20 && (
                       <tr>
-                        <td colSpan={3 + fieldDefs.length} className="px-2 py-1 text-muted-foreground italic">
+                        <td colSpan={4 + fieldDefs.length} className="px-2 py-1 text-muted-foreground italic">
                           … and {csvRows.length - 20} more
                         </td>
                       </tr>
@@ -967,10 +1065,9 @@ export default function NewBulkSendPage() {
                     <td className="px-2 py-1 whitespace-nowrap">
                       <button
                         type="button"
-                        onClick={() => setPreviewIndex(i)}
-                        disabled={!selectedTemplate}
-                        className="text-xs text-primary hover:underline disabled:text-muted-foreground disabled:no-underline"
-                        title={selectedTemplate ? 'Preview the generated document' : 'Select a template to preview'}
+                        onClick={() => setPreviewTarget(r)}
+                        className="text-xs text-primary hover:underline"
+                        title="Preview the generated document for this recipient"
                       >
                         Preview
                       </button>
@@ -1025,20 +1122,41 @@ export default function NewBulkSendPage() {
         </div>
       </form>
 
-      {previewRecipient && selectedTemplate && (
+      {previewTarget && (
         <SigningPreviewModal
           payload={{
-            title: title.trim() || selectedTemplate.title,
-            content: selectedTemplate.content,
-            fieldValues: previewRecipient.fieldValues,
-            recipientName: previewRecipient.name,
-            recipientEmail: previewRecipient.email,
-            signers: (previewRecipient.signers?.length
-              ? previewRecipient.signers
-              : [{ name: previewRecipient.name, email: previewRecipient.email, role: signerConfigs[0]?.role ?? 'Signer 1' }]
+            title: title.trim() || selectedTemplate?.title || 'Untitled document',
+            content: documentContent,
+            fieldValues: previewTarget.fieldValues,
+            recipientName: previewTarget.name,
+            recipientEmail: previewTarget.email,
+            signers: (previewTarget.signers?.length
+              ? previewTarget.signers
+              : [{ name: previewTarget.name, email: previewTarget.email, role: signerConfigs[0]?.role ?? 'Signer 1' }]
             ).map((s) => ({ role: s.role, name: s.name })),
+            placements: activePlacements,
           }}
-          onClose={() => setPreviewIndex(null)}
+          onClose={() => setPreviewTarget(null)}
+        />
+      )}
+
+      {placementEditorOpen && (
+        <SignaturePlacementEditor
+          title={title.trim() || selectedTemplate?.title || 'Document'}
+          content={documentContent}
+          fieldValues={placementSampleValues}
+          signers={signerConfigs.map((s) => ({ index: s.index, role: s.role }))}
+          value={activePlacements}
+          onSave={savePlacements}
+          onClose={() => setPlacementEditorOpen(false)}
+          footer={
+            selectedTemplate ? (
+              <label className="flex items-start gap-2">
+                <input type="checkbox" checked={saveToTemplate} onChange={(e) => setSaveToTemplate(e.target.checked)} className="mt-0.5 accent-primary" />
+                <span>Also save as the default for “{selectedTemplate.title}”</span>
+              </label>
+            ) : null
+          }
         />
       )}
     </div>

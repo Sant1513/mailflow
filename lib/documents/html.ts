@@ -1,5 +1,6 @@
 import { publicSigningFieldValues, renderSigningContent } from '@/lib/signing/fields';
-import { hasSignatureTokens, renderSignatureTokensHtml, type SignatureSlot } from '@/lib/signing/signature-tokens';
+import { hasSignatureTokens, renderSignatureTokensHtml, stripSignatureTokens, type SignatureSlot } from '@/lib/signing/signature-tokens';
+import { placedSignerIndices, type SignaturePlacement } from '@/lib/signing/placements';
 
 export interface SignedHtmlSignature {
   signerName: string;
@@ -22,6 +23,8 @@ export interface SignedHtmlInput {
   signerIp: string;
   additionalSignatures?: SignedHtmlSignature[];
   signatureSlots?: SignatureSlot[];
+  /** Positioned signatures live in the PDF; their inline tokens are dropped here. */
+  placements?: SignaturePlacement[];
 }
 
 function esc(s: string): string {
@@ -35,9 +38,10 @@ function esc(s: string): string {
 export function generateSignedHtml(input: SignedHtmlInput): string {
   const publicValues = publicSigningFieldValues(input.fieldValues);
   // Substitute variables with yellow highlight — identical to signing preview
-  let html = renderSigningContent(input.content, publicValues, { highlight: true });
+  const content = stripSignatureTokens(input.content, placedSignerIndices(input.placements ?? []));
+  let html = renderSigningContent(content, publicValues, { highlight: true });
   html = html.replace(/\{\{\w+\}\}/g, '');
-  const inlineSignatures = hasSignatureTokens(input.content);
+  const inlineSignatures = hasSignatureTokens(content);
   if (inlineSignatures) {
     html = renderSignatureTokensHtml(html, input.signatureSlots ?? [], {
       placeholderLabel: () => 'Awaiting signature',

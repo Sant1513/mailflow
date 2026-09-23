@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { labelForSigningField } from '@/lib/signing/fields';
+import type { SignaturePlacement } from '@/lib/signing/placements';
 import { DocumentHtmlPane, PdfPane, PreviewTabs, usePdfPreview, type PreviewPayload } from './SigningDocPreview';
 
 interface RequestDetail {
@@ -17,6 +18,7 @@ interface RequestDetail {
   fieldValues: Record<string, string>;
   lockedFields: string[];
   fieldKeys: string[];
+  signaturePlacements: SignaturePlacement[];
 }
 
 interface GroupMember {
@@ -110,6 +112,7 @@ export function EditSigningRequestModal({
         signers,
         recipientName: name,
         recipientEmail: email,
+        placements: data.request.signaturePlacements,
       }
     : null;
 

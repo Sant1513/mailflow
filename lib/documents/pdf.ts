@@ -8,9 +8,11 @@ import {
 import {
   parseSignatureToken,
   signatureTokenRegex,
+  stripSignatureTokens,
   type SignatureAlign,
   type SignatureSlot,
 } from '@/lib/signing/signature-tokens';
+import { placedSignerIndices, type SignaturePlacement } from '@/lib/signing/placements';
 
 // ─── Public interface ─────────────────────────────────────────────────────────
 
@@ -38,6 +40,10 @@ export interface SignedPdfInput {
   signatureSlots?: SignatureSlot[];
   /** Unsigned preview: no certificate page, blank fields shown as [Label]. */
   preview?: boolean;
+  /** Signatures drawn at fixed page positions chosen in the placement editor. */
+  placements?: SignaturePlacement[];
+  /** In preview mode, emphasise this signer's boxes (the signer viewing it). */
+  highlightSigner?: number;
 }
 
 // ─── Internal types ───────────────────────────────────────────────────────────
@@ -520,9 +526,89 @@ async function drawSignatureSlot(
   s.y -= 14;
 }
 
+// ─── Fixed-height header + positioned signatures ─────────────────────────────
+
+function truncateToWidth(text: string, font: PDFFont, size: number, maxW: number): string {
+  let t = san(text);
+  if (font.widthOfTextAtSize(t, size) <= maxW) return t;
+  while (t.length > 1 && font.widthOfTextAtSize(`${t}...`, size) > maxW) t = t.slice(0, -1);
+  return `${t.trimEnd()}...`;
+}
+
+function drawHeaderLine(s: DrawState, label: string, value: string): void {
+  const labelW = s.fonts.bold.widthOfTextAtSize(san(label), BODY_SZ);
+  const v = value ? truncateToWidth(value, s.fonts.reg, BODY_SZ, USABLE_W - labelW - 6) : '';
+  drawBlock(s, {
+    kind: 'p', align: 'left', indent: 0,
+    runs: [{ text: label, bold: true, italic: false }, ...(v ? [{ text: v, bold: false, italic: false }] : [])],
+  });
+}
+
+const PLACEMENT_COLORS = [
+  { line: rgb(0.11, 0.31, 0.85), fill: rgb(0.86, 0.92, 1) },
+  { line: rgb(0.08, 0.5, 0.24), fill: rgb(0.86, 0.99, 0.91) },
+  { line: rgb(0.76, 0.25, 0.05), fill: rgb(1, 0.93, 0.84) },
+];
+
+async function drawPlacedSignature(
+  doc: PDFDocument,
+  page: ReturnType<PDFDocument['getPage']>,
+  fonts: Fonts,
+  p: SignaturePlacement,
+  slot: SignatureSlot | undefined,
+  opts: { preview: boolean; highlight: boolean },
+): Promise<void> {
+  const bottom = PAGE_H - p.y - p.height;
+  const label = slot?.role || `Signer ${p.signerIndex}`;
+
+  if (slot?.image) {
+    try {
+      const png = await doc.embedPng(Buffer.from(rawPng(slot.image), 'base64'));
+      const { width: iw, height: ih } = png.scale(1);
+      const scale = Math.min(p.width / iw, p.height / ih);
+      const w = iw * scale;
+      const h = ih * scale;
+      page.drawImage(png, { x: p.x + (p.width - w) / 2, y: bottom + (p.height - h) / 2, width: w, height: h });
+    } catch {
+      page.drawText('[signature could not be embedded]', { x: p.x, y: bottom + p.height / 2, size: 7, font: fonts.ital, color: rgb(0.5, 0.5, 0.5) });
+    }
+    const caption = truncateToWidth(`${label}${slot.name ? ` - ${slot.name}` : ''}`, fonts.reg, 6.5, Math.max(p.width, 120));
+    if (bottom - 8 > 4) page.drawText(caption, { x: p.x, y: bottom - 8, size: 6.5, font: fonts.reg, color: rgb(0.35, 0.35, 0.35) });
+    if (slot.signedAt && bottom - 15 > 4) {
+      const when = typeof slot.signedAt === 'string' ? new Date(slot.signedAt) : slot.signedAt;
+      page.drawText(san(`Signed ${when.toUTCString()}`), { x: p.x, y: bottom - 15, size: 6, font: fonts.reg, color: rgb(0.5, 0.5, 0.5) });
+    }
+    return;
+  }
+
+  // Unsigned boxes only appear in previews; a signed copy never shows empty frames.
+  if (!opts.preview) return;
+  const colour = PLACEMENT_COLORS[(p.signerIndex - 1) % PLACEMENT_COLORS.length]!;
+  page.drawRectangle({
+    x: p.x, y: bottom, width: p.width, height: p.height,
+    color: colour.fill, opacity: 0.85,
+    borderColor: colour.line, borderWidth: opts.highlight ? 1.6 : 0.9, borderDashArray: [4, 3],
+  });
+  const text = truncateToWidth(opts.highlight ? 'You sign here' : `${label} signs here`, fonts.bold, 8, p.width - 8);
+  const size = Math.min(8, Math.max(5, p.height * 0.3));
+  const tw = fonts.bold.widthOfTextAtSize(text, size);
+  page.drawText(text, { x: p.x + (p.width - tw) / 2, y: bottom + p.height / 2 - size / 3, size, font: fonts.bold, color: colour.line });
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> {
+  return (await generateSignedPdfDetailed(input)).pdf;
+}
+
+export interface SignedPdfResult {
+  pdf: Buffer;
+  pageCount: number;
+  /** Pages before the completion certificate — the ones placements can target. */
+  contentPageCount: number;
+}
+
+export async function generateSignedPdfDetailed(input: SignedPdfInput): Promise<SignedPdfResult> {
   const doc = await PDFDocument.create();
   const fonts: Fonts = {
     reg:      await doc.embedFont(StandardFonts.Helvetica),
@@ -541,25 +627,16 @@ export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> 
   drawBlock(s, block('h1', san(input.title), { bold: true }));
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });
 
+  // Header lines are forced to one line each so the preview and every signed
+  // copy lay out identically — placed signature boxes depend on that.
   const signedDateStr = input.signedAt.toUTCString();
+  const recipientLine = `${input.recipientName}${input.recipientEmail ? ` <${input.recipientEmail}>` : ''}`;
   if (input.preview) {
-    drawBlock(s, block('p', 'PREVIEW - NOT SIGNED', { bold: true }));
-    drawBlock(s, block('p', `Prepared for: ${input.recipientName}${input.recipientEmail ? ` <${input.recipientEmail}>` : ''}. Fields in [brackets] are completed by the signer.`, { italic: true }));
+    drawHeaderLine(s, 'PREVIEW - NOT SIGNED', '');
+    drawHeaderLine(s, 'Prepared for: ', recipientLine);
   } else {
-    drawBlock(s, {
-      kind: 'p', align: 'left', indent: 0,
-      runs: [
-        { text: 'Signed by: ', bold: true, italic: false },
-        { text: `${input.recipientName} <${input.recipientEmail}>`, bold: false, italic: false },
-      ],
-    });
-    drawBlock(s, {
-      kind: 'p', align: 'left', indent: 0,
-      runs: [
-        { text: 'Signed on: ', bold: true, italic: false },
-        { text: signedDateStr, bold: false, italic: false },
-      ],
-    });
+    drawHeaderLine(s, 'Signed by: ', recipientLine);
+    drawHeaderLine(s, 'Signed on: ', signedDateStr);
   }
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });
 
@@ -571,7 +648,9 @@ export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> 
       if (!(renderValues[key] ?? '').trim()) renderValues[key] = `[${labelForSigningField(key)}]`;
     }
   }
-  const processedContent = renderSigningContent(input.content, renderValues)
+  const placements = input.placements ?? [];
+  const contentWithoutPlacedTokens = stripSignatureTokens(input.content, placedSignerIndices(placements));
+  const processedContent = renderSigningContent(contentWithoutPlacedTokens, renderValues)
     .replace(/\{\{\w+\}\}/g, '')
     .replace(signatureTokenRegex(), (_m, signer?: string, align?: string) => {
       const tok = parseSignatureToken(signer, align);
@@ -584,7 +663,17 @@ export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> 
     else await drawSignatureSlot(s, piece.align, piece.signerIndex, slotsBySigner.get(piece.signerIndex), !!input.preview);
   }
 
-  if (input.preview) return Buffer.from(await doc.save());
+  const contentPageCount = doc.getPageCount();
+  for (const placement of placements) {
+    // A shorter document than the one the box was placed on: use its last page.
+    const page = doc.getPage(Math.min(placement.page, contentPageCount - 1));
+    await drawPlacedSignature(doc, page, fonts, placement, slotsBySigner.get(placement.signerIndex), {
+      preview: !!input.preview,
+      highlight: input.highlightSigner === placement.signerIndex,
+    });
+  }
+
+  if (input.preview) return { pdf: Buffer.from(await doc.save()), pageCount: doc.getPageCount(), contentPageCount };
 
   // ── Certificate of completion (new page) ─────────────────────────────────────
   newPage(s);
@@ -702,5 +791,5 @@ export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> 
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });
   drawBlock(s, block('p', 'This certificate was generated automatically by MailFlow and serves as an audit record of the signing event.', { italic: false }));
 
-  return Buffer.from(await doc.save());
+  return { pdf: Buffer.from(await doc.save()), pageCount: doc.getPageCount(), contentPageCount };
 }

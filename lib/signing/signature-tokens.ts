@@ -38,6 +38,14 @@ export function hasSignatureTokens(content: string): boolean {
   return signatureTokenRegex().test(content);
 }
 
+/** Removes tokens for signers whose signature is placed by position instead. */
+export function stripSignatureTokens(content: string, signerIndices: number[]): string {
+  if (signerIndices.length === 0) return content;
+  return content.replace(signatureTokenRegex(), (m, signer?: string, align?: string) =>
+    signerIndices.includes(parseSignatureToken(signer, align).signerIndex) ? '' : m,
+  );
+}
+
 function imageSrc(image: string): string {
   return image.startsWith('data:') ? image : `data:image/png;base64,${image}`;
 }

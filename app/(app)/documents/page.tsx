@@ -121,19 +121,25 @@ export default function ESignDocumentsPage() {
     setSelectedIds([]);
   }
 
-  async function viewPdf(id: string) {
+  async function viewPdf(id: string, format: 'html' | 'pdf' = 'html') {
+    // Open synchronously so pop-up blockers allow the tab, then point it at the document.
+    const win = window.open('', '_blank');
     const res = await fetch(`/api/e-sign/${id}`);
     if (!res.ok) {
+      win?.close();
       toast.error('Could not fetch document');
       return;
     }
     const json = (await res.json()) as { request: ESignDetail };
     const token = json.request?.token;
     if (!token) {
+      win?.close();
       toast.error('Document not available');
       return;
     }
-    window.open(`/api/sign/${token}/download`, '_blank');
+    const url = `/api/sign/${token}/download${format === 'pdf' ? '?format=pdf' : ''}`;
+    if (win) win.location.href = url;
+    else window.open(url, '_blank');
   }
 
   async function voidRequest(id: string) {
@@ -362,9 +368,14 @@ export default function ESignDocumentsPage() {
                     <td className="px-4 py-2">
                       <div className="flex flex-wrap gap-2 text-xs">
                         {req.status === 'SIGNED' && (
-                          <button onClick={() => viewPdf(req.id)} className="text-primary hover:underline">
-                            View Document
-                          </button>
+                          <>
+                            <button onClick={() => viewPdf(req.id)} className="text-primary hover:underline">
+                              View Document
+                            </button>
+                            <button onClick={() => viewPdf(req.id, 'pdf')} className="text-primary hover:underline">
+                              PDF
+                            </button>
+                          </>
                         )}
                         {['DRAFT', 'SENT', 'VIEWED'].includes(req.status) && (
                           <button onClick={() => setEditingId(req.id)} className="text-primary hover:underline">

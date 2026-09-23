@@ -7,6 +7,7 @@ import { GmailProvider } from '@/lib/email/gmail';
 import type { EmailAttachment } from '@/lib/email/provider';
 import { generateSignedPdf } from '@/lib/documents/pdf';
 import { lockedFieldsOf, publicSigningFieldValues, mergeGroupFieldValues } from '@/lib/signing/fields';
+import { placementsOf } from '@/lib/signing/placements';
 
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
@@ -102,6 +103,13 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
     assignedFields: request.assignedFields ?? [],
     signerRole: request.signerRole,
     signerIndex: request.signerOrder + 1,
+    signaturePages: [
+      ...new Set(
+        placementsOf(request.fieldValues)
+          .filter((p) => p.signerIndex === request.signerOrder + 1)
+          .map((p) => p.page + 1),
+      ),
+    ].sort((a, b) => a - b),
     groupSigners,
     groupProgress,
     previousSignatures,
@@ -210,6 +218,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
     signatureImage: body.signatureImage,
     signedAt: now,
     signerIp,
+    placements: placementsOf(request.fieldValues),
     signatureSlots: [
       ...earlierGroupSignatures.map((r) => ({
         signerIndex: r.signerOrder + 1,
@@ -355,6 +364,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
             signerIp: r.signerIp ?? 'unknown',
             signerOrder: r.signerOrder,
           })),
+          placements: placementsOf(request.fieldValues),
           signatureSlots: allGroupRequests.map((r) => ({
             signerIndex: r.signerOrder + 1,
             role: r.signerRole ?? `Signer ${r.signerOrder + 1}`,

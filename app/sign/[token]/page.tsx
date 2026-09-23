@@ -30,6 +30,8 @@ interface PublicDocument {
   assignedFields: string[];
   signerRole: string | null;
   signerIndex: number;
+  /** 1-based pages where this signer's signature box sits, if positions were set. */
+  signaturePages: number[];
   groupSigners: GroupSigner[];
   groupProgress: { current: number; total: number } | null;
   previousSignatures: PreviousSignature[];
@@ -245,6 +247,33 @@ export default function SigningPage() {
   const allFieldsFilled = fieldNames.every((name) => (localFieldValues[name] ?? '').trim().length > 0);
   const canSubmit = agreed && allFieldsFilled && (mode === 'draw' ? hasDrawing : typedName.trim().length > 0);
 
+  const [previewing, setPreviewing] = useState(false);
+
+  async function previewPdf() {
+    if (!doc) return;
+    // Open the tab synchronously so pop-up blockers allow it, then fill it in.
+    const win = window.open('', '_blank');
+    setPreviewing(true);
+    try {
+      const res = await fetch(`/api/sign/${params.token}/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fieldValues: Object.fromEntries(fieldNames.map((name) => [name, localFieldValues[name] ?? ''])),
+        }),
+      });
+      if (!res.ok) throw new Error('preview failed');
+      const url = URL.createObjectURL(await res.blob());
+      if (win) win.location.href = url;
+      else window.location.href = url;
+    } catch {
+      win?.close();
+      setSubmitError('Could not generate the PDF preview. Please try again.');
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit || !doc) return;
@@ -313,7 +342,14 @@ export default function SigningPage() {
             </svg>
             View Signed Document
           </a>
-          <p className="mt-3 text-xs text-gray-400">Opens in browser · Ctrl+P to save as PDF</p>
+          <a
+            href={`/api/sign/${token}/download?format=pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 block text-sm font-medium text-gray-700 underline hover:text-gray-900"
+          >
+            Download signed PDF
+          </a>
         </div>
       </div>
     );
@@ -389,7 +425,23 @@ export default function SigningPage() {
 
           {/* Document content with live variable substitution */}
           <div className="px-6 py-5 sm:px-8">
-            <div className="mb-2 text-xs uppercase tracking-wider text-gray-400">Document</div>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="text-xs uppercase tracking-wider text-gray-400">Document</div>
+              <button
+                type="button"
+                onClick={previewPdf}
+                disabled={previewing}
+                className="text-xs font-medium text-gray-700 underline hover:text-gray-900 disabled:opacity-50"
+              >
+                {previewing ? 'Preparing PDF…' : 'Preview PDF'}
+              </button>
+            </div>
+            {doc.signaturePages?.length > 0 && (
+              <p className="mb-2 rounded-md bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
+                Your signature will be placed on page {doc.signaturePages.join(', ')} of the document. Use Preview PDF to see
+                exactly where.
+              </p>
+            )}
             <div
               className="max-h-96 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 p-4 sm:p-5 text-sm leading-relaxed text-gray-800"
               dangerouslySetInnerHTML={{ __html: previewContent }}
