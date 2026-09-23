@@ -5,6 +5,8 @@ import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
+import { mergeSigningFieldDefs } from '@/lib/signing/fields';
+import type { Prisma } from '@prisma/client';
 
 /** GET /api/signing-templates/[id] — fetch one template for the current workspace. */
 export const GET = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
@@ -31,11 +33,20 @@ const fieldDefSchema = z.object({
   defaultValue: z.string().optional(),
 });
 
+const signerPresetSchema = z.object({
+  index: z.number().int().min(1).max(3),
+  role: z.string().min(1).max(100),
+  nameColumn: z.string().min(1),
+  emailColumn: z.string().min(1),
+  assignedFields: z.array(z.string()).default([]),
+});
+
 const patchSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().nullable().optional(),
   content: z.string().min(1).optional(),
   fieldDefs: z.array(fieldDefSchema).optional(),
+  signerPresets: z.array(signerPresetSchema).max(3).optional(),
   archived: z.boolean().optional(),
 });
 
@@ -55,6 +66,12 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
   }
 
   const body = patchSchema.parse(await req.json());
+  const nextContent = body.content ?? existing.content;
+  const nextFieldDefs = body.fieldDefs !== undefined
+    ? mergeSigningFieldDefs(nextContent, body.fieldDefs)
+    : body.content !== undefined
+      ? mergeSigningFieldDefs(nextContent, Array.isArray(existing.fieldDefs) ? existing.fieldDefs as any[] : [])
+      : undefined;
 
   const template = await prisma.signingTemplate.update({
     where: { id: existing.id },
@@ -62,7 +79,8 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       ...(body.title !== undefined && { title: body.title }),
       ...(body.description !== undefined && { description: body.description }),
       ...(body.content !== undefined && { content: body.content }),
-      ...(body.fieldDefs !== undefined && { fieldDefs: body.fieldDefs }),
+      ...(nextFieldDefs !== undefined && { fieldDefs: nextFieldDefs as unknown as Prisma.InputJsonValue }),
+      ...(body.signerPresets !== undefined && { signerPresets: body.signerPresets as unknown as Prisma.InputJsonValue }),
       ...(body.archived !== undefined && { archived: body.archived }),
     },
   });

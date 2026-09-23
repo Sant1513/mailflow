@@ -165,6 +165,7 @@ model Workspace {
   signingRequests       SigningRequest[]
   signingTemplates      SigningTemplate[]
   signingBatches        SigningBatch[]
+  signingGroups         SigningGroup[]
 
   @@index([organizationId])
 }
@@ -1225,6 +1226,7 @@ model SigningRequest {
   id             String               @id @default(cuid())
   workspaceId    String
   batchId        String?
+  groupId        String?
   title          String
   content        String               @db.Text
   recipientName  String
@@ -1234,6 +1236,9 @@ model SigningRequest {
   ccEmails       String[]             @default([])
   token          String               @unique @default(cuid())
   status         SigningRequestStatus @default(DRAFT)
+  signerOrder    Int                  @default(0)
+  signerRole     String?
+  assignedFields String[]             @default([])
   expiresAt      DateTime?
   sentAt         DateTime?
   viewedAt       DateTime?
@@ -1249,12 +1254,14 @@ model SigningRequest {
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
 
-  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  sentBy    User         @relation("SigningRequestsSentBy", fields: [sentById], references: [id])
-  batch     SigningBatch? @relation(fields: [batchId], references: [id])
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sentBy    User          @relation("SigningRequestsSentBy", fields: [sentById], references: [id])
+  batch     SigningBatch?  @relation(fields: [batchId], references: [id])
+  group     SigningGroup?  @relation(fields: [groupId], references: [id])
 
   @@index([workspaceId])
   @@index([token])
+  @@index([groupId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1267,8 +1274,9 @@ model SigningTemplate {
   title       String
   description String?
   content     String   @db.Text
-  fieldDefs   Json     @default("[]") // [{key, label, defaultValue?}]
-  archived    Boolean  @default(false)
+  fieldDefs     Json     @default("[]") // [{key, label, defaultValue?}]
+  signerPresets Json     @default("[]") // [{index, role, nameColumn, emailColumn, assignedFields?}]
+  archived      Boolean  @default(false)
   createdById String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1295,7 +1303,37 @@ model SigningBatch {
   workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   template  SigningTemplate? @relation(fields: [templateId], references: [id])
   requests  SigningRequest[]
+  groups    SigningGroup[]
 
   @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIGNING GROUPS (multi-signer coordination on the same document)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SigningOrder {
+  SEQUENTIAL
+  PARALLEL
+}
+
+model SigningGroup {
+  id              String       @id @default(cuid())
+  workspaceId     String
+  batchId         String?
+  signingOrder    SigningOrder  @default(SEQUENTIAL)
+  totalSigners    Int
+  signedCount     Int          @default(0)
+  status          String       @default("PENDING") // PENDING | IN_PROGRESS | COMPLETED | VOIDED
+  combinedPdfData String?      @db.Text
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  batch     SigningBatch?    @relation(fields: [batchId], references: [id])
+  requests  SigningRequest[]
+
+  @@index([workspaceId])
+  @@index([batchId])
 }
 

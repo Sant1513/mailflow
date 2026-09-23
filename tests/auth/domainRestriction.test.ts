@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     organization: { upsert: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
-    user: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    user: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
     workspace: { create: vi.fn() },
   },
 }));
@@ -30,6 +30,8 @@ async function load(domain?: string) {
   (prisma.organization.findFirst as any).mockResolvedValue({ id: 'org1' });
   (prisma.organization.create as any).mockResolvedValue({ id: 'org1' });
   (prisma.user.findUnique as any).mockResolvedValue(null);
+  (prisma.user.findFirst as any).mockResolvedValue(null);
+  (prisma.user.findMany as any).mockResolvedValue([]);
   (prisma.user.create as any).mockResolvedValue({ id: 'u1', name: 'Test User' });
   (prisma.workspace.create as any).mockResolvedValue({ id: 'ws1' });
   return { mod, prisma };
@@ -143,6 +145,8 @@ describe('adapter.createUser — provisioning', () => {
 
   it('creates the user with an organization, role and personal workspace', async () => {
     const { mod, prisma } = await load(undefined);
+    // Simulate an existing SUPER_ADMIN in the org so the new user gets OPERATOR role
+    (prisma.user.findFirst as any).mockResolvedValue({ id: 'admin0', role: 'SUPER_ADMIN' });
     (prisma.user.create as any).mockResolvedValue({
       id: 'u1', email: 'new@gmail.com', name: 'New', image: null, emailVerified: null,
     });

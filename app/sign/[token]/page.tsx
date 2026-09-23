@@ -2,8 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { renderSigningContent } from '@/lib/signing/fields';
 
 type SigningStatus = 'DRAFT' | 'SENT' | 'VIEWED' | 'SIGNED' | 'EXPIRED' | 'VOIDED';
+
+interface PreviousSignature {
+  signerName: string;
+  signerRole: string;
+  signedAt: string;
+}
 
 interface PublicDocument {
   id: string;
@@ -11,6 +18,11 @@ interface PublicDocument {
   content: string;
   recipientName: string;
   fieldValues: Record<string, string>;
+  lockedFields: string[];
+  assignedFields: string[];
+  signerRole: string | null;
+  groupProgress: { current: number; total: number } | null;
+  previousSignatures: PreviousSignature[];
   status: SigningStatus;
   expiresAt: string | null;
   signedPdfData: string | null;
@@ -28,19 +40,7 @@ function formatLabel(key: string): string {
 }
 
 function substituteVars(content: string, values: Record<string, string>): string {
-  let result = content;
-  for (const [key, value] of Object.entries(values)) {
-    const display = value.trim()
-      ? `<mark style="background:#fef3c7;border-radius:2px;padding:0 2px;font-weight:600">${value}</mark>`
-      : `<span style="background:#fee2e2;border-radius:2px;padding:0 2px;color:#991b1b">{{${key}}}</span>`;
-    result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), display);
-  }
-  // Highlight any remaining unfilled placeholders
-  result = result.replace(
-    /\{\{(\w+)\}\}/g,
-    '<span style="background:#fee2e2;border-radius:2px;padding:0 2px;color:#991b1b">{{$1}}</span>'
-  );
-  return result;
+  return renderSigningContent(content, values, { highlight: true });
 }
 
 export default function SigningPage() {
@@ -77,6 +77,10 @@ export default function SigningPage() {
           setLoadError('This signing link has expired.');
           return;
         }
+        if (res.status === 423) {
+          setLoadError('Waiting for the previous signer(s) to complete. You will receive an email when it is your turn.');
+          return;
+        }
         if (!res.ok) {
           setLoadError('Something went wrong. Please try again later.');
           return;
@@ -84,7 +88,6 @@ export default function SigningPage() {
         const json = (await res.json()) as PublicDocument;
         setDoc(json);
         setTypedName(json.recipientName);
-        // Pre-populate from admin-set field values
         setLocalFieldValues(json.fieldValues ?? {});
       })
       .catch(() => {
@@ -203,7 +206,14 @@ export default function SigningPage() {
     return typeCanvasRef.current?.toDataURL() ?? '';
   }
 
-  const fieldNames = doc ? extractVariableNames(doc.content) : [];
+  const allVarNames = doc ? extractVariableNames(doc.content) : [];
+  const lockedFieldNames = doc ? allVarNames.filter((name) => (doc.lockedFields ?? []).includes(name)) : [];
+  // When assignedFields is set, only those are fillable; otherwise all unlocked fields are fillable
+  const fieldNames = doc
+    ? (doc.assignedFields?.length
+        ? allVarNames.filter((name) => doc.assignedFields.includes(name))
+        : allVarNames.filter((name) => !(doc.lockedFields ?? []).includes(name)))
+    : [];
   const allFieldsFilled = fieldNames.every((name) => (localFieldValues[name] ?? '').trim().length > 0);
   const canSubmit = agreed && allFieldsFilled && (mode === 'draw' ? hasDrawing : typedName.trim().length > 0);
 
@@ -317,9 +327,37 @@ export default function SigningPage() {
           <div className="border-b border-gray-100 px-6 py-5 sm:px-8">
             <h1 className="text-xl font-semibold text-gray-900">{doc.title}</h1>
             <p className="mt-1 text-sm text-gray-500">
-              Hi <strong>{doc.recipientName}</strong>, please review and sign this document.
+              Hi <strong>{doc.recipientName}</strong>{doc.signerRole ? ` (${doc.signerRole})` : ''}, please review and sign this document.
             </p>
+            {doc.groupProgress && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                  Signer {doc.groupProgress.current} of {doc.groupProgress.total}
+                </span>
+              </div>
+            )}
           </div>
+
+          {/* Previous signatures (multi-signer groups) */}
+          {doc.previousSignatures?.length > 0 && (
+            <div className="border-b border-gray-100 px-6 py-4 sm:px-8 bg-green-50/50">
+              <div className="mb-2 text-xs uppercase tracking-wider text-gray-400">Previous Signatures</div>
+              <div className="space-y-1.5">
+                {doc.previousSignatures.map((sig, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-xs text-green-700">
+                      {i + 1}
+                    </span>
+                    <span className="font-medium text-gray-800">{sig.signerName}</span>
+                    {sig.signerRole && <span className="text-gray-500">({sig.signerRole})</span>}
+                    <span className="text-xs text-gray-400">
+                      signed {new Date(sig.signedAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Document content with live variable substitution */}
           <div className="px-6 py-5 sm:px-8">
@@ -330,7 +368,25 @@ export default function SigningPage() {
             />
           </div>
 
-          {/* Fillable fields (student fills before signing) */}
+          {/* Locked document variables */}
+          {lockedFieldNames.length > 0 && (
+            <div className="border-t border-gray-100 px-6 py-5 sm:px-8">
+              <div className="mb-2 text-xs uppercase tracking-wider text-gray-400">Document Information</div>
+              <p className="mb-4 text-xs text-gray-500">
+                These values were provided by the sender and cannot be edited while signing.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {lockedFieldNames.map((name) => (
+                  <div key={name} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                    <div className="text-[11px] font-medium text-gray-500">{formatLabel(name)}</div>
+                    <div className="mt-0.5 text-sm font-medium text-gray-900">{localFieldValues[name] || '—'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Fillable fields (signer fills before signing) */}
           {fieldNames.length > 0 && (
             <div className="border-t border-gray-100 px-6 py-5 sm:px-8">
               <div className="mb-2 text-xs uppercase tracking-wider text-gray-400">Required Information</div>

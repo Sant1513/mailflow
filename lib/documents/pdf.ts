@@ -1,6 +1,17 @@
 import { PDFDocument, PDFFont, rgb, StandardFonts } from 'pdf-lib';
+import { publicSigningFieldValues, renderSigningContent } from '@/lib/signing/fields';
 
 // ─── Public interface ─────────────────────────────────────────────────────────
+
+export interface SignedPdfSignature {
+  signerName: string;
+  signerEmail: string;
+  signerRole: string;
+  signatureImage: string;
+  signedAt: Date;
+  signerIp: string;
+  signerOrder: number;
+}
 
 export interface SignedPdfInput {
   title: string;
@@ -11,6 +22,7 @@ export interface SignedPdfInput {
   signatureImage: string; // base64 data-URL or raw base64
   signedAt: Date;
   signerIp: string;
+  additionalSignatures?: SignedPdfSignature[];
 }
 
 // ─── Internal types ───────────────────────────────────────────────────────────
@@ -450,14 +462,8 @@ export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> 
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });
 
   // ── Document content (HTML rendered, variables substituted) ──────────────────
-  let processedContent = input.content;
-  for (const [key, value] of Object.entries(input.fieldValues)) {
-    processedContent = processedContent.replace(
-      new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value
-    );
-  }
-  // Remove any unfilled placeholders
-  processedContent = processedContent.replace(/\{\{\w+\}\}/g, '');
+  const publicValues = publicSigningFieldValues(input.fieldValues);
+  const processedContent = renderSigningContent(input.content, publicValues).replace(/\{\{\w+\}\}/g, '');
 
   for (const blk of parseHtml(processedContent)) {
     drawBlock(s, blk);
@@ -469,64 +475,111 @@ export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> 
   drawBlock(s, block('h2', 'Certificate of Completion', { bold: true }));
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });
 
-  const certRows: [string, string][] = [
-    ['Document',    input.title],
-    ['Signer name', input.recipientName],
-    ['Signer email',input.recipientEmail],
-    ['Signed at',   signedDateStr],
-    ['IP address',  input.signerIp],
-  ];
+  // Build the list of all signers for the certificate
+  const allSigners: { name: string; email: string; role: string; signedAt: string; ip: string; signatureImage: string }[] =
+    input.additionalSignatures?.length
+      ? input.additionalSignatures
+          .sort((a, b) => a.signerOrder - b.signerOrder)
+          .map((sig) => ({
+            name: sig.signerName,
+            email: sig.signerEmail,
+            role: sig.signerRole,
+            signedAt: sig.signedAt.toUTCString(),
+            ip: sig.signerIp,
+            signatureImage: sig.signatureImage,
+          }))
+      : [{
+          name: input.recipientName,
+          email: input.recipientEmail,
+          role: '',
+          signedAt: signedDateStr,
+          ip: input.signerIp,
+          signatureImage: input.signatureImage,
+        }];
 
-  for (const [label, value] of certRows) {
-    drawBlock(s, {
-      kind: 'p', align: 'left', indent: 0,
-      runs: [
-        { text: `${label}: `, bold: true,  italic: false },
-        { text: san(value),   bold: false, italic: false },
-      ],
-    });
+  drawBlock(s, {
+    kind: 'p', align: 'left', indent: 0,
+    runs: [
+      { text: 'Document: ', bold: true, italic: false },
+      { text: san(input.title), bold: false, italic: false },
+    ],
+  });
+
+  if (allSigners.length > 1) {
+    drawBlock(s, block('p', `Total signers: ${allSigners.length}`, { bold: false }));
+  }
+  s.y -= 4;
+
+  for (let si = 0; si < allSigners.length; si++) {
+    const signer = allSigners[si]!;
+    if (allSigners.length > 1) {
+      s.y -= 6;
+      drawBlock(s, block('h3', `Signer ${si + 1}${signer.role ? ` - ${signer.role}` : ''}`, { bold: true }));
+    }
+
+    const rows: [string, string][] = [
+      ['Name', signer.name],
+      ['Email', signer.email],
+      ...(signer.role ? [['Role', signer.role] as [string, string]] : []),
+      ['Signed at', signer.signedAt],
+      ['IP address', signer.ip],
+    ];
+
+    for (const [label, value] of rows) {
+      drawBlock(s, {
+        kind: 'p', align: 'left', indent: allSigners.length > 1 ? 12 : 0,
+        runs: [
+          { text: `${label}: `, bold: true, italic: false },
+          { text: san(value), bold: false, italic: false },
+        ],
+      });
+    }
+
+    // Embed signature image
+    const rawSig = signer.signatureImage.startsWith('data:')
+      ? signer.signatureImage.replace(/^data:image\/png;base64,/, '')
+      : signer.signatureImage;
+
+    if (rawSig) {
+      try {
+        const pngBytes = Buffer.from(rawSig, 'base64');
+        const pngImage = await doc.embedPng(pngBytes);
+        const maxW = USABLE_W - (allSigners.length > 1 ? 12 : 0);
+        const maxH = 80;
+        const { width: iw, height: ih } = pngImage.scale(1);
+        const scale = Math.min(maxW / iw, maxH / ih, 1);
+        const drawW = iw * scale;
+        const drawH = ih * scale;
+
+        ensureSpace(s, drawH + 40);
+        s.y -= 8;
+        drawBlock(s, block('p', 'Signature:', { bold: true }));
+        s.y -= 4;
+        s.page.drawImage(pngImage, {
+          x: MARGIN + (allSigners.length > 1 ? 12 : 0),
+          y: s.y - drawH,
+          width: drawW,
+          height: drawH,
+        });
+        s.y -= drawH + 10;
+      } catch {
+        drawBlock(s, block('p', '[Signature image could not be embedded]', { italic: true }));
+      }
+    }
   }
 
-  if (Object.keys(input.fieldValues).length > 0) {
+  if (Object.keys(publicValues).length > 0) {
     s.y -= 6;
     drawBlock(s, block('p', 'Field values:', { bold: true }));
-    for (const [key, value] of Object.entries(input.fieldValues)) {
+    for (const [key, value] of Object.entries(publicValues)) {
       drawBlock(s, {
         kind: 'p', align: 'left', indent: 16,
         runs: [
-          { text: `${key}: `,    bold: true,  italic: false },
+          { text: `${key}: `, bold: true, italic: false },
           { text: san(String(value)), bold: false, italic: false },
         ],
       });
     }
-  }
-
-  // ── Signature image ───────────────────────────────────────────────────────────
-  const rawBase64 = input.signatureImage.startsWith('data:')
-    ? input.signatureImage.replace(/^data:image\/png;base64,/, '')
-    : input.signatureImage;
-
-  try {
-    const pngBytes = Buffer.from(rawBase64, 'base64');
-    const pngImage = await doc.embedPng(pngBytes);
-
-    const maxW = USABLE_W;
-    const maxH = 100;
-    const { width: iw, height: ih } = pngImage.scale(1);
-    const scale = Math.min(maxW / iw, maxH / ih, 1);
-    const drawW = iw * scale;
-    const drawH = ih * scale;
-
-    ensureSpace(s, drawH + 50);
-    s.y -= 14;
-    drawBlock(s, block('p', 'Signature:', { bold: true }));
-    s.y -= 4;
-    s.page.drawImage(pngImage, {
-      x: MARGIN, y: s.y - drawH, width: drawW, height: drawH,
-    });
-    s.y -= drawH + 14;
-  } catch {
-    drawBlock(s, block('p', '[Signature image could not be embedded]', { italic: true }));
   }
 
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });

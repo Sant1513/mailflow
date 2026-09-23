@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { defaultBulkSigners, mergeSigningFieldDefs, normalizeBulkSigners, type BulkSignerConfig, type SigningOrderType } from '@/lib/signing/fields';
 
 interface FieldDef {
   key: string;
@@ -11,17 +12,104 @@ interface FieldDef {
   defaultValue?: string;
 }
 
+interface SignerPreset {
+  index: number;
+  role: string;
+  nameColumn: string;
+  emailColumn: string;
+  assignedFields?: string[];
+}
+
 interface SigningTemplate {
   id: string;
   title: string;
   content: string;
   fieldDefs: FieldDef[];
+  signerPresets?: SignerPreset[];
 }
 
 interface Recipient {
   name: string;
   email: string;
   fieldValues: Record<string, string>;
+  signers?: { name: string; email: string; role: string }[];
+}
+
+interface CsvIssue {
+  row?: number;
+  message: string;
+  severity: 'error' | 'warning';
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (ch === '"' && quoted && next === '"') {
+      cell += '"';
+      i++;
+    } else if (ch === '"') {
+      quoted = !quoted;
+    } else if (ch === ',' && !quoted) {
+      row.push(cell);
+      cell = '';
+    } else if ((ch === '\n' || ch === '\r') && !quoted) {
+      if (ch === '\r' && next === '\n') i++;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else {
+      cell += ch;
+    }
+  }
+  row.push(cell);
+  rows.push(row);
+  return rows;
+}
+
+const SIGNER_COLORS = [
+  { bg: '#dbeafe', text: '#1d4ed8', border: '#93c5fd' }, // blue — signer 1
+  { bg: '#dcfce7', text: '#15803d', border: '#86efac' }, // green — signer 2
+  { bg: '#ffedd5', text: '#c2410c', border: '#fdba74' }, // orange — signer 3
+];
+
+function coloredTemplatePreview(
+  content: string,
+  fieldAssignments: Record<number, string[]>,
+  signerConfigs: BulkSignerConfig[],
+): string {
+  const fieldToSigner: Record<string, number> = {};
+  for (const s of signerConfigs) {
+    const assigned = fieldAssignments[s.index] ?? [];
+    for (const f of assigned) {
+      fieldToSigner[f] = s.index;
+    }
+  }
+  return content.replace(/\{\{\s*([\w]+)\s*\}\}/g, (_, key: string) => {
+    const signerIdx = fieldToSigner[key];
+    const color = signerIdx !== undefined ? SIGNER_COLORS[(signerIdx - 1) % SIGNER_COLORS.length] : null;
+    if (color) {
+      return `<span style="background:${color.bg};color:${color.text};border:1px solid ${color.border};border-radius:3px;padding:0 3px;font-family:monospace;font-size:0.85em">{{${key}}}</span>`;
+    }
+    return `<span style="background:#f3f4f6;border:1px solid #d1d5db;border-radius:3px;padding:0 3px;font-family:monospace;font-size:0.85em">{{${key}}}</span>`;
+  });
+}
+
+function sampleForField(key: string, label: string): string {
+  const k = key.toLowerCase();
+  if (k.includes('date')) return '18-09-2026';
+  if (k.includes('amount') || k.includes('stipend') || k.includes('fee')) return '50000';
+  if (k.includes('email')) return 'rahul@example.com';
+  if (k.includes('company')) return 'ABC Technologies';
+  if (k.includes('course')) return 'Full Stack Development';
+  if (k.includes('id')) return 'MS12345';
+  if (k.includes('name')) return 'Rahul Sharma';
+  return label;
 }
 
 export default function NewBulkSendPage() {
@@ -36,6 +124,9 @@ export default function NewBulkSendPage() {
   const [ccEmails, setCcEmails] = useState('placements@masaischool.com');
   const [expiresInDays, setExpiresInDays] = useState(7);
   const [attachments, setAttachments] = useState<{ name: string; url: string; contentType: string; size: number }[]>([]);
+  const [signers, setSigners] = useState<BulkSignerConfig[]>(defaultBulkSigners());
+  const [signingOrder, setSigningOrder] = useState<SigningOrderType>('SEQUENTIAL');
+  const [fieldAssignments, setFieldAssignments] = useState<Record<number, string[]>>({});
 
   // Templates
   const [templates, setTemplates] = useState<SigningTemplate[]>([]);
@@ -47,6 +138,7 @@ export default function NewBulkSendPage() {
   // CSV import state
   const [csvRows, setCsvRows] = useState<Recipient[] | null>(null);
   const [csvError, setCsvError] = useState<string | null>(null);
+  const [csvIssues, setCsvIssues] = useState<CsvIssue[]>([]);
 
   // Load templates on mount
   useEffect(() => {
@@ -58,7 +150,7 @@ export default function NewBulkSendPage() {
       .catch(() => {});
   }, []);
 
-  // Sync selectedTemplate whenever templateId changes
+  // Sync selectedTemplate and load its signerPresets when templateId changes
   useEffect(() => {
     if (!templateId) {
       setSelectedTemplate(null);
@@ -66,9 +158,20 @@ export default function NewBulkSendPage() {
     }
     const tpl = templates.find((t) => t.id === templateId) ?? null;
     setSelectedTemplate(tpl);
+    if (tpl?.signerPresets && tpl.signerPresets.length > 0) {
+      setSigners(normalizeBulkSigners(tpl.signerPresets as BulkSignerConfig[]));
+      const assignments: Record<number, string[]> = {};
+      for (const sp of tpl.signerPresets) {
+        if (sp.assignedFields && sp.assignedFields.length > 0) {
+          assignments[sp.index] = sp.assignedFields;
+        }
+      }
+      setFieldAssignments(assignments);
+    }
   }, [templateId, templates]);
 
-  const fieldDefs: FieldDef[] = selectedTemplate?.fieldDefs ?? [];
+  const fieldDefs: FieldDef[] = selectedTemplate ? mergeSigningFieldDefs(selectedTemplate.content, selectedTemplate.fieldDefs) : [];
+  const signerConfigs = normalizeBulkSigners(signers);
 
   // ── Recipient helpers ─────────────────────────────────────────────────────
 
@@ -98,16 +201,47 @@ export default function NewBulkSendPage() {
     );
   }
 
+  function updateSigner(index: number, patch: Partial<BulkSignerConfig>) {
+    setSigners((prev) => normalizeBulkSigners(prev.map((s, i) => (i === index ? { ...s, ...patch } : s))));
+  }
+
+  function addSigner() {
+    setSigners((prev) => {
+      if (prev.length >= 3) return prev;
+      const next = prev.length + 1;
+      return [...prev, { index: next, role: `Signer ${next}`, nameColumn: `signer_${next}_name`, emailColumn: `signer_${next}_email` }];
+    });
+  }
+
+  function removeSigner(index: number) {
+    setSigners((prev) => normalizeBulkSigners(prev.filter((_, i) => i !== index)));
+    setFieldAssignments((prev) => {
+      const next = { ...prev };
+      delete next[index + 1];
+      return next;
+    });
+  }
+
+  function toggleFieldAssignment(signerIndex: number, fieldKey: string) {
+    setFieldAssignments((prev) => {
+      const current = prev[signerIndex] ?? [];
+      const next = current.includes(fieldKey)
+        ? current.filter((k) => k !== fieldKey)
+        : [...current, fieldKey];
+      return { ...prev, [signerIndex]: next };
+    });
+  }
+
   // ── Sample CSV download ───────────────────────────────────────────────────
 
   function downloadSampleCsv() {
-    const headers = ['name', 'email', ...fieldDefs.map((fd) => fd.key)];
+    const signerHeaders = signerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn]);
+    const headers = [...fieldDefs.map((fd) => fd.key), ...signerHeaders];
     const sampleRow = [
-      'John Doe',
-      'john@example.com',
-      ...fieldDefs.map((fd) => fd.defaultValue ?? fd.label),
+      ...fieldDefs.map((fd) => fd.defaultValue ?? sampleForField(fd.key, fd.label)),
+      ...signerConfigs.flatMap((s, i) => [`${i === 0 ? 'Rahul Sharma' : i === 1 ? 'Amit Kumar' : 'Neha Singh'}`, i === 0 ? 'rahul@example.com' : i === 1 ? 'amit@company.com' : 'neha@masaischool.com']),
     ];
-    const escape = (v: string) => (v.includes(',') ? `"${v.replace(/"/g, '""')}"` : v);
+    const escape = (v: string) => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
     const csv = [headers.map(escape).join(','), sampleRow.map(escape).join(',')].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -118,7 +252,7 @@ export default function NewBulkSendPage() {
     URL.revokeObjectURL(url);
   }
 
-  // ── CSV parser — reads name, email + any field key columns ───────────────
+  // ── CSV parser — reads document variables + configured signer columns ───
 
   const handleCsvFile = useCallback(
     (file: File) => {
@@ -126,47 +260,59 @@ export default function NewBulkSendPage() {
       const reader = new FileReader();
       reader.onload = (e) => {
         const text = (e.target?.result as string) ?? '';
-        const lines = text.split(/\r?\n/).filter((l) => l.trim());
-        if (lines.length < 2) {
+        const rows = parseCsv(text).filter((r) => r.some((c) => c.trim()));
+        if (rows.length < 2) {
           setCsvError('CSV must have a header row and at least one data row.');
+          setCsvIssues([]);
           return;
         }
-        const headers = lines[0]!
-          .split(',')
-          .map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ''));
-        const nameIdx = headers.indexOf('name');
-        const emailIdx = headers.indexOf('email');
-        if (nameIdx === -1 || emailIdx === -1) {
-          setCsvError('CSV must include "name" and "email" columns.');
+        const headers = rows[0]!.map((h) => h.trim().toLowerCase());
+        const requiredHeaders = [...fieldDefs.map((fd) => fd.key.toLowerCase()), ...signerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn])];
+        const missingHeaders = requiredHeaders.filter((h) => !headers.includes(h));
+        if (missingHeaders.length > 0) {
+          setCsvError(`CSV is missing required column${missingHeaders.length !== 1 ? 's' : ''}: ${missingHeaders.join(', ')}`);
+          setCsvIssues(missingHeaders.map((h) => ({ severity: 'error', message: `Missing column ${h}` })));
           return;
         }
 
-        // Map field keys to column indices
-        const fieldColIdx: Record<string, number> = {};
-        for (const fd of fieldDefs) {
-          const idx = headers.indexOf(fd.key.toLowerCase());
-          if (idx !== -1) fieldColIdx[fd.key] = idx;
-        }
-
+        const issues: CsvIssue[] = [];
+        const emailSeen = new Set<string>();
         const parsed: Recipient[] = [];
-        for (let row = 1; row < lines.length; row++) {
-          const cols = lines[row]!.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
-          const name = cols[nameIdx] ?? '';
-          const email = cols[emailIdx] ?? '';
-          if (!name || !email) continue;
+        for (let row = 1; row < rows.length; row++) {
+          const cols = rows[row]!;
+          const rowNumber = row + 1;
 
           const fieldValues: Record<string, string> = {};
           for (const fd of fieldDefs) {
-            const idx = fieldColIdx[fd.key];
-            fieldValues[fd.key] = idx !== undefined ? (cols[idx] ?? '') : (fd.defaultValue ?? '');
+            const idx = headers.indexOf(fd.key.toLowerCase());
+            const value = (cols[idx] ?? '').trim();
+            if (!value) issues.push({ row: rowNumber, severity: 'error', message: `Missing ${fd.key}` });
+            fieldValues[fd.key] = value;
           }
 
-          parsed.push({ name, email, fieldValues });
+          const rowSigners = signerConfigs.map((s) => {
+            const name = (cols[headers.indexOf(s.nameColumn)] ?? '').trim();
+            const email = (cols[headers.indexOf(s.emailColumn)] ?? '').trim().toLowerCase();
+            if (!name) issues.push({ row: rowNumber, severity: 'error', message: `Missing ${s.nameColumn}` });
+            if (!email) issues.push({ row: rowNumber, severity: 'error', message: `Missing ${s.emailColumn}` });
+            else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) issues.push({ row: rowNumber, severity: 'error', message: `Invalid ${s.emailColumn}` });
+            const dedupeKey = `${rowNumber}:${email}`;
+            if (emailSeen.has(dedupeKey)) issues.push({ row: rowNumber, severity: 'warning', message: `Duplicate signer email ${email} in this row` });
+            emailSeen.add(dedupeKey);
+            return { name, email, role: s.role };
+          });
+
+          const first = rowSigners[0]!;
+          parsed.push({ name: first.name, email: first.email, fieldValues, signers: rowSigners });
         }
-        if (parsed.length === 0) {
-          setCsvError('No valid rows found in CSV.');
+        const errors = issues.filter((i) => i.severity === 'error');
+        setCsvIssues(issues);
+        if (parsed.length === 0 || errors.length > 0) {
+          setCsvError(errors.length ? `${errors.length} validation error${errors.length !== 1 ? 's' : ''}. Fix the CSV before sending.` : 'No valid rows found in CSV.');
+          setCsvRows(null);
           return;
         }
+        setCsvError(null);
         setCsvRows(parsed);
       };
       reader.readAsText(file);
@@ -243,7 +389,13 @@ export default function NewBulkSendPage() {
           name: r.name.trim(),
           email: r.email.trim(),
           fieldValues: r.fieldValues,
+          signers: r.signers,
         })),
+        signers: signerConfigs.map((s) => ({
+          ...s,
+          assignedFields: fieldAssignments[s.index] ?? [],
+        })),
+        signingOrder: signerConfigs.length > 1 ? signingOrder : 'SEQUENTIAL',
         attachments,
         ccEmails: ccList,
         expiresInDays,
@@ -258,7 +410,7 @@ export default function NewBulkSendPage() {
     }
 
     toast.success(
-      `Bulk send created — ${validRecipients.length} request${validRecipients.length !== 1 ? 's' : ''} sent`,
+      `Bulk send created — ${validRecipients.length} row${validRecipients.length !== 1 ? 's' : ''} queued for signing`,
     );
     router.push('/documents/bulk');
   }
@@ -327,33 +479,60 @@ export default function NewBulkSendPage() {
           {selectedTemplate && fieldDefs.length > 0 && (
             <div className="rounded-md border bg-muted/30 p-3">
               <div className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Template variables ({fieldDefs.length})
+                Document variables ({fieldDefs.length})
               </div>
-              <div className="flex flex-wrap gap-2">
-                {fieldDefs.map((fd) => (
-                  <span key={fd.key} className="inline-flex items-center rounded border bg-background px-2 py-0.5 text-xs">
-                    <code className="font-mono text-primary">{fd.key}</code>
-                    <span className="ml-1 text-muted-foreground">— {fd.label}</span>
-                    {fd.defaultValue && (
-                      <span className="ml-1 text-faint">({fd.defaultValue})</span>
-                    )}
-                  </span>
-                ))}
+              <div className="overflow-x-auto rounded border bg-background">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted text-left uppercase text-muted-foreground">
+                    <tr>
+                      <th className="px-2 py-1">Variable</th>
+                      <th className="px-2 py-1">CSV Column</th>
+                      <th className="px-2 py-1">Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fieldDefs.map((fd) => (
+                      <tr key={fd.key} className="border-t border-border-subtle">
+                        <td className="px-2 py-1"><code className="font-mono text-primary">{fd.key}</code></td>
+                        <td className="px-2 py-1"><code className="font-mono">{fd.key}</code></td>
+                        <td className="px-2 py-1 text-muted-foreground">CSV, locked for signer</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                These columns will appear in the recipient table and in the sample CSV.
+                These values are filled from the uploaded CSV and are read-only on the signing page.
               </p>
             </div>
           )}
 
           {selectedTemplate && (
             <div>
-              <div className="mb-1 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Template Preview
+              <div className="mb-1 flex items-center justify-between">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Template Preview
+                </div>
+                {signerConfigs.length > 1 && Object.keys(fieldAssignments).length > 0 && (
+                  <div className="flex items-center gap-2">
+                    {signerConfigs.map((s, i) => {
+                      const c = SIGNER_COLORS[i % SIGNER_COLORS.length]!;
+                      return (
+                        <span key={s.index} className="flex items-center gap-1 text-[10px]">
+                          <span style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}`, borderRadius: 3, padding: '0 4px' }}>{s.role}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               <div
                 className="rounded-md border bg-background p-3 prose prose-sm max-w-none overflow-auto max-h-36 text-foreground text-xs"
-                dangerouslySetInnerHTML={{ __html: selectedTemplate.content }}
+                dangerouslySetInnerHTML={{
+                  __html: signerConfigs.length > 1
+                    ? coloredTemplatePreview(selectedTemplate.content, fieldAssignments, signerConfigs)
+                    : selectedTemplate.content,
+                }}
               />
             </div>
           )}
@@ -382,6 +561,122 @@ export default function NewBulkSendPage() {
               <option value={30}>30 days</option>
             </select>
           </div>
+        </div>
+
+        {/* ── Signer Configuration ─────────────────────────────────────── */}
+        <div className="rounded-lg border bg-card p-5 space-y-3">
+          <div className="eyebrow mb-1">Signer configuration</div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Configure who signs each generated document. CSV columns below are included in the sample file.
+          </p>
+          <div className="space-y-2">
+            {signerConfigs.map((s, i) => (
+              <div key={s.index} className="grid gap-2 rounded-md border bg-muted/20 p-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                <input
+                  value={s.role}
+                  onChange={(e) => updateSigner(i, { role: e.target.value })}
+                  placeholder={`Signer ${i + 1} role`}
+                  className="text-sm"
+                />
+                <input
+                  value={s.nameColumn}
+                  onChange={(e) => updateSigner(i, { nameColumn: e.target.value })}
+                  placeholder={`signer_${i + 1}_name`}
+                  className="font-mono text-sm"
+                />
+                <input
+                  value={s.emailColumn}
+                  onChange={(e) => updateSigner(i, { emailColumn: e.target.value })}
+                  placeholder={`signer_${i + 1}_email`}
+                  className="font-mono text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeSigner(i)}
+                  disabled={signerConfigs.length === 1}
+                  className="text-xs text-muted-foreground hover:text-primary disabled:opacity-40"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={addSigner}
+            disabled={signerConfigs.length >= 3}
+            className="text-xs text-primary hover:underline disabled:text-muted-foreground"
+          >
+            + Add signer
+          </button>
+
+          {/* Signing order toggle — visible when >1 signer */}
+          {signerConfigs.length > 1 && (
+            <div className="mt-3 rounded-md border bg-muted/20 p-3 space-y-3">
+              <div className="text-xs font-medium">Signing order</div>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="radio"
+                    name="signingOrder"
+                    checked={signingOrder === 'SEQUENTIAL'}
+                    onChange={() => setSigningOrder('SEQUENTIAL')}
+                    className="accent-primary"
+                  />
+                  <span>Sequential <span className="text-muted-foreground">(Signer 1 → 2 → 3)</span></span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="radio"
+                    name="signingOrder"
+                    checked={signingOrder === 'PARALLEL'}
+                    onChange={() => setSigningOrder('PARALLEL')}
+                    className="accent-primary"
+                  />
+                  <span>Parallel <span className="text-muted-foreground">(all sign at once)</span></span>
+                </label>
+              </div>
+
+              {/* Per-signer field assignment */}
+              {fieldDefs.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium">Field assignment <span className="text-muted-foreground font-normal">(which signer fills which fields on the signing page)</span></div>
+                  <p className="text-xs text-muted-foreground">
+                    CSV-populated fields are always locked. These fields are for signers to fill on the signing page. Leave blank to let any signer fill all fields.
+                  </p>
+                  <div className="overflow-x-auto rounded border bg-background">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted text-left uppercase text-muted-foreground">
+                        <tr>
+                          <th className="px-2 py-1.5">Field</th>
+                          {signerConfigs.map((s) => (
+                            <th key={s.index} className="px-2 py-1.5 text-center">{s.role}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fieldDefs.map((fd) => (
+                          <tr key={fd.key} className="border-t border-border-subtle">
+                            <td className="px-2 py-1.5"><code className="font-mono text-primary">{fd.key}</code></td>
+                            {signerConfigs.map((s) => (
+                              <td key={s.index} className="px-2 py-1.5 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={(fieldAssignments[s.index] ?? []).includes(fd.key)}
+                                  onChange={() => toggleFieldAssignment(s.index, fd.key)}
+                                  className="accent-primary"
+                                />
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ── Attachments ───────────────────────────────────────────────── */}
@@ -417,19 +712,14 @@ export default function NewBulkSendPage() {
               <div>
                 <p className="text-xs font-medium">Upload CSV</p>
                 <p className="text-xs text-muted-foreground">
-                  Must include <code className="font-mono">name</code> and{' '}
-                  <code className="font-mono">email</code> columns
-                  {fieldDefs.length > 0 && (
-                    <>
-                      {' '}plus{' '}
-                      {fieldDefs.map((fd, i) => (
-                        <span key={fd.key}>
-                          <code className="font-mono">{fd.key}</code>
-                          {i < fieldDefs.length - 1 ? ', ' : ''}
-                        </span>
-                      ))}
-                    </>
-                  )}.
+                  Must include every document variable plus signer columns:{' '}
+                  {[...fieldDefs.map((fd) => fd.key), ...signerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn])].map((h, i, arr) => (
+                    <span key={h}>
+                      <code className="font-mono">{h}</code>
+                      {i < arr.length - 1 ? ', ' : ''}
+                    </span>
+                  ))}
+                  .
                 </p>
               </div>
               <button
@@ -455,6 +745,23 @@ export default function NewBulkSendPage() {
           </div>
 
           {csvError && <p className="mb-3 text-xs text-destructive">{csvError}</p>}
+          {csvIssues.length > 0 && (
+            <div className="mb-3 rounded-md border bg-muted/20 p-3">
+              <div className="mb-1 text-xs font-medium">
+                Validation summary: {csvRows?.length ?? 0} valid row{(csvRows?.length ?? 0) !== 1 ? 's' : ''},{' '}
+                {csvIssues.filter((i) => i.severity === 'error').length} error{csvIssues.filter((i) => i.severity === 'error').length !== 1 ? 's' : ''},{' '}
+                {csvIssues.filter((i) => i.severity === 'warning').length} warning{csvIssues.filter((i) => i.severity === 'warning').length !== 1 ? 's' : ''}
+              </div>
+              <ul className="max-h-28 space-y-1 overflow-y-auto text-xs text-muted-foreground">
+                {csvIssues.slice(0, 20).map((issue, i) => (
+                  <li key={i} className={issue.severity === 'error' ? 'text-destructive' : ''}>
+                    {issue.row ? `Row ${issue.row}: ` : ''}{issue.message}
+                  </li>
+                ))}
+                {csvIssues.length > 20 && <li>... and {csvIssues.length - 20} more</li>}
+              </ul>
+            </div>
+          )}
 
           {/* CSV Preview */}
           {csvRows && (
@@ -468,6 +775,7 @@ export default function NewBulkSendPage() {
                     <tr className="text-muted-foreground text-left">
                       <th className="px-2 py-1">Name</th>
                       <th className="px-2 py-1">Email</th>
+                      <th className="px-2 py-1">Signers</th>
                       {fieldDefs.map((fd) => (
                         <th key={fd.key} className="px-2 py-1">{fd.label}</th>
                       ))}
@@ -478,6 +786,9 @@ export default function NewBulkSendPage() {
                       <tr key={i} className="border-t border-border-subtle">
                         <td className="px-2 py-1">{r.name}</td>
                         <td className="px-2 py-1">{r.email}</td>
+                        <td className="px-2 py-1 text-muted-foreground">
+                          {(r.signers ?? [{ name: r.name, email: r.email, role: 'Signer 1' }]).map((s) => `${s.role}: ${s.name}`).join(' / ')}
+                        </td>
                         {fieldDefs.map((fd) => (
                           <td key={fd.key} className="px-2 py-1 text-muted-foreground">
                             {r.fieldValues[fd.key] ?? '—'}
@@ -487,7 +798,7 @@ export default function NewBulkSendPage() {
                     ))}
                     {csvRows.length > 20 && (
                       <tr>
-                        <td colSpan={2 + fieldDefs.length} className="px-2 py-1 text-muted-foreground italic">
+                        <td colSpan={3 + fieldDefs.length} className="px-2 py-1 text-muted-foreground italic">
                           … and {csvRows.length - 20} more
                         </td>
                       </tr>

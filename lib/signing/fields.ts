@@ -1,0 +1,150 @@
+export interface SigningFieldDef {
+  key: string;
+  label: string;
+  defaultValue?: string;
+}
+
+export interface BulkSignerConfig {
+  index: number;
+  role: string;
+  nameColumn: string;
+  emailColumn: string;
+}
+
+const PLACEHOLDER_RE = /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g;
+const INTERNAL_PREFIX = '__';
+
+export function normalizeFieldKey(raw: string): string {
+  return raw.trim().replace(/[^\w]/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
+}
+
+export function isInternalSigningField(key: string): boolean {
+  return key.startsWith(INTERNAL_PREFIX);
+}
+
+export function extractSigningVariables(content: string): string[] {
+  const found = new Set<string>();
+  for (const match of content.matchAll(PLACEHOLDER_RE)) {
+    const key = normalizeFieldKey(match[1] ?? '');
+    if (key && !isInternalSigningField(key)) found.add(key);
+  }
+  return [...found];
+}
+
+export function mergeSigningFieldDefs(content: string, fieldDefs: SigningFieldDef[] = []): SigningFieldDef[] {
+  const byKey = new Map<string, SigningFieldDef>();
+  for (const key of extractSigningVariables(content)) {
+    byKey.set(key, { key, label: labelForSigningField(key) });
+  }
+  for (const def of fieldDefs) {
+    const key = normalizeFieldKey(def.key);
+    if (!key || isInternalSigningField(key)) continue;
+    byKey.set(key, {
+      key,
+      label: def.label?.trim() || labelForSigningField(key),
+      ...(def.defaultValue ? { defaultValue: def.defaultValue } : {}),
+    });
+  }
+  return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
+export function labelForSigningField(key: string): string {
+  return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export function renderSigningContent(content: string, values: Record<string, string>, options: { highlight?: boolean } = {}): string {
+  return content.replace(PLACEHOLDER_RE, (_match, rawKey: string) => {
+    const key = normalizeFieldKey(rawKey);
+    const value = values[key] ?? '';
+    if (!options.highlight) return escapeHtml(value);
+    if (value.trim()) {
+      return `<mark style="background:#fef3c7;border-radius:2px;padding:0 2px;font-weight:600">${escapeHtml(value)}</mark>`;
+    }
+    return `<span style="background:#fee2e2;border-radius:2px;padding:0 2px;color:#991b1b">{{${escapeHtml(key)}}}</span>`;
+  });
+}
+
+export function publicSigningFieldValues(values: Record<string, unknown> | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!values || typeof values !== 'object') return out;
+  for (const [key, value] of Object.entries(values)) {
+    if (isInternalSigningField(key)) continue;
+    out[key] = String(value ?? '');
+  }
+  return out;
+}
+
+export function escapeHtml(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export function defaultBulkSigners(): BulkSignerConfig[] {
+  return [{ index: 1, role: 'Signer 1', nameColumn: 'signer_1_name', emailColumn: 'signer_1_email' }];
+}
+
+export function normalizeBulkSigners(input: BulkSignerConfig[]): BulkSignerConfig[] {
+  const signers = input
+    .slice(0, 3)
+    .map((s, i) => ({
+      index: i + 1,
+      role: s.role.trim() || `Signer ${i + 1}`,
+      nameColumn: normalizeFieldKey(s.nameColumn || `signer_${i + 1}_name`) || `signer_${i + 1}_name`,
+      emailColumn: normalizeFieldKey(s.emailColumn || `signer_${i + 1}_email`) || `signer_${i + 1}_email`,
+    }))
+    .filter((s) => s.nameColumn && s.emailColumn);
+  return signers.length ? signers : defaultBulkSigners();
+}
+
+// ── Multi-signer helpers ──────────────────────────────────────────────────
+
+export type SigningOrderType = 'SEQUENTIAL' | 'PARALLEL';
+
+export interface SignerFieldAssignment {
+  signerIndex: number;
+  role: string;
+  assignedFields: string[];
+}
+
+export function computeLockedFieldsForSigner(
+  allFieldKeys: string[],
+  assignedFields: string[],
+): string[] {
+  if (assignedFields.length === 0) return allFieldKeys;
+  return allFieldKeys.filter((k) => !assignedFields.includes(k));
+}
+
+export function mergeGroupFieldValues(
+  existingValues: Record<string, string>,
+  signerValues: Record<string, string>,
+  assignedFields: string[],
+): Record<string, string> {
+  const merged = { ...existingValues };
+  for (const key of assignedFields) {
+    if (signerValues[key] !== undefined) merged[key] = signerValues[key];
+  }
+  return merged;
+}
+
+export function groupSigningStatus(
+  totalSigners: number,
+  signedCount: number,
+): string {
+  if (signedCount === 0) return 'PENDING';
+  if (signedCount < totalSigners) return 'IN_PROGRESS';
+  return 'COMPLETED';
+}
+
+export interface SignerSignature {
+  signerName: string;
+  signerEmail: string;
+  signerRole: string;
+  signatureImage: string;
+  signedAt: Date;
+  signerIp: string;
+  signerOrder: number;
+}

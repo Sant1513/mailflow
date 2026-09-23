@@ -1,3 +1,15 @@
+import { publicSigningFieldValues, renderSigningContent } from '@/lib/signing/fields';
+
+export interface SignedHtmlSignature {
+  signerName: string;
+  signerEmail: string;
+  signerRole: string;
+  signatureImage: string;
+  signedAt: Date;
+  signerIp: string;
+  signerOrder: number;
+}
+
 export interface SignedHtmlInput {
   title: string;
   content: string;
@@ -7,6 +19,7 @@ export interface SignedHtmlInput {
   signatureImage: string;
   signedAt: Date;
   signerIp: string;
+  additionalSignatures?: SignedHtmlSignature[];
 }
 
 function esc(s: string): string {
@@ -18,14 +31,9 @@ function esc(s: string): string {
 }
 
 export function generateSignedHtml(input: SignedHtmlInput): string {
+  const publicValues = publicSigningFieldValues(input.fieldValues);
   // Substitute variables with yellow highlight — identical to signing preview
-  let html = input.content;
-  for (const [key, value] of Object.entries(input.fieldValues)) {
-    html = html.replace(
-      new RegExp(`\\{\\{${key}\\}\\}`, 'g'),
-      `<mark style="background:#fef3c7;border-radius:2px;padding:0 2px;font-weight:600">${esc(value)}</mark>`
-    );
-  }
+  let html = renderSigningContent(input.content, publicValues, { highlight: true });
   html = html.replace(/\{\{\w+\}\}/g, '');
 
   const sigSrc = input.signatureImage.startsWith('data:')
@@ -34,7 +42,7 @@ export function generateSignedHtml(input: SignedHtmlInput): string {
 
   const signedDate = input.signedAt.toUTCString();
 
-  const fieldRows = Object.entries(input.fieldValues)
+  const fieldRows = Object.entries(publicValues)
     .map(([k, v]) => `<tr><td class="fk">${esc(k.replace(/_/g, ' '))}</td><td>${esc(v)}</td></tr>`)
     .join('');
 
@@ -114,26 +122,73 @@ body{font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px;line-height:1
       <div class="doc-label">Document</div>
       <div class="doc">${html}</div>
     </div>
-    <div class="sig">
-      <div class="sig-label">Electronic Signature</div>
-      <div class="sig-box"><img src="${sigSrc}" alt="Signature of ${esc(input.recipientName)}"></div>
-      <div class="sig-by">Signed by ${esc(input.recipientName)} &nbsp;·&nbsp; ${signedDate}</div>
-    </div>
-    <div class="cert">
-      <div class="cert-title">Certificate of Completion</div>
-      <table class="ct">
-        <tr><td>Document</td><td>${esc(input.title)}</td></tr>
-        <tr><td>Signer name</td><td>${esc(input.recipientName)}</td></tr>
-        <tr><td>Signer email</td><td>${esc(input.recipientEmail)}</td></tr>
-        <tr><td>Signed at</td><td>${signedDate}</td></tr>
-        <tr><td>IP address</td><td>${esc(input.signerIp)}</td></tr>
-        ${fieldRows ? `<tr><td>Field values</td><td><table class="ft">${fieldRows}</table></td></tr>` : ''}
-      </table>
-      <div class="cert-note">This document was signed electronically via MailFlow. The signature and audit trail above are legally binding.</div>
-    </div>
+    ${buildSignaturesSectionHtml(input, sigSrc, signedDate)}
+    ${buildCertificateSectionHtml(input, signedDate, fieldRows)}
   </div>
   <p class="hint">Ctrl+P / Cmd+P → Save as PDF to export</p>
 </div>
 </body>
 </html>`;
+}
+
+function buildSignaturesSectionHtml(input: SignedHtmlInput, sigSrc: string, signedDate: string): string {
+  const allSigners = input.additionalSignatures?.length
+    ? input.additionalSignatures
+        .sort((a, b) => a.signerOrder - b.signerOrder)
+        .map((sig) => ({
+          name: sig.signerName,
+          role: sig.signerRole,
+          signedAt: sig.signedAt.toUTCString(),
+          sigSrc: sig.signatureImage.startsWith('data:')
+            ? sig.signatureImage
+            : `data:image/png;base64,${sig.signatureImage}`,
+        }))
+    : [{ name: input.recipientName, role: '', signedAt: signedDate, sigSrc }];
+
+  return allSigners.map((signer) => `
+    <div class="sig">
+      <div class="sig-label">Electronic Signature${signer.role ? ` — ${esc(signer.role)}` : ''}</div>
+      <div class="sig-box"><img src="${signer.sigSrc}" alt="Signature of ${esc(signer.name)}"></div>
+      <div class="sig-by">Signed by ${esc(signer.name)} &nbsp;·&nbsp; ${signer.signedAt}</div>
+    </div>`).join('\n');
+}
+
+function buildCertificateSectionHtml(input: SignedHtmlInput, signedDate: string, fieldRows: string): string {
+  const allSigners = input.additionalSignatures?.length
+    ? input.additionalSignatures
+        .sort((a, b) => a.signerOrder - b.signerOrder)
+        .map((sig) => ({
+          name: sig.signerName,
+          email: sig.signerEmail,
+          role: sig.signerRole,
+          signedAt: sig.signedAt.toUTCString(),
+          ip: sig.signerIp,
+        }))
+    : [{
+        name: input.recipientName,
+        email: input.recipientEmail,
+        role: '',
+        signedAt: signedDate,
+        ip: input.signerIp,
+      }];
+
+  const signerRows = allSigners.map((signer, i) => {
+    const prefix = allSigners.length > 1 ? `<tr><td colspan="2" style="padding-top:10px;font-weight:600;color:#374151">Signer ${i + 1}${signer.role ? ` — ${esc(signer.role)}` : ''}</td></tr>` : '';
+    return `${prefix}
+      <tr><td>Signer name</td><td>${esc(signer.name)}</td></tr>
+      <tr><td>Signer email</td><td>${esc(signer.email)}</td></tr>
+      <tr><td>Signed at</td><td>${signer.signedAt}</td></tr>
+      <tr><td>IP address</td><td>${esc(signer.ip)}</td></tr>`;
+  }).join('\n');
+
+  return `
+    <div class="cert">
+      <div class="cert-title">Certificate of Completion</div>
+      <table class="ct">
+        <tr><td>Document</td><td>${esc(input.title)}</td></tr>
+        ${signerRows}
+        ${fieldRows ? `<tr><td>Field values</td><td><table class="ft">${fieldRows}</table></td></tr>` : ''}
+      </table>
+      <div class="cert-note">This document was signed electronically via MailFlow. The signature and audit trail above are legally binding.</div>
+    </div>`;
 }

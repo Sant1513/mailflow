@@ -16,6 +16,7 @@ const db = {
   conversation: { upsert: vi.fn() },
   conversationMessage: { create: vi.fn() },
   recipientHistory: { create: vi.fn() },
+  emailSuppression: { findUnique: vi.fn() },
   $transaction: vi.fn(),
 };
 
@@ -61,6 +62,7 @@ beforeEach(() => {
   db.emailJob.update.mockResolvedValue({ id: 'job1', batchId: 'batch1', recordId: 'rec1' });
   db.batch.update.mockResolvedValue({});
   db.record.update.mockResolvedValue({});
+  db.emailSuppression.findUnique.mockResolvedValue(null);
   db.$transaction.mockImplementation(async (fn: any) => (typeof fn === 'function' ? fn(db) : Promise.all(fn)));
 });
 

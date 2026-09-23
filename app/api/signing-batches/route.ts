@@ -7,6 +7,7 @@ import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
 import type { EmailAttachment } from '@/lib/email/provider';
+import { mergeSigningFieldDefs, normalizeBulkSigners, publicSigningFieldValues, type BulkSignerConfig } from '@/lib/signing/fields';
 
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
@@ -41,6 +42,11 @@ const recipientSchema = z.object({
   name: z.string().min(1).max(200),
   email: z.string().email(),
   fieldValues: z.record(z.string()).optional().default({}),
+  signers: z.array(z.object({
+    name: z.string().min(1).max(200),
+    email: z.string().email(),
+    role: z.string().min(1).max(100),
+  })).max(3).optional(),
 });
 
 const attachmentSchema = z.object({
@@ -54,6 +60,14 @@ const createSchema = z.object({
   title: z.string().min(1).max(200),
   templateId: z.string().optional(),
   recipients: z.array(recipientSchema).min(1).max(200),
+  signers: z.array(z.object({
+    index: z.number().int().min(1).max(3),
+    role: z.string().min(1).max(100),
+    nameColumn: z.string().min(1),
+    emailColumn: z.string().min(1),
+    assignedFields: z.array(z.string()).default([]),
+  })).max(3).optional(),
+  signingOrder: z.enum(['SEQUENTIAL', 'PARALLEL']).default('SEQUENTIAL'),
   attachments: z.array(attachmentSchema).default([]),
   ccEmails: z.array(z.string().email()).default(['placements@masaischool.com']),
   expiresInDays: z.number().int().min(1).max(365).default(7),
@@ -72,6 +86,7 @@ export const POST = withErrorHandling(async (req) => {
 
   // Look up template content if templateId is provided
   let templateContent: string | null = null;
+  let templateFields: { key: string; label: string; defaultValue?: string }[] = [];
   if (body.templateId) {
     const tpl = await prisma.signingTemplate.findFirst({
       where: { id: body.templateId, workspaceId },
@@ -80,6 +95,40 @@ export const POST = withErrorHandling(async (req) => {
       return NextResponse.json({ error: 'Template not found.' }, { status: 404 });
     }
     templateContent = tpl.content;
+    templateFields = mergeSigningFieldDefs(tpl.content, Array.isArray(tpl.fieldDefs) ? tpl.fieldDefs as { key: string; label: string; defaultValue?: string }[] : []);
+  }
+  const fieldKeys = templateFields.map((f) => f.key);
+  const signers = normalizeBulkSigners((body.signers ?? []) as BulkSignerConfig[]);
+  const isMultiSigner = signers.length > 1;
+  const signingOrder = body.signingOrder;
+
+  // Build a lookup of signer index → assigned field keys
+  const signerFieldMap = new Map<number, string[]>();
+  for (const s of (body.signers ?? [])) {
+    if (s.assignedFields?.length) signerFieldMap.set(s.index, s.assignedFields);
+  }
+
+  const missing: string[] = [];
+  const expandedRecipients = body.recipients.flatMap((r, rowIndex) => {
+    for (const key of fieldKeys) {
+      const value = r.fieldValues[key] ?? templateFields.find((f) => f.key === key)?.defaultValue ?? '';
+      if (!value.trim()) missing.push(`Row ${rowIndex + 1}: missing ${key}`);
+    }
+    const rowSigners = r.signers?.length
+      ? r.signers
+      : [{ name: r.name, email: r.email, role: signers[0]?.role ?? 'Signer 1' }];
+    return rowSigners.map((s, signerIndex) => ({
+      rowIndex,
+      signerIndex: signerIndex + 1,
+      name: s.name,
+      email: s.email,
+      role: s.role,
+      fieldValues: r.fieldValues,
+      assignedFields: signerFieldMap.get(signerIndex + 1) ?? [],
+    }));
+  });
+  if (missing.length) {
+    return NextResponse.json({ error: 'CSV/document variables are incomplete.', issues: missing.slice(0, 50) }, { status: 400 });
   }
 
   const now = new Date();
@@ -91,32 +140,70 @@ export const POST = withErrorHandling(async (req) => {
       workspaceId,
       templateId: body.templateId ?? null,
       title: body.title,
-      totalCount: body.recipients.length,
+      totalCount: expandedRecipients.length,
       createdById: session.userId,
     },
   });
 
+  // For multi-signer rows, create a SigningGroup per CSV row
+  const rowGroupMap = new Map<number, string>();
+  if (isMultiSigner) {
+    const uniqueRows = [...new Set(expandedRecipients.map((r) => r.rowIndex))];
+    const groups = await Promise.all(
+      uniqueRows.map((rowIndex) =>
+        prisma.signingGroup.create({
+          data: {
+            workspaceId,
+            batchId: batch.id,
+            signingOrder,
+            totalSigners: signers.length,
+          },
+        }),
+      ),
+    );
+    uniqueRows.forEach((rowIndex, i) => {
+      rowGroupMap.set(rowIndex, groups[i]!.id);
+    });
+  }
+
   // Create a SigningRequest for each recipient
   const requests = await Promise.all(
-    body.recipients.map((r) =>
-      prisma.signingRequest.create({
+    expandedRecipients.map((r) => {
+      const publicValues = publicSigningFieldValues(r.fieldValues);
+      for (const field of templateFields) {
+        if (publicValues[field.key] === undefined && field.defaultValue) publicValues[field.key] = field.defaultValue;
+      }
+      const groupId = rowGroupMap.get(r.rowIndex) ?? null;
+      const isFirstSigner = r.signerIndex === 1;
+      const shouldSendNow = !isMultiSigner || isFirstSigner || signingOrder === 'PARALLEL';
+      return prisma.signingRequest.create({
         data: {
           workspaceId,
           batchId: batch.id,
+          groupId,
+          signerOrder: r.signerIndex - 1,
+          signerRole: r.role,
+          assignedFields: r.assignedFields,
           title: body.title,
           content: templateContent ?? '<p>Please sign this document.</p>',
           recipientName: r.name,
           recipientEmail: r.email,
-          fieldValues: r.fieldValues,
+          fieldValues: {
+            ...publicValues,
+            __lockedFields: fieldKeys,
+            __bulkRow: String(r.rowIndex + 1),
+            __signerIndex: String(r.signerIndex),
+            __signerRole: r.role,
+          },
           attachments: body.attachments,
           ccEmails: body.ccEmails,
-          status: 'SENT',
-          sentAt: now,
+          status: shouldSendNow ? 'SENT' : 'DRAFT',
+          sentAt: shouldSendNow ? now : null,
           expiresAt,
           sentById: session.userId,
         },
-      }),
-    ),
+      });
+    }),
   );
 
   // Get the workspace email account for sending
@@ -126,8 +213,9 @@ export const POST = withErrorHandling(async (req) => {
   });
 
   let sentCount = 0;
+  const requestsToEmail = requests.filter((r) => r.status === 'SENT');
 
-  if (account) {
+  if (account && requestsToEmail.length > 0) {
     const expiresDateStr = expiresAt.toLocaleDateString('en-IN', {
       year: 'numeric',
       month: 'long',
@@ -139,16 +227,18 @@ export const POST = withErrorHandling(async (req) => {
       ? await fetchEmailAttachments(body.attachments)
       : [];
 
-    // Send invitation emails in parallel — allSettled so one failure doesn't abort the rest
+    // Send invitation emails only to active signers (first signer in sequential mode)
     const results = await Promise.allSettled(
-      requests.map((sigReq) => {
+      requestsToEmail.map((sigReq) => {
         const signingUrl = `${process.env.NEXTAUTH_URL}/sign/${sigReq.token}`;
+        const values = sigReq.fieldValues as Record<string, string>;
         const html = buildInviteHtml({
           recipientName: sigReq.recipientName,
           title: body.title,
           signingUrl,
           expiresDateStr,
           senderName: session.name,
+          signerRole: values.__signerRole,
         });
         return new GmailProvider(account).sendEmail({
           to: sigReq.recipientEmail,
@@ -179,7 +269,7 @@ export const POST = withErrorHandling(async (req) => {
   await audit(session, 'SIGNING_BATCH_SENT', {
     targetType: 'SigningBatch',
     targetId: batch.id,
-    metadata: { batchId: batch.id, totalCount: body.recipients.length },
+    metadata: { batchId: batch.id, totalCount: expandedRecipients.length, csvRows: body.recipients.length, signerCount: signers.length, signingOrder },
   });
 
   const fullBatch = await prisma.signingBatch.findUnique({
@@ -210,12 +300,14 @@ function buildInviteHtml({
   signingUrl,
   expiresDateStr,
   senderName,
+  signerRole,
 }: {
   recipientName: string;
   title: string;
   signingUrl: string;
   expiresDateStr: string;
   senderName: string;
+  signerRole?: string;
 }): string {
   return `<!DOCTYPE html>
 <html>
@@ -226,7 +318,7 @@ function buildInviteHtml({
   </div>
   <div style="border:1px solid #e5e7eb;border-top:none;padding:32px 24px;border-radius:0 0 8px 8px;">
     <p style="font-size:16px;margin-top:0;">Hi ${recipientName},</p>
-    <p style="font-size:15px;">You've received a document that requires your signature.</p>
+    <p style="font-size:15px;">You've received a document that requires your signature${signerRole ? ` as <strong>${signerRole}</strong>` : ''}.</p>
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:16px 20px;margin:20px 0;">
       <p style="margin:0;font-size:13px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">Document</p>
       <p style="margin:6px 0 0;font-size:18px;font-weight:600;color:#111;">${title}</p>
