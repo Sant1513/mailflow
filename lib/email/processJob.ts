@@ -8,6 +8,7 @@ import { generateJobDocuments, type GeneratedAttachment } from '@/lib/documents/
 import { DocumentRenderError } from '@/lib/documents/render';
 import { DocumentFileError } from '@/lib/documents/inspect';
 import { injectTracking } from '@/lib/email/tracking';
+import { appBaseUrl } from '@/lib/app-url';
 import crypto from 'crypto';
 
 /**
@@ -130,7 +131,7 @@ export async function processEmailJob(
   try {
     // Generate an unsubscribe token for this job if it doesn't already have one.
     const unsubscribeToken: string = job.unsubscribeToken ?? crypto.randomUUID();
-    const baseUrl = (process.env.NEXTAUTH_URL ?? process.env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    const baseUrl = appBaseUrl();
     const unsubscribeUrl = `${baseUrl}/api/unsubscribe/${unsubscribeToken}`;
 
     // Build the footer — appended unconditionally so every campaign email has an unsubscribe link.

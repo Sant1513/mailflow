@@ -4,6 +4,7 @@ import { buildReferences } from '@/lib/email/mime';
 import { SendEmailError } from '@/lib/email/provider';
 import { escapeHtml, htmlToPlainText } from '@/lib/templates/variables';
 import { audit } from '@/lib/audit/log';
+import { appBaseUrl } from '@/lib/app-url';
 import type { AppSession } from '@/lib/auth/session';
 import { EmailProvider as EmailProviderEnum, Role, UserStatus } from '@prisma/client';
 
@@ -26,7 +27,7 @@ import { EmailProvider as EmailProviderEnum, Role, UserStatus } from '@prisma/cl
 export type Decision = 'APPROVED' | 'REJECTED';
 
 export function appUrl(path: string): string {
-  const base = (process.env.NEXTAUTH_URL ?? process.env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+  const base = appBaseUrl();
   return `${base}${path}`;
 }
 

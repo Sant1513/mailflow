@@ -2,6 +2,7 @@ import { google } from 'googleapis';
 import type { EmailProviderAccount } from '@prisma/client';
 import { authorizedClientFor, markAccountExpired } from '@/lib/gmail/oauth';
 import { buildMimeMessage, toGmailRaw } from './mime';
+import { normalizeEmailLinks } from './links';
 import {
   SendEmailError,
   type EmailProvider,
@@ -37,7 +38,8 @@ export class GmailProvider implements EmailProvider {
       fromEmail: input.fromEmail,
       replyTo: input.replyTo,
       subject: input.subject,
-      html: input.html,
+      // Every outgoing email: plain URLs become links, scheme-less links get https://.
+      html: normalizeEmailLinks(input.html),
       plainText: input.plainText,
       attachments: input.attachments,
       inReplyTo: input.inReplyTo,

@@ -15,8 +15,9 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null;
     const userAgent = req.headers.get('user-agent') ?? null;
 
-    // Fire-and-forget — never block the pixel response on the DB write.
-    prisma.emailTrackingEvent
+    // Awaited: on serverless hosts work left running after the response can be
+    // frozen and lost. Failures are still swallowed — tracking is best-effort.
+    await prisma.emailTrackingEvent
       .create({
         data: {
           campaignId: payload.campaignId,

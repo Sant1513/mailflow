@@ -1,4 +1,6 @@
 import { createHmac } from 'crypto';
+import { appBaseUrl } from '@/lib/app-url';
+import { autoLinkPlainUrls, rewriteLinks } from '@/lib/email/links';
 
 const KEY = process.env.ENCRYPTION_KEY ?? 'dev-tracking-key-32chars-padding!!';
 
@@ -52,20 +54,35 @@ export function decodeUnsubToken(token: string): { workspaceId: string; email: s
   }
 }
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-
 export function buildTrackingPixelUrl(payload: TrackingPayload): string {
-  return `${APP_URL}/api/track/open/${encodeTrackingToken(payload)}`;
+  return `${appBaseUrl()}/api/track/open/${encodeTrackingToken(payload)}`;
+}
+
+/**
+ * Signs the destination together with the token, so a tracking link can only
+ * ever redirect to the URL that was in the email (not an open redirect).
+ */
+export function signClickDestination(token: string, destinationUrl: string): string {
+  return sign(`${token}|${destinationUrl}`);
+}
+
+export function isValidClickDestination(token: string, destinationUrl: string, signature: string | null): boolean {
+  return !!signature && signClickDestination(token, destinationUrl) === signature;
 }
 
 export function buildClickTrackingUrl(payload: TrackingPayload, destinationUrl: string): string {
   const token = encodeTrackingToken(payload);
-  const encoded = encodeURIComponent(destinationUrl);
-  return `${APP_URL}/api/track/click/${token}?u=${encoded}`;
+  const params = new URLSearchParams({ u: destinationUrl, s: signClickDestination(token, destinationUrl) });
+  return `${appBaseUrl()}/api/track/click/${token}?${params.toString()}`;
 }
 
 export function buildUnsubscribeUrl(workspaceId: string, email: string): string {
-  return `${APP_URL}/unsubscribe/${encodeUnsubToken(workspaceId, email)}`;
+  return `${appBaseUrl()}/unsubscribe/${encodeUnsubToken(workspaceId, email)}`;
+}
+
+/** Links that must reach us directly (unsubscribe), never through click tracking. */
+function isOwnUnsubscribeLink(url: string): boolean {
+  return url.startsWith(`${appBaseUrl()}/`) && /\/(api\/)?unsubscribe\//.test(url);
 }
 
 /** Inject a 1×1 tracking pixel + wrap all href links in the HTML body. */
@@ -74,10 +91,11 @@ export function injectTracking(html: string, payload: TrackingPayload, workspace
   const unsubUrl = buildUnsubscribeUrl(workspaceId, payload.email);
 
   // Wrap every <a href="..."> so we track clicks (skip mailto: and already-wrapped links).
-  let tracked = html.replace(/<a\s+([^>]*?)href="(https?:\/\/[^"]+)"([^>]*)>/gi, (_match, pre, url, post) => {
-    const clickUrl = buildClickTrackingUrl(payload, url);
-    return `<a ${pre}href="${clickUrl}"${post}>`;
-  });
+  // Plain URLs become links, scheme-less hrefs get https://, then every web
+  // link is routed through click tracking (unsubscribe stays direct).
+  let tracked = rewriteLinks(autoLinkPlainUrls(html), (url) =>
+    isOwnUnsubscribeLink(url) ? url : buildClickTrackingUrl(payload, url),
+  );
 
   // Append the tracking pixel just before </body> (or at the end if no body tag).
   const pixel = `<img src="${pixelUrl}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0;" />`;

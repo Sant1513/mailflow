@@ -7,6 +7,7 @@ import { EmailPreview } from '@/components/email-preview/EmailPreview';
 import { ReplyAssistant } from '@/components/ai/ReplyAssistant';
 import { formatHtml } from '@/lib/templates/format';
 import { htmlToPlainText } from '@/lib/templates/variables';
+import { normalizeHref } from '@/lib/email/links';
 
 interface ContactSuggestion { id: string; name: string | null; primaryEmail: string; }
 
@@ -263,9 +264,11 @@ export function ReplyComposer({
   }
 
   function insertLink() {
-    const url = prompt('Link URL (https://…)');
-    if (!url) return;
-    if (!/^https?:\/\//i.test(url)) return toast.error('Links must start with http:// or https://');
+    const typed = prompt('Link URL (e.g. levelupcareer.in or https://…)')?.trim();
+    if (!typed) return;
+    // "levelupcareer.in" or "www.x.com" would open as a broken relative link; add https://.
+    const url = normalizeHref(typed);
+    if (!url) return toast.error('That doesn’t look like a web address.');
     const sel = window.getSelection();
     const hasSelection = sel && sel.toString().trim().length > 0 && editorRef.current?.contains(sel.anchorNode);
     if (mode === 'write' && hasSelection) exec('createLink', url);
