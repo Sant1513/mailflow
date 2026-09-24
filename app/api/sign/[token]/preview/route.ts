@@ -6,6 +6,9 @@ import { generateSignedPdf } from '@/lib/documents/pdf';
 import { lockedFieldsOf, publicSigningFieldValues } from '@/lib/signing/fields';
 import { placementsOf } from '@/lib/signing/placements';
 
+// First PDF on a cold server starts Chromium, which can take several seconds.
+export const maxDuration = 60;
+
 const previewSchema = z.object({
   fieldValues: z.record(z.string().max(5000)).default({}),
 });

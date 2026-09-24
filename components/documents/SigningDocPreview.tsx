@@ -27,7 +27,7 @@ export function renderPreviewHtml(
   signers: PreviewSigner[],
   highlightSigner?: number,
 ): string {
-  const withValues = renderSigningContent(content, values, { highlight: true });
+  const withValues = renderSigningContent(content, values, { highlight: true, friendlyBlanks: true });
   return renderSignatureTokensHtml(
     withValues,
     signers.map((s, i) => ({ signerIndex: i + 1, role: s.role, name: s.name })),

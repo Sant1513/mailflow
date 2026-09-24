@@ -52,7 +52,11 @@ export function labelForSigningField(key: string): string {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export function renderSigningContent(content: string, values: Record<string, string>, options: { highlight?: boolean } = {}): string {
+export function renderSigningContent(
+  content: string,
+  values: Record<string, string>,
+  options: { highlight?: boolean; friendlyBlanks?: boolean } = {},
+): string {
   return content.replace(PLACEHOLDER_RE, (_match, rawKey: string) => {
     const key = normalizeFieldKey(rawKey);
     const value = values[key] ?? '';
@@ -60,7 +64,9 @@ export function renderSigningContent(content: string, values: Record<string, str
     if (value.trim()) {
       return `<mark style="background:#fef3c7;border-radius:2px;padding:0 2px;font-weight:600">${escapeHtml(value)}</mark>`;
     }
-    return `<span style="background:#fee2e2;border-radius:2px;padding:0 2px;color:#991b1b">{{${escapeHtml(key)}}}</span>`;
+    // Blank field: show a readable label ("Student Name") rather than {{student_name}}.
+    const text = options.friendlyBlanks ? labelForSigningField(key) : `{{${key}}}`;
+    return `<span style="background:#fee2e2;border-radius:2px;padding:0 2px;color:#991b1b">${escapeHtml(text)}</span>`;
   });
 }
 

@@ -5,8 +5,11 @@ import {
   publicSigningFieldValues,
   renderSigningContent,
 } from '@/lib/signing/fields';
+import { browserPdfEnabled, renderHtmlToPdf } from '@/lib/documents/browser-pdf';
+import { buildPrintableHtml } from '@/lib/documents/printable';
 import {
   parseSignatureToken,
+  renderSignatureTokensHtml,
   signatureTokenRegex,
   stripSignatureTokens,
   type SignatureAlign,
@@ -558,7 +561,7 @@ async function drawPlacedSignature(
   slot: SignatureSlot | undefined,
   opts: { preview: boolean; highlight: boolean },
 ): Promise<void> {
-  const bottom = PAGE_H - p.y - p.height;
+  const bottom = page.getHeight() - p.y - p.height;
   const label = slot?.role || `Signer ${p.signerIndex}`;
 
   if (slot?.image) {
@@ -609,13 +612,92 @@ export interface SignedPdfResult {
 }
 
 export async function generateSignedPdfDetailed(input: SignedPdfInput): Promise<SignedPdfResult> {
-  const doc = await PDFDocument.create();
-  const fonts: Fonts = {
+  if (browserPdfEnabled()) {
+    try {
+      return await generateWithBrowser(input);
+    } catch (err) {
+      // Never block a signature on the printer: fall back to the built-in renderer.
+      console.error('[pdf] browser rendering failed; using the built-in renderer', err);
+    }
+  }
+  return generateWithPdfLib(input);
+}
+
+async function embedFonts(doc: PDFDocument): Promise<Fonts> {
+  return {
     reg:      await doc.embedFont(StandardFonts.Helvetica),
     bold:     await doc.embedFont(StandardFonts.HelveticaBold),
     ital:     await doc.embedFont(StandardFonts.HelveticaOblique),
     boldItal: await doc.embedFont(StandardFonts.HelveticaBoldOblique),
   };
+}
+
+/** Values as they appear in the document; blanks become [Label] in previews. */
+function renderValuesFor(input: SignedPdfInput): { publicValues: Record<string, string>; renderValues: Record<string, string> } {
+  const publicValues = publicSigningFieldValues(input.fieldValues);
+  const renderValues = { ...publicValues };
+  if (input.preview) {
+    for (const key of extractSigningVariables(input.content)) {
+      if (!(renderValues[key] ?? '').trim()) renderValues[key] = `[${labelForSigningField(key)}]`;
+    }
+  }
+  return { publicValues, renderValues };
+}
+
+async function drawAllPlacements(
+  doc: PDFDocument,
+  fonts: Fonts,
+  input: SignedPdfInput,
+  contentPageCount: number,
+): Promise<void> {
+  const slotsBySigner = new Map((input.signatureSlots ?? []).map((slot) => [slot.signerIndex, slot]));
+  for (const placement of input.placements ?? []) {
+    // A shorter document than the one the box was placed on: use its last page.
+    const page = doc.getPage(Math.min(placement.page, contentPageCount - 1));
+    await drawPlacedSignature(doc, page, fonts, placement, slotsBySigner.get(placement.signerIndex), {
+      preview: !!input.preview,
+      highlight: input.highlightSigner === placement.signerIndex,
+    });
+  }
+}
+
+/**
+ * Prints the template HTML with a real browser engine — the same HTML and
+ * styles the signer saw — then adds placed signatures and the certificate.
+ */
+async function generateWithBrowser(input: SignedPdfInput): Promise<SignedPdfResult> {
+  const { publicValues, renderValues } = renderValuesFor(input);
+  const content = stripSignatureTokens(input.content, placedSignerIndices(input.placements ?? []));
+  const body = renderSignatureTokensHtml(
+    renderSigningContent(content, renderValues).replace(/<script[\s\S]*?<\/script>/gi, ''),
+    input.signatureSlots ?? [],
+    {
+      highlightSigner: input.preview ? input.highlightSigner : undefined,
+      placeholderLabel: (index, slot) =>
+        input.preview ? `${slot?.role ?? `Signer ${index}`} signs here` : 'Awaiting signature',
+    },
+  );
+
+  const printed = await renderHtmlToPdf(buildPrintableHtml(body, input.title), {
+    footerLabel: input.preview ? 'PREVIEW - NOT SIGNED' : `${input.title} - signed electronically via MailFlow`,
+  });
+
+  const doc = await PDFDocument.load(printed);
+  const fonts = await embedFonts(doc);
+  const contentPageCount = doc.getPageCount();
+  await drawAllPlacements(doc, fonts, input, contentPageCount);
+
+  if (!input.preview) {
+    const s: DrawState = { doc, fonts, page: doc.addPage([PAGE_W, PAGE_H]), y: PAGE_H - MARGIN };
+    await drawCertificate(s, input, publicValues);
+  }
+  return { pdf: Buffer.from(await doc.save()), pageCount: doc.getPageCount(), contentPageCount };
+}
+
+/** Built-in fallback renderer (no browser available). */
+async function generateWithPdfLib(input: SignedPdfInput): Promise<SignedPdfResult> {
+  const doc = await PDFDocument.create();
+  const fonts = await embedFonts(doc);
 
   const s: DrawState = {
     doc, fonts,
@@ -641,13 +723,7 @@ export async function generateSignedPdfDetailed(input: SignedPdfInput): Promise<
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });
 
   // ── Document content (HTML rendered, variables substituted) ──────────────────
-  const publicValues = publicSigningFieldValues(input.fieldValues);
-  const renderValues = { ...publicValues };
-  if (input.preview) {
-    for (const key of extractSigningVariables(input.content)) {
-      if (!(renderValues[key] ?? '').trim()) renderValues[key] = `[${labelForSigningField(key)}]`;
-    }
-  }
+  const { publicValues, renderValues } = renderValuesFor(input);
   const placements = input.placements ?? [];
   const contentWithoutPlacedTokens = stripSignatureTokens(input.content, placedSignerIndices(placements));
   const processedContent = renderSigningContent(contentWithoutPlacedTokens, renderValues)
@@ -664,20 +740,20 @@ export async function generateSignedPdfDetailed(input: SignedPdfInput): Promise<
   }
 
   const contentPageCount = doc.getPageCount();
-  for (const placement of placements) {
-    // A shorter document than the one the box was placed on: use its last page.
-    const page = doc.getPage(Math.min(placement.page, contentPageCount - 1));
-    await drawPlacedSignature(doc, page, fonts, placement, slotsBySigner.get(placement.signerIndex), {
-      preview: !!input.preview,
-      highlight: input.highlightSigner === placement.signerIndex,
-    });
-  }
+  await drawAllPlacements(doc, fonts, input, contentPageCount);
 
   if (input.preview) return { pdf: Buffer.from(await doc.save()), pageCount: doc.getPageCount(), contentPageCount };
 
-  // ── Certificate of completion (new page) ─────────────────────────────────────
   newPage(s);
+  await drawCertificate(s, input, publicValues);
+  return { pdf: Buffer.from(await doc.save()), pageCount: doc.getPageCount(), contentPageCount };
+}
 
+// ─── Certificate of completion ───────────────────────────────────────────────
+
+async function drawCertificate(s: DrawState, input: SignedPdfInput, publicValues: Record<string, string>): Promise<void> {
+  const doc = s.doc;
+  const signedDateStr = input.signedAt.toUTCString();
   drawBlock(s, block('h2', 'Certificate of Completion', { bold: true }));
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });
 
@@ -790,6 +866,4 @@ export async function generateSignedPdfDetailed(input: SignedPdfInput): Promise<
 
   drawBlock(s, { kind: 'hr', align: 'left', indent: 0, runs: [] });
   drawBlock(s, block('p', 'This certificate was generated automatically by MailFlow and serves as an audit record of the signing event.', { italic: false }));
-
-  return { pdf: Buffer.from(await doc.save()), pageCount: doc.getPageCount(), contentPageCount };
 }

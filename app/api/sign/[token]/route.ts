@@ -9,6 +9,9 @@ import { generateSignedPdf } from '@/lib/documents/pdf';
 import { lockedFieldsOf, publicSigningFieldValues, mergeGroupFieldValues } from '@/lib/signing/fields';
 import { placementsOf } from '@/lib/signing/placements';
 
+// First PDF on a cold server starts Chromium, which can take several seconds.
+export const maxDuration = 60;
+
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
 async function fetchEmailAttachments(metas: AttachmentMeta[]): Promise<EmailAttachment[]> {

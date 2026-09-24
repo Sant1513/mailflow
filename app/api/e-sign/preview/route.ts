@@ -5,6 +5,9 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { generateSignedPdfDetailed } from '@/lib/documents/pdf';
 import { signaturePlacementsSchema } from '@/lib/signing/placements';
 
+// First PDF on a cold server starts Chromium, which can take several seconds.
+export const maxDuration = 60;
+
 const previewSchema = z.object({
   title: z.string().min(1).max(200),
   content: z.string().min(1).max(500_000),

@@ -52,7 +52,7 @@ function formatLabel(key: string): string {
 }
 
 function substituteVars(content: string, values: Record<string, string>, doc: PublicDocument): string {
-  const withValues = renderSigningContent(content, values, { highlight: true });
+  const withValues = renderSigningContent(content, values, { highlight: true, friendlyBlanks: true });
   const own = doc.signerIndex ?? 1;
   const signers: GroupSigner[] = doc.groupSigners?.length
     ? doc.groupSigners
