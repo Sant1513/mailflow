@@ -8,18 +8,43 @@ import { EditSigningRequestModal } from '@/components/documents/EditSigningReque
 const PAGE_SIZE = 20;
 
 type SigningStatus = 'DRAFT' | 'SENT' | 'VIEWED' | 'SIGNED' | 'EXPIRED' | 'VOIDED';
+type DocumentStatus = SigningStatus | 'IN_PROGRESS';
 
+interface DocumentSigner {
+  id: string;
+  recipientName: string;
+  recipientEmail: string;
+  signerRole: string | null;
+  signerOrder: number;
+  status: SigningStatus;
+  signedAt: string | null;
+}
+
+/** One document: a single request, or a multi-signer group led by its first signer. */
 interface SigningRequest {
   id: string;
   title: string;
   recipientName: string;
   recipientEmail: string;
   status: SigningStatus;
+  documentStatus: DocumentStatus;
   sentAt: string | null;
   signedAt: string | null;
   createdAt: string;
   sentBy: { name: string; email: string } | null;
+  signers: DocumentSigner[] | null;
+  totalSigners?: number;
+  signedCount?: number;
 }
+
+const SIGNER_STATUS_LABEL: Record<SigningStatus, string> = {
+  DRAFT: 'Waiting for turn',
+  SENT: 'Sent',
+  VIEWED: 'Viewed',
+  SIGNED: 'Signed',
+  EXPIRED: 'Expired',
+  VOIDED: 'Voided',
+};
 
 interface ESignDetail {
   id: string;
@@ -28,14 +53,90 @@ interface ESignDetail {
   signedPdfData: string | null;
 }
 
-const STATUS_BADGE: Record<SigningStatus, string> = {
+const STATUS_BADGE: Record<DocumentStatus, string> = {
   SIGNED: 'badge-success',
   SENT: 'badge-info',
   VIEWED: 'badge-warning',
   EXPIRED: 'badge',
   VOIDED: 'badge-destructive',
   DRAFT: 'badge',
+  IN_PROGRESS: 'badge-warning',
 };
+
+const SIGNER_DOT: Record<SigningStatus, string> = {
+  SIGNED: 'bg-emerald-500',
+  VIEWED: 'bg-amber-400',
+  SENT: 'bg-blue-500',
+  DRAFT: 'bg-gray-300',
+  EXPIRED: 'bg-gray-400',
+  VOIDED: 'bg-red-400',
+};
+
+function DocumentActions({
+  doc,
+  onView,
+  onEdit,
+  onRestart,
+  onVoid,
+  onResend,
+}: {
+  doc: SigningRequest;
+  onView: (format: 'html' | 'pdf') => void;
+  onEdit: () => void;
+  onRestart: () => void;
+  onVoid: () => void;
+  onResend: () => void;
+}) {
+  const status = doc.documentStatus;
+  const multi = !!doc.signers;
+  const open = status === 'IN_PROGRESS' || status === 'DRAFT' || status === 'SENT' || status === 'VIEWED';
+  const someoneWaiting = multi
+    ? doc.signers!.some((s) => s.status === 'SENT' || s.status === 'VIEWED')
+    : status === 'SENT' || status === 'VIEWED';
+  return (
+    <div className="flex flex-wrap gap-2 text-xs">
+      {status === 'SIGNED' && (
+        <>
+          {/* A finished multi-signer document is the combined PDF with every signature. */}
+          {!multi && (
+            <button onClick={() => onView('html')} className="text-primary hover:underline">
+              View Document
+            </button>
+          )}
+          <button onClick={() => onView('pdf')} className="text-primary hover:underline">
+            {multi ? 'View PDF' : 'PDF'}
+          </button>
+        </>
+      )}
+      {open ? (
+        <button onClick={onEdit} className="text-primary hover:underline">
+          Preview / Edit
+        </button>
+      ) : (
+        status !== 'SIGNED' && (
+          <button onClick={onEdit} className="text-muted-foreground hover:text-foreground">
+            Preview
+          </button>
+        )
+      )}
+      {!multi && (status === 'SIGNED' || status === 'VOIDED' || status === 'EXPIRED') && (
+        <button onClick={onRestart} className="text-muted-foreground hover:text-foreground">
+          Re-request
+        </button>
+      )}
+      {open && (
+        <button onClick={onVoid} className="text-muted-foreground hover:text-primary">
+          Void
+        </button>
+      )}
+      {open && someoneWaiting && (
+        <button onClick={onResend} className="text-muted-foreground hover:text-foreground" title="Remind whoever needs to sign next">
+          Resend
+        </button>
+      )}
+    </div>
+  );
+}
 
 export default function ESignDocumentsPage() {
   const [requests, setRequests] = useState<SigningRequest[]>([]);
@@ -142,18 +243,22 @@ export default function ESignDocumentsPage() {
     else window.open(url, '_blank');
   }
 
-  async function voidRequest(id: string) {
-    if (!confirm('Void this signing request?')) return;
-    const res = await fetch(`/api/e-sign/${id}`, {
+  async function voidRequest(doc: SigningRequest) {
+    const message = doc.signers
+      ? `Void "${doc.title}" for all ${doc.signers.length} signers? Anyone who hasn't signed will no longer be able to.`
+      : 'Void this signing request?';
+    if (!confirm(message)) return;
+    const res = await fetch(`/api/e-sign/${doc.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'void' }),
     });
     if (!res.ok) {
-      toast.error('Could not void request');
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(json.error ?? 'Could not void the document');
       return;
     }
-    toast.success('Request voided');
+    toast.success('Document voided');
     load(page);
   }
 
@@ -165,7 +270,8 @@ export default function ESignDocumentsPage() {
       body: JSON.stringify({ action: 'restart' }),
     });
     if (!res.ok) {
-      toast.error('Could not restart request');
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(json.error ?? 'Could not restart request');
       return;
     }
     toast.success('New signing request sent');
@@ -178,11 +284,12 @@ export default function ESignDocumentsPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'resend' }),
     });
+    const json = (await res.json().catch(() => ({}))) as { error?: string; recipients?: string[] };
     if (!res.ok) {
-      toast.error('Could not resend request');
+      toast.error(json.error ?? 'Could not resend request');
       return;
     }
-    toast.success('Request resent successfully');
+    toast.success(json.recipients?.length ? `Reminder sent to ${json.recipients.join(', ')}` : 'Reminder sent');
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
@@ -237,6 +344,7 @@ export default function ESignDocumentsPage() {
               className="!py-1 text-sm min-w-[140px]"
             >
               <option value="">All</option>
+              <option value="IN_PROGRESS">In progress (multi-signer)</option>
               <option value="SENT">Sent</option>
               <option value="VIEWED">Viewed</option>
               <option value="SIGNED">Signed</option>
@@ -275,7 +383,7 @@ export default function ESignDocumentsPage() {
           </button>
         </div>
         <div className="mt-2 text-xs text-muted-foreground">
-          {total.toLocaleString()} request{total !== 1 ? 's' : ''}
+          {total.toLocaleString()} document{total !== 1 ? 's' : ''}
         </div>
       </div>
 
@@ -341,13 +449,48 @@ export default function ESignDocumentsPage() {
                         aria-label="Select row"
                       />
                     </td>
-                    <td className="px-4 py-2 font-medium">{req.title}</td>
-                    <td className="px-4 py-2">
-                      <div className="text-xs font-medium">{req.recipientName}</div>
-                      <div className="text-xs text-muted-foreground">{req.recipientEmail}</div>
+                    <td className="px-4 py-2 font-medium align-top">
+                      {req.title}
+                      {req.signers && (
+                        <div className="mt-0.5 text-[11px] font-normal text-muted-foreground">
+                          {req.signers.length} signers
+                        </div>
+                      )}
                     </td>
-                    <td className="px-4 py-2">
-                      <span className={`badge ${STATUS_BADGE[req.status]}`}>{req.status}</span>
+                    <td className="px-4 py-2 align-top">
+                      {req.signers ? (
+                        <ol className="space-y-1">
+                          {req.signers.map((s) => (
+                            <li key={s.id} className="flex items-start gap-1.5">
+                              <span
+                                className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${SIGNER_DOT[s.status]}`}
+                                title={SIGNER_STATUS_LABEL[s.status]}
+                              />
+                              <div className="min-w-0">
+                                <div className="text-xs font-medium">
+                                  {s.signerOrder + 1}. {s.recipientName}
+                                  <span className="font-normal text-muted-foreground">
+                                    {' '}· {s.signerRole ?? `Signer ${s.signerOrder + 1}`} · {SIGNER_STATUS_LABEL[s.status]}
+                                  </span>
+                                </div>
+                                <div className="truncate text-[11px] text-muted-foreground">{s.recipientEmail}</div>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      ) : (
+                        <>
+                          <div className="text-xs font-medium">{req.recipientName}</div>
+                          <div className="text-xs text-muted-foreground">{req.recipientEmail}</div>
+                        </>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 align-top">
+                      <span className={`badge ${STATUS_BADGE[req.documentStatus]}`}>
+                        {req.documentStatus === 'IN_PROGRESS'
+                          ? `IN PROGRESS ${req.signedCount ?? 0}/${req.totalSigners ?? req.signers?.length ?? 0}`
+                          : req.documentStatus}
+                      </span>
                     </td>
                     <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
                       {fmt(req.sentAt)}
@@ -365,53 +508,15 @@ export default function ESignDocumentsPage() {
                         '—'
                       )}
                     </td>
-                    <td className="px-4 py-2">
-                      <div className="flex flex-wrap gap-2 text-xs">
-                        {req.status === 'SIGNED' && (
-                          <>
-                            <button onClick={() => viewPdf(req.id)} className="text-primary hover:underline">
-                              View Document
-                            </button>
-                            <button onClick={() => viewPdf(req.id, 'pdf')} className="text-primary hover:underline">
-                              PDF
-                            </button>
-                          </>
-                        )}
-                        {['DRAFT', 'SENT', 'VIEWED'].includes(req.status) && (
-                          <button onClick={() => setEditingId(req.id)} className="text-primary hover:underline">
-                            Preview / Edit
-                          </button>
-                        )}
-                        {['VOIDED', 'EXPIRED'].includes(req.status) && (
-                          <button onClick={() => setEditingId(req.id)} className="text-muted-foreground hover:text-foreground">
-                            Preview
-                          </button>
-                        )}
-                        {['SIGNED', 'VOIDED', 'EXPIRED'].includes(req.status) && (
-                          <button
-                            onClick={() => restartRequest(req.id)}
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            Re-request
-                          </button>
-                        )}
-                        {!['SIGNED', 'VOIDED', 'EXPIRED'].includes(req.status) && (
-                          <button
-                            onClick={() => voidRequest(req.id)}
-                            className="text-muted-foreground hover:text-primary"
-                          >
-                            Void
-                          </button>
-                        )}
-                        {['SENT', 'VIEWED'].includes(req.status) && (
-                          <button
-                            onClick={() => resendRequest(req.id)}
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            Resend
-                          </button>
-                        )}
-                      </div>
+                    <td className="px-4 py-2 align-top">
+                      <DocumentActions
+                        doc={req}
+                        onView={(format) => viewPdf(req.id, format)}
+                        onEdit={() => setEditingId(req.id)}
+                        onRestart={() => restartRequest(req.id)}
+                        onVoid={() => voidRequest(req)}
+                        onResend={() => resendRequest(req.id)}
+                      />
                     </td>
                   </tr>
                 ))}

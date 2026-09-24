@@ -1,4 +1,4 @@
-import { PDFDocument, PDFFont, rgb, StandardFonts } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFFont, PDFHexString, PDFName, PDFNumber, PDFString, rgb, StandardFonts } from 'pdf-lib';
 import {
   extractSigningVariables,
   labelForSigningField,
@@ -6,7 +6,7 @@ import {
   renderSigningContent,
 } from '@/lib/signing/fields';
 import { browserPdfEnabled, renderHtmlToPdf } from '@/lib/documents/browser-pdf';
-import { buildPrintableHtml } from '@/lib/documents/printable';
+import { anchorIdFromUri, buildPrintableHtml, withAnchorMarkers } from '@/lib/documents/printable';
 import {
   parseSignatureToken,
   renderSignatureTokensHtml,
@@ -15,7 +15,12 @@ import {
   type SignatureAlign,
   type SignatureSlot,
 } from '@/lib/signing/signature-tokens';
-import { placedSignerIndices, type SignaturePlacement } from '@/lib/signing/placements';
+import {
+  placedSignerIndices,
+  resolvePlacement,
+  type AnchorPosition,
+  type SignaturePlacement,
+} from '@/lib/signing/placements';
 
 // ─── Public interface ─────────────────────────────────────────────────────────
 
@@ -575,12 +580,8 @@ async function drawPlacedSignature(
     } catch {
       page.drawText('[signature could not be embedded]', { x: p.x, y: bottom + p.height / 2, size: 7, font: fonts.ital, color: rgb(0.5, 0.5, 0.5) });
     }
-    const caption = truncateToWidth(`${label}${slot.name ? ` - ${slot.name}` : ''}`, fonts.reg, 6.5, Math.max(p.width, 120));
-    if (bottom - 8 > 4) page.drawText(caption, { x: p.x, y: bottom - 8, size: 6.5, font: fonts.reg, color: rgb(0.35, 0.35, 0.35) });
-    if (slot.signedAt && bottom - 15 > 4) {
-      const when = typeof slot.signedAt === 'string' ? new Date(slot.signedAt) : slot.signedAt;
-      page.drawText(san(`Signed ${when.toUTCString()}`), { x: p.x, y: bottom - 15, size: 6, font: fonts.reg, color: rgb(0.5, 0.5, 0.5) });
-    }
+    // Only the signature goes in the box: anything drawn outside it would land on
+    // the document's own text. Who signed and when is on the certificate page.
     return;
   }
 
@@ -609,6 +610,8 @@ export interface SignedPdfResult {
   pageCount: number;
   /** Pages before the completion certificate — the ones placements can target. */
   contentPageCount: number;
+  /** Where each block started in this render (browser renderer only). */
+  anchors?: AnchorPosition[];
 }
 
 export async function generateSignedPdfDetailed(input: SignedPdfInput): Promise<SignedPdfResult> {
@@ -649,16 +652,54 @@ async function drawAllPlacements(
   fonts: Fonts,
   input: SignedPdfInput,
   contentPageCount: number,
+  anchors: Map<number, AnchorPosition> = new Map(),
 ): Promise<void> {
   const slotsBySigner = new Map((input.signatureSlots ?? []).map((slot) => [slot.signerIndex, slot]));
   for (const placement of input.placements ?? []) {
+    const at = resolvePlacement(placement, anchors);
     // A shorter document than the one the box was placed on: use its last page.
-    const page = doc.getPage(Math.min(placement.page, contentPageCount - 1));
-    await drawPlacedSignature(doc, page, fonts, placement, slotsBySigner.get(placement.signerIndex), {
+    const page = doc.getPage(Math.min(at.page, contentPageCount - 1));
+    await drawPlacedSignature(doc, page, fonts, { ...placement, ...at }, slotsBySigner.get(placement.signerIndex), {
       preview: !!input.preview,
       highlight: input.highlightSigner === placement.signerIndex,
     });
   }
+}
+
+/**
+ * Reads where each block-start marker link landed (page + top-left position)
+ * and removes those links so the delivered PDF has no trace of them.
+ */
+function extractAnchors(doc: PDFDocument): AnchorPosition[] {
+  const found: AnchorPosition[] = [];
+  doc.getPages().forEach((page, pageIndex) => {
+    const annots = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray);
+    if (!annots) return;
+    const keep: ReturnType<PDFArray['get']>[] = [];
+    for (let i = 0; i < annots.size(); i++) {
+      const ref = annots.get(i);
+      const dict = doc.context.lookupMaybe(ref, PDFDict);
+      const action = dict?.lookupMaybe(PDFName.of('A'), PDFDict);
+      const uriObj = action?.lookup(PDFName.of('URI'));
+      const uri = uriObj instanceof PDFString || uriObj instanceof PDFHexString ? uriObj.decodeText() : '';
+      const id = uri ? anchorIdFromUri(uri) : null;
+      const rect = dict?.lookupMaybe(PDFName.of('Rect'), PDFArray);
+      if (id === null || !rect) {
+        keep.push(ref);
+        continue;
+      }
+      const nums = rect.asArray().map((n) => (n instanceof PDFNumber ? n.asNumber() : 0));
+      const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = nums;
+      found.push({ id, page: pageIndex, x: Math.min(x1, x2), y: page.getHeight() - Math.max(y1, y2) });
+    }
+    if (keep.length === annots.size()) return;
+    if (keep.length === 0) page.node.delete(PDFName.of('Annots'));
+    else page.node.set(PDFName.of('Annots'), doc.context.obj(keep));
+  });
+  // A block split across pages yields one link per fragment; its start is the first.
+  const first = new Map<number, AnchorPosition>();
+  for (const a of found) if (!first.has(a.id)) first.set(a.id, a);
+  return [...first.values()];
 }
 
 /**
@@ -678,20 +719,21 @@ async function generateWithBrowser(input: SignedPdfInput): Promise<SignedPdfResu
     },
   );
 
-  const printed = await renderHtmlToPdf(buildPrintableHtml(body, input.title), {
+  const printed = await renderHtmlToPdf(buildPrintableHtml(withAnchorMarkers(body), input.title), {
     footerLabel: input.preview ? 'PREVIEW - NOT SIGNED' : `${input.title} - signed electronically via MailFlow`,
   });
 
   const doc = await PDFDocument.load(printed);
+  const anchors = extractAnchors(doc);
   const fonts = await embedFonts(doc);
   const contentPageCount = doc.getPageCount();
-  await drawAllPlacements(doc, fonts, input, contentPageCount);
+  await drawAllPlacements(doc, fonts, input, contentPageCount, new Map(anchors.map((a) => [a.id, a])));
 
   if (!input.preview) {
     const s: DrawState = { doc, fonts, page: doc.addPage([PAGE_W, PAGE_H]), y: PAGE_H - MARGIN };
     await drawCertificate(s, input, publicValues);
   }
-  return { pdf: Buffer.from(await doc.save()), pageCount: doc.getPageCount(), contentPageCount };
+  return { pdf: Buffer.from(await doc.save()), pageCount: doc.getPageCount(), contentPageCount, anchors };
 }
 
 /** Built-in fallback renderer (no browser available). */

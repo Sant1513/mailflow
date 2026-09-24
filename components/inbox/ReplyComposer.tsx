@@ -307,7 +307,7 @@ export function ReplyComposer({
   }
 
   async function attachSignedDoc(id: string, title: string) {
-    const res = await fetch(`/api/e-sign/${id}`);
+    const res = await fetch(`/api/e-sign/${id}?pdf=1`);
     if (!res.ok) {
       toast.error('Could not load document');
       return;

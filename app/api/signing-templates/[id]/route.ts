@@ -39,6 +39,9 @@ const signerPresetSchema = z.object({
   role: z.string().min(1).max(100),
   nameColumn: z.string().min(1),
   emailColumn: z.string().min(1),
+  source: z.enum(['csv', 'fixed']).optional(),
+  fixedName: z.string().max(200).optional(),
+  fixedEmail: z.string().max(320).optional(),
   assignedFields: z.array(z.string()).default([]),
 });
 

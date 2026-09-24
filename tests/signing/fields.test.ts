@@ -53,10 +53,20 @@ describe('signing fields', () => {
         { index: 4, role: 'Ignored', nameColumn: 'ignored_name', emailColumn: 'ignored_email' },
       ])
     ).toEqual([
-      { index: 1, role: 'Student', nameColumn: 'student_name', emailColumn: 'student_email' },
-      { index: 2, role: 'Company', nameColumn: 'company_name', emailColumn: 'company_email' },
-      { index: 3, role: 'Masai', nameColumn: 'masai_name', emailColumn: 'masai_email' },
+      { index: 1, role: 'Student', nameColumn: 'student_name', emailColumn: 'student_email', source: 'csv' },
+      { index: 2, role: 'Company', nameColumn: 'company_name', emailColumn: 'company_email', source: 'csv' },
+      { index: 3, role: 'Masai', nameColumn: 'masai_name', emailColumn: 'masai_email', source: 'csv' },
     ]);
+  });
+
+  it('keeps a fixed signer (same person every row) and cleans their details', () => {
+    const [student, masai] = normalizeBulkSigners([
+      { index: 1, role: ' Student ', nameColumn: 'Signer 1 Name', emailColumn: 'signer_1_email', source: 'fixed', fixedEmail: 'x@y.com' },
+      { index: 2, role: 'MasaiSign', nameColumn: 'signer_2_name', emailColumn: 'signer_2_email', source: 'fixed', fixedName: ' Jisshnu N S ', fixedEmail: ' Jisshnu.NS@MasaiSchool.com ' },
+    ]);
+    // Signer 1 is always the row's recipient, so "fixed" is ignored for them.
+    expect(student).toEqual({ index: 1, role: 'Student', nameColumn: 'signer_1_name', emailColumn: 'signer_1_email', source: 'csv' });
+    expect(masai).toMatchObject({ source: 'fixed', fixedName: 'Jisshnu N S', fixedEmail: 'jisshnu.ns@masaischool.com' });
   });
 });
 

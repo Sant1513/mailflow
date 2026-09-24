@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import { parsePlacements, placedSignerIndices, placementsOf } from '@/lib/signing/placements';
+import {
+  anchorPlacement,
+  parsePlacements,
+  placedSignerIndices,
+  placementsOf,
+  resolvePlacement,
+  type AnchorPosition,
+} from '@/lib/signing/placements';
+import { anchorIdFromUri, withAnchorMarkers } from '@/lib/documents/printable';
 import { stripSignatureTokens } from '@/lib/signing/signature-tokens';
 import { generateSignedPdfDetailed } from '@/lib/documents/pdf';
 
@@ -26,6 +34,42 @@ describe('signature placements', () => {
     const content = '<p>[[signature]]</p><p>[[signature:2:right]]</p>';
     expect(placedSignerIndices([BOX, { ...BOX, page: 1 }])).toEqual([1]);
     expect(stripSignatureTokens(content, [1])).toBe('<p></p><p>[[signature:2:right]]</p>');
+  });
+});
+
+describe('anchoring boxes to the text they sit in', () => {
+  // A table row of three "Signature:" cells at y=400, with the heading above it.
+  const anchors: AnchorPosition[] = [
+    { id: 0, page: 1, x: 55, y: 120 },
+    { id: 8, page: 1, x: 55, y: 400 },
+    { id: 9, page: 1, x: 220, y: 400 },
+    { id: 10, page: 1, x: 385, y: 400 },
+    { id: 11, page: 1, x: 55, y: 470 },
+  ];
+
+  it('anchors to the cell the box is in, measured from that cell', () => {
+    const placed = anchorPlacement({ ...BOX, page: 1, x: 230, y: 420 }, anchors);
+    expect(placed.anchor).toEqual({ id: 9, dy: 20 });
+  });
+
+  it('follows the cell when the text above pushes it down or onto another page', () => {
+    const placed = anchorPlacement({ ...BOX, page: 1, x: 230, y: 420 }, anchors);
+    const moved = new Map<number, AnchorPosition>([[9, { id: 9, page: 2, x: 220, y: 90 }]]);
+    expect(resolvePlacement(placed, moved)).toEqual({ page: 2, x: 230, y: 110 });
+  });
+
+  it('falls back to the stored position when the block is missing', () => {
+    const placed = anchorPlacement({ ...BOX, page: 1, x: 230, y: 420 }, anchors);
+    expect(resolvePlacement(placed, new Map())).toEqual({ page: 1, x: 230, y: 420 });
+    expect(anchorPlacement({ ...BOX, page: 5 }, anchors).anchor).toBeUndefined();
+  });
+
+  it('marks every block start and nothing else', () => {
+    const html = withAnchorMarkers('<style>.a p{x}</style><p>a</p><table><tr><td>b</td></tr></table><span>c</span>');
+    expect(html.match(/mf-anchor"/g)).toHaveLength(2);
+    expect(html).toContain('<tr><td><a class="mf-anchor"');
+    expect(anchorIdFromUri('https://mf-anchor.invalid/12')).toBe(12);
+    expect(anchorIdFromUri('https://example.com/12')).toBeNull();
   });
 });
 

@@ -18,7 +18,7 @@ import {
 import { placementsOf } from '@/lib/signing/placements';
 
 /** GET /api/e-sign/[id] — fetch a single signing request for the current workspace. */
-export const GET = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
+export const GET = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
   if (!session.workspaceId) {
     return NextResponse.json({ error: 'No workspace.' }, { status: 403 });
@@ -37,16 +37,39 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
     ? await prisma.signingRequest.findMany({
         where: { groupId: request.groupId, status: { not: 'VOIDED' } },
         orderBy: { signerOrder: 'asc' },
-        select: { id: true, recipientName: true, recipientEmail: true, signerRole: true, signerOrder: true, status: true, assignedFields: true },
+        select: {
+          id: true,
+          recipientName: true,
+          recipientEmail: true,
+          signerRole: true,
+          signerOrder: true,
+          status: true,
+          assignedFields: true,
+        },
       })
     : [];
-  const lockReason = editLockReason(request.status, groupMembers.some((m) => m.status === 'SIGNED'));
+  const lockReason = editLockReason(
+    request.status,
+    groupMembers.some((m) => m.status === 'SIGNED'),
+  );
 
-  // The signed PDF and signature image are large; the dashboard never needs them here.
+  // The signed PDF is large, so it is only sent when asked for (?pdf=1, e.g. to
+  // attach it to a reply). A finished multi-signer document returns the combined copy.
   const { signedPdfData: _pdf, signatureImage: _sig, ...rest } = request;
+  let signedPdfData: string | null | undefined;
+  if (new URL(req.url).searchParams.get('pdf') === '1') {
+    const group = request.groupId
+      ? await prisma.signingGroup.findUnique({
+          where: { id: request.groupId },
+          select: { combinedPdfData: true },
+        })
+      : null;
+    signedPdfData = group?.combinedPdfData ?? _pdf;
+  }
   return NextResponse.json({
     request: {
       ...rest,
+      ...(signedPdfData !== undefined ? { signedPdfData } : {}),
       fieldValues: publicSigningFieldValues(request.fieldValues as Record<string, unknown>),
       lockedFields: lockedFieldsOf(request.fieldValues),
       fieldKeys: fieldKeysFor(request.content, request.fieldValues),
@@ -104,15 +127,43 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
   }
 
   if (body.action === 'void') {
-    const updated = await prisma.signingRequest.update({
-      where: { id: existing.id },
-      data: { status: 'VOIDED', voidedAt: new Date() },
-    });
+    // Voiding a multi-signer document cancels it for every signer who hasn't signed.
+    const now = new Date();
+    if (existing.groupId) {
+      await prisma.$transaction([
+        prisma.signingRequest.updateMany({
+          where: {
+            groupId: existing.groupId,
+            status: { in: ['DRAFT', 'SENT', 'VIEWED', 'EXPIRED'] },
+          },
+          data: { status: 'VOIDED', voidedAt: now },
+        }),
+        prisma.signingGroup.update({
+          where: { id: existing.groupId },
+          data: { status: 'VOIDED' },
+        }),
+      ]);
+    } else {
+      await prisma.signingRequest.update({
+        where: { id: existing.id },
+        data: { status: 'VOIDED', voidedAt: now },
+      });
+    }
     await audit(session, 'SIGNING_REQUEST_VOIDED', {
       targetType: 'SigningRequest',
       targetId: existing.id,
+      metadata: existing.groupId ? { groupId: existing.groupId } : undefined,
     });
-    return NextResponse.json({ request: updated });
+    return NextResponse.json({ voided: true });
+  }
+
+  if (body.action === 'restart' && existing.groupId) {
+    return NextResponse.json(
+      {
+        error: 'Multi-signer documents are re-sent from Bulk Send so every signer gets a new link.',
+      },
+      { status: 400 },
+    );
   }
 
   if (body.action === 'restart') {
@@ -201,10 +252,25 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     return NextResponse.json({ request: newRequest }, { status: 201 });
   }
 
-  // action === 'resend'
+  // action === 'resend': remind whoever currently has the document to sign —
+  // for a multi-signer document that's the active signer(s), not always signer 1.
   const now = new Date();
-  const updated = await prisma.signingRequest.update({
-    where: { id: existing.id },
+  const targets = existing.groupId
+    ? await prisma.signingRequest.findMany({
+        where: {
+          groupId: existing.groupId,
+          status: { in: ['SENT', 'VIEWED'] },
+        },
+        orderBy: { signerOrder: 'asc' },
+      })
+    : ['SENT', 'VIEWED'].includes(existing.status)
+      ? [existing]
+      : [];
+  if (targets.length === 0) {
+    return NextResponse.json({ error: 'Nobody is waiting to sign this document.' }, { status: 409 });
+  }
+  await prisma.signingRequest.updateMany({
+    where: { id: { in: targets.map((t) => t.id) } },
     data: { sentAt: now },
   });
 
@@ -213,17 +279,38 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     orderBy: { createdAt: 'asc' },
   });
 
-  if (account) {
-    const signingUrl = `${process.env.NEXTAUTH_URL}/sign/${existing.token}`;
-    const expiresDateStr = existing.expiresAt
-      ? existing.expiresAt.toLocaleDateString('en-IN', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-        })
-      : 'N/A';
+  for (const target of account ? targets : []) {
+    await sendReminder(account!, target, session.name);
+  }
 
-    const html = `
+  await audit(session, 'SIGNING_REQUEST_RESENT', {
+    targetType: 'SigningRequest',
+    targetId: existing.id,
+    metadata: { remindedIds: targets.map((t) => t.id) },
+  });
+
+  return NextResponse.json({
+    resent: targets.length,
+    recipients: targets.map((t) => t.recipientEmail),
+  });
+});
+
+async function sendReminder(
+  account: NonNullable<Awaited<ReturnType<typeof prisma.emailProviderAccount.findFirst>>>,
+  existing: SigningRequest,
+  senderName: string,
+) {
+  const session = { name: senderName };
+  const signingUrl = `${process.env.NEXTAUTH_URL}/sign/${existing.token}`;
+  const expiresDateStr = existing.expiresAt
+    ? existing.expiresAt.toLocaleDateString('en-IN', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
+    : 'N/A';
+
+  const html = `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8" /></head>
@@ -232,11 +319,11 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     <h1 style="color:#fff;margin:0;font-size:22px;">MailFlow · Masai School</h1>
   </div>
   <div style="border:1px solid #e5e7eb;border-top:none;padding:32px 24px;border-radius:0 0 8px 8px;">
-    <p style="font-size:16px;margin-top:0;">Hi ${existing.recipientName},</p>
+    <p style="font-size:16px;margin-top:0;">Hi ${escapeHtml(existing.recipientName)},</p>
     <p style="font-size:15px;">This is a reminder that the following document is awaiting your signature.</p>
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:16px 20px;margin:20px 0;">
       <p style="margin:0;font-size:13px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">Document</p>
-      <p style="margin:6px 0 0;font-size:18px;font-weight:600;color:#111;">${existing.title}</p>
+      <p style="margin:6px 0 0;font-size:18px;font-weight:600;color:#111;">${escapeHtml(existing.title)}</p>
     </div>
     <div style="text-align:center;margin:28px 0;">
       <a href="${signingUrl}"
@@ -249,33 +336,25 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     </p>
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
     <p style="font-size:12px;color:#9ca3af;margin:0;">
-      Sent by ${session.name} &middot; placements@masaischool.com
+      Sent by ${escapeHtml(session.name)} &middot; placements@masaischool.com
     </p>
   </div>
 </body>
 </html>`;
 
-    try {
-      await new GmailProvider(account).sendEmail({
-        to: existing.recipientEmail,
-        cc: existing.ccEmails.length > 0 ? existing.ccEmails : undefined,
-        fromName: account.displayName || session.name,
-        fromEmail: account.emailAddress,
-        subject: `[Reminder] Please sign: ${existing.title}`,
-        html,
-      });
-    } catch (err) {
-      console.error('[e-sign] failed to resend invitation email', err);
-    }
+  try {
+    await new GmailProvider(account).sendEmail({
+      to: existing.recipientEmail,
+      cc: existing.ccEmails.length > 0 ? existing.ccEmails : undefined,
+      fromName: account.displayName || session.name,
+      fromEmail: account.emailAddress,
+      subject: `[Reminder] Please sign: ${existing.title}`,
+      html,
+    });
+  } catch (err) {
+    console.error('[e-sign] failed to resend invitation email', err);
   }
-
-  await audit(session, 'SIGNING_REQUEST_RESENT', {
-    targetType: 'SigningRequest',
-    targetId: existing.id,
-  });
-
-  return NextResponse.json({ request: updated });
-});
+}
 
 const EDITABLE_STATUSES = ['DRAFT', 'SENT', 'VIEWED'] as const;
 
@@ -286,21 +365,21 @@ class EditConflict extends Error {}
  * For multi-signer documents the whole group is updated so every signer sees
  * the same values; locks are recomputed so blank fields stay signer-fillable.
  */
-async function updateRequest(
-  session: AppSession,
-  existing: SigningRequest,
-  body: z.infer<typeof patchSchema>,
-) {
+async function updateRequest(session: AppSession, existing: SigningRequest, body: z.infer<typeof patchSchema>) {
   const allowedKeys = fieldKeysFor(existing.content, existing.fieldValues);
-  const incoming = Object.fromEntries(
-    Object.entries(body.fieldValues ?? {}).map(([k, v]) => [k, v.trim()]),
-  );
+  const incoming = Object.fromEntries(Object.entries(body.fieldValues ?? {}).map(([k, v]) => [k, v.trim()]));
   const unknownKey = Object.keys(incoming).find((k) => !allowedKeys.includes(k));
   if (unknownKey) {
     return NextResponse.json({ error: `Unknown field "${unknownKey}".` }, { status: 400 });
   }
 
-  let outcome: { targets: SigningRequest[]; changedKeys: string[]; newEmail: string | null } | { error: string };
+  let outcome:
+    | {
+        targets: SigningRequest[];
+        changedKeys: string[];
+        newEmail: string | null;
+      }
+    | { error: string };
   try {
     outcome = await prisma.$transaction(async (tx) => {
       const targets = existing.groupId
@@ -310,7 +389,10 @@ async function updateRequest(
           })
         : await tx.signingRequest.findMany({ where: { id: existing.id } });
       const me = targets.find((t) => t.id === existing.id);
-      const reason = editLockReason(me?.status ?? existing.status, targets.some((t) => t.status === 'SIGNED'));
+      const reason = editLockReason(
+        me?.status ?? existing.status,
+        targets.some((t) => t.status === 'SIGNED'),
+      );
       if (!me || reason) return { error: reason ?? 'This request can no longer be changed.' };
 
       const baseValues = publicSigningFieldValues(me.fieldValues as Record<string, unknown>);
@@ -361,7 +443,12 @@ async function updateRequest(
     });
   } catch (err) {
     if (err instanceof EditConflict) {
-      return NextResponse.json({ error: 'A signer just signed this document, so it can no longer be changed.' }, { status: 409 });
+      return NextResponse.json(
+        {
+          error: 'A signer just signed this document, so it can no longer be changed.',
+        },
+        { status: 409 },
+      );
     }
     throw err;
   }
@@ -413,7 +500,11 @@ async function updateRequest(
     },
   });
 
-  return NextResponse.json({ updated: true, changedKeys: outcome.changedKeys, notified });
+  return NextResponse.json({
+    updated: true,
+    changedKeys: outcome.changedKeys,
+    notified,
+  });
 }
 
 function buildUpdatedHtml(opts: {
@@ -424,7 +515,11 @@ function buildUpdatedHtml(opts: {
   expiresAt: Date | null;
 }): string {
   const expires = opts.expiresAt
-    ? opts.expiresAt.toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' })
+    ? opts.expiresAt.toLocaleDateString('en-IN', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
     : null;
   return `<!DOCTYPE html>
 <html>

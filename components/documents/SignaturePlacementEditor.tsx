@@ -8,6 +8,9 @@ import {
   DEFAULT_SIGNATURE_BOX,
   MIN_PLACEMENT,
   SIGNING_PAGE,
+  anchorPlacement,
+  resolvePlacement,
+  type AnchorPosition,
   type SignaturePlacement,
 } from '@/lib/signing/placements';
 
@@ -62,6 +65,7 @@ export function SignaturePlacementEditor({
   const [selected, setSelected] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pdf, setPdf] = useState<{ data: ArrayBuffer; pageCount: number } | null>(null);
+  const [anchors, setAnchors] = useState<AnchorPosition[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const drag = useRef<Drag | null>(null);
 
@@ -76,16 +80,25 @@ export function SignaturePlacementEditor({
         fieldValues,
         signers: signers.map((s) => ({ role: s.role })),
         placements: [],
+        withAnchors: true,
       }),
     })
       .then(async (res) => {
-        if (!res.ok) {
-          const json = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(json.error ?? 'Could not render the document');
-        }
-        const pageCount = Number(res.headers.get('X-Page-Count')) || 1;
-        const data = await res.arrayBuffer();
-        if (!cancelled) setPdf({ data, pageCount });
+        const json = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          pdf?: string;
+          pageCount?: number;
+          anchors?: AnchorPosition[];
+        };
+        if (!res.ok || !json.pdf) throw new Error(json.error ?? 'Could not render the document');
+        const bytes = Uint8Array.from(atob(json.pdf), (c) => c.charCodeAt(0));
+        if (cancelled) return;
+        const found = json.anchors ?? [];
+        setAnchors(found);
+        // Show saved boxes where they land in *this* render (text may have moved).
+        const byId = new Map(found.map((a) => [a.id, a]));
+        setPlacements((all) => all.map((p) => ({ ...p, ...resolvePlacement(p, byId) })));
+        setPdf({ data: bytes.buffer, pageCount: json.pageCount || 1 });
       })
       .catch((e: Error) => {
         if (!cancelled) setLoadError(e.message);
@@ -290,7 +303,10 @@ export function SignaturePlacementEditor({
               <div className="eyebrow mb-1 text-foreground">2 · Place and adjust</div>
               <p>Click on a page to drop a box for <strong className="text-foreground">{roleOf(active)}</strong>.</p>
               <p>Drag a box to move it. Pull its corner to resize. Select it and press Delete to remove it, or use the arrow keys to nudge.</p>
-              <p>The signature is scaled to fit inside the box on the signed PDF.</p>
+              <p>
+                The signature is scaled to fit inside the box. Each box stays with the paragraph or table cell it sits in,
+                so it still lines up when real names and addresses make the text longer or shorter.
+              </p>
             </div>
 
             {placements.length > 0 && (
@@ -337,7 +353,8 @@ export function SignaturePlacementEditor({
                 <button
                   type="button"
                   onClick={() => {
-                    onSave(placements);
+                    // Tie each box to the paragraph/cell it sits in, so it moves with that text.
+                    onSave(placements.map((p) => anchorPlacement(p, anchors)));
                     toast.success(placements.length ? 'Signature positions saved' : 'Signature positions cleared');
                   }}
                   className="btn-primary flex-1 !py-1.5 text-xs"

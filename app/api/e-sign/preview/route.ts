@@ -16,6 +16,8 @@ const previewSchema = z.object({
   fieldValues: z.record(z.string()).default({}),
   signers: z.array(z.object({ role: z.string().max(100), name: z.string().max(200).optional() })).max(3).default([]),
   placements: signaturePlacementsSchema.default([]),
+  /** Placement editor: also return where each block starts, as JSON. */
+  withAnchors: z.boolean().default(false),
 });
 
 /**
@@ -26,7 +28,7 @@ export const POST = withErrorHandling(async (req) => {
   await requireSession();
   const body = previewSchema.parse(await req.json());
 
-  const { pdf, pageCount } = await generateSignedPdfDetailed({
+  const { pdf, pageCount, anchors } = await generateSignedPdfDetailed({
     title: body.title,
     content: body.content,
     recipientName: body.recipientName || body.signers[0]?.name || 'Recipient',
@@ -39,6 +41,13 @@ export const POST = withErrorHandling(async (req) => {
     placements: body.placements,
     signatureSlots: body.signers.map((s, i) => ({ signerIndex: i + 1, role: s.role, name: s.name })),
   });
+
+  if (body.withAnchors) {
+    return NextResponse.json(
+      { pdf: pdf.toString('base64'), pageCount, anchors: anchors ?? [] },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
 
   return new NextResponse(new Uint8Array(pdf), {
     headers: {

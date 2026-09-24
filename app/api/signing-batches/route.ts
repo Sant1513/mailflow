@@ -73,6 +73,9 @@ const createSchema = z.object({
     role: z.string().min(1).max(100),
     nameColumn: z.string().min(1),
     emailColumn: z.string().min(1),
+    source: z.enum(['csv', 'fixed']).optional(),
+    fixedName: z.string().max(200).optional(),
+    fixedEmail: z.string().max(320).optional(),
     assignedFields: z.array(z.string()).default([]),
   })).max(3).optional(),
   signingOrder: z.enum(['SEQUENTIAL', 'PARALLEL']).default('SEQUENTIAL'),
@@ -119,6 +122,18 @@ export const POST = withErrorHandling(async (req) => {
   const signerFieldMap = new Map<number, string[]>();
   for (const s of (body.signers ?? [])) {
     if (s.assignedFields?.length) signerFieldMap.set(s.index, s.assignedFields);
+  }
+
+  // Every row must name every configured signer, otherwise a multi-signer group
+  // is created that can never complete.
+  const incompleteRow = body.recipients.findIndex((r) =>
+    isMultiSigner ? (r.signers?.length ?? 0) !== signers.length : (r.signers?.length ?? 1) > 1,
+  );
+  if (incompleteRow >= 0) {
+    return NextResponse.json(
+      { error: `Row ${incompleteRow + 1} does not have details for all ${signers.length} signers.` },
+      { status: 400 },
+    );
   }
 
   // Blank document variables are allowed: the signer fills them in on the

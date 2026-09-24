@@ -40,29 +40,31 @@ export const GET = withErrorHandling(async (req) => {
   const search = url.searchParams.get('search') ?? undefined;
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10));
 
+  // One entry per document: a standalone request, or the first signer of a
+  // multi-signer group (the other signers are attached to it below).
+  const text = search ? { contains: search, mode: 'insensitive' as const } : undefined;
   const where: Prisma.SigningRequestWhereInput = {
-    workspaceId,
-    ...(status ? { status: status as any } : {}),
-    ...(from || to
-      ? {
-          createdAt: {
-            ...(from ? { gte: new Date(from) } : {}),
-            ...(to ? { lte: new Date(to) } : {}),
-          },
-        }
-      : {}),
-    ...(search
-      ? {
-          OR: [
-            { title: { contains: search, mode: 'insensitive' as const } },
-            { recipientName: { contains: search, mode: 'insensitive' as const } },
-            { recipientEmail: { contains: search, mode: 'insensitive' as const } },
-          ],
-        }
-      : {}),
+    AND: [
+      { workspaceId },
+      { OR: [{ groupId: null }, { signerOrder: 0 }] },
+      ...(from || to
+        ? [{ createdAt: { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lte: new Date(to) } : {}) } }]
+        : []),
+      ...(text
+        ? [{
+            OR: [
+              { title: text },
+              { recipientName: text },
+              { recipientEmail: text },
+              { group: { is: { requests: { some: { OR: [{ recipientName: text }, { recipientEmail: text }] } } } } },
+            ],
+          }]
+        : []),
+      ...(status ? [documentStatusWhere(status)] : []),
+    ],
   };
 
-  const [requests, total] = await Promise.all([
+  const [leads, total] = await Promise.all([
     prisma.signingRequest.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -83,14 +85,67 @@ export const GET = withErrorHandling(async (req) => {
         token: true,
         createdAt: true,
         updatedAt: true,
+        groupId: true,
+        batchId: true,
         sentBy: { select: { name: true, email: true } },
+        group: { select: { status: true, totalSigners: true, signedCount: true } },
       },
     }),
     prisma.signingRequest.count({ where }),
   ]);
 
+  const groupIds = leads.flatMap((l) => (l.groupId ? [l.groupId] : []));
+  const members = groupIds.length
+    ? await prisma.signingRequest.findMany({
+        where: { groupId: { in: groupIds } },
+        orderBy: { signerOrder: 'asc' },
+        select: {
+          id: true, groupId: true, recipientName: true, recipientEmail: true, signerRole: true,
+          signerOrder: true, status: true, sentAt: true, signedAt: true,
+        },
+      })
+    : [];
+
+  const requests = leads.map(({ group, ...lead }) => {
+    if (!lead.groupId || !group) return { ...lead, documentStatus: lead.status, signers: null };
+    const signers = members.filter((m) => m.groupId === lead.groupId);
+    const signedAt = group.status === 'COMPLETED'
+      ? signers.reduce<Date | null>((max, m) => (m.signedAt && (!max || m.signedAt > max) ? m.signedAt : max), null)
+      : null;
+    return {
+      ...lead,
+      signedAt,
+      documentStatus: groupDocumentStatus(group.status, signers.map((m) => m.status)),
+      totalSigners: group.totalSigners,
+      signedCount: signers.filter((m) => m.status === 'SIGNED').length,
+      signers,
+    };
+  });
+
   return NextResponse.json({ requests, total, page });
 });
+
+/** Overall state of a multi-signer document, in the same vocabulary as a single request. */
+function groupDocumentStatus(groupStatus: string, memberStatuses: string[]): string {
+  if (groupStatus === 'VOIDED' || (memberStatuses.length > 0 && memberStatuses.every((s) => s === 'VOIDED'))) return 'VOIDED';
+  if (groupStatus === 'COMPLETED') return 'SIGNED';
+  if (memberStatuses.includes('EXPIRED')) return 'EXPIRED';
+  return 'IN_PROGRESS';
+}
+
+/** Status filter applied to whole documents rather than individual signer rows. */
+function documentStatusWhere(status: string): Prisma.SigningRequestWhereInput {
+  const single = { groupId: null, status: status as Prisma.EnumSigningRequestStatusFilter['equals'] };
+  if (status === 'SIGNED') return { OR: [single, { group: { is: { status: 'COMPLETED' } } }] };
+  if (status === 'VOIDED') return { OR: [single, { group: { is: { status: 'VOIDED' } } }] };
+  if (status === 'IN_PROGRESS') return { group: { is: { status: { in: ['PENDING', 'IN_PROGRESS'] } } } };
+  return {
+    OR: [
+      single,
+      { group: { is: { status: { in: ['PENDING', 'IN_PROGRESS'] }, requests: { some: { status: status as Prisma.EnumSigningRequestStatusFilter['equals'] } } } } },
+    ],
+  };
+}
 
 const attachmentSchema = z.object({
   name: z.string(),

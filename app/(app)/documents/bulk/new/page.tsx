@@ -4,7 +4,40 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { defaultBulkSigners, mergeSigningFieldDefs, normalizeBulkSigners, type BulkSignerConfig, type SigningOrderType } from '@/lib/signing/fields';
+import {
+  SIGNER_EMAIL_RE,
+  defaultBulkSigners,
+  isFixedSigner,
+  mergeSigningFieldDefs,
+  normalizeBulkSigners,
+  normalizeFieldKey,
+  type BulkSignerConfig,
+  type SigningOrderType,
+} from '@/lib/signing/fields';
+
+type RowSigner = { name: string; email: string; role: string };
+
+/**
+ * The signers for one row under the *current* setup: signer 1 is the row's
+ * recipient (as edited in the table), fixed signers come from the setup, and
+ * other signers from the row's CSV values.
+ */
+function signersForRow(r: { name: string; email: string; signers?: RowSigner[] }, configs: BulkSignerConfig[]) {
+  const problems: string[] = [];
+  const signers: RowSigner[] = configs.map((s, i) => {
+    if (isFixedSigner(s)) return { name: s.fixedName ?? '', email: s.fixedEmail ?? '', role: s.role };
+    if (i === 0) return { name: r.name.trim(), email: r.email.trim().toLowerCase(), role: s.role };
+    const fromCsv = r.signers?.[i];
+    const name = fromCsv?.name?.trim() ?? '';
+    const email = fromCsv?.email?.trim().toLowerCase() ?? '';
+    if (!name || !email) problems.push(`${s.role} has no name/email (add ${s.nameColumn} and ${s.emailColumn} to the CSV, or make them the same person on every row)`);
+    return { name, email, role: s.role };
+  });
+  for (const s of signers) {
+    if (s.email && !SIGNER_EMAIL_RE.test(s.email)) problems.push(`${s.role}'s email "${s.email}" is not valid`);
+  }
+  return { signers, problems };
+}
 import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
 import { SigningPreviewModal } from '@/components/documents/SigningDocPreview';
 import { SignaturePlacementEditor, signerColor } from '@/components/documents/SignaturePlacementEditor';
@@ -199,6 +232,35 @@ export default function NewBulkSendPage() {
     [selectedTemplate],
   );
   const signerConfigs = useMemo(() => normalizeBulkSigners(signers), [signers]);
+  const csvSignerConfigs = signerConfigs.filter((s) => !isFixedSigner(s));
+  const signerSetupProblems = signerConfigs.flatMap((s) =>
+    !isFixedSigner(s)
+      ? []
+      : [
+          ...(!s.fixedName ? [`${s.role}: enter the person's name.`] : []),
+          ...(!s.fixedEmail ? [`${s.role}: enter the person's email.`] : !SIGNER_EMAIL_RE.test(s.fixedEmail) ? [`${s.role}: "${s.fixedEmail}" is not a valid email.`] : []),
+        ],
+  );
+
+  async function saveSignersToTemplate() {
+    if (!selectedTemplate) return;
+    if (signerSetupProblems.length) {
+      toast.error(signerSetupProblems[0]!);
+      return;
+    }
+    const signerPresets = signerConfigs.map((s) => ({ ...s, assignedFields: fieldAssignments[s.index] ?? [] }));
+    const res = await fetch(`/api/signing-templates/${selectedTemplate.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signerPresets }),
+    });
+    if (!res.ok) {
+      toast.error('Could not save the signer setup');
+      return;
+    }
+    setTemplates((prev) => prev.map((t) => (t.id === selectedTemplate.id ? { ...t, signerPresets } : t)));
+    toast.success(`Signer setup saved to "${selectedTemplate.title}"`);
+  }
 
   // ── Recipient helpers ─────────────────────────────────────────────────────
 
@@ -228,20 +290,21 @@ export default function NewBulkSendPage() {
     );
   }
 
+  // Keep exactly what was typed; normalizeBulkSigners runs where the setup is used.
   function updateSigner(index: number, patch: Partial<BulkSignerConfig>) {
-    setSigners((prev) => normalizeBulkSigners(prev.map((s, i) => (i === index ? { ...s, ...patch } : s))));
+    setSigners((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   }
 
   function addSigner() {
     setSigners((prev) => {
       if (prev.length >= 3) return prev;
       const next = prev.length + 1;
-      return [...prev, { index: next, role: `Signer ${next}`, nameColumn: `signer_${next}_name`, emailColumn: `signer_${next}_email` }];
+      return [...prev, { index: next, role: `Signer ${next}`, nameColumn: `signer_${next}_name`, emailColumn: `signer_${next}_email`, source: 'csv' }];
     });
   }
 
   function removeSigner(index: number) {
-    setSigners((prev) => normalizeBulkSigners(prev.filter((_, i) => i !== index)));
+    setSigners((prev) => prev.filter((_, i) => i !== index).map((s, i) => ({ ...s, index: i + 1 })));
     // Signers are renumbered after a removal; keep each box with its signer.
     const removed = index + 1;
     setPlacements((prev) =>
@@ -269,11 +332,13 @@ export default function NewBulkSendPage() {
   // ── Sample CSV download ───────────────────────────────────────────────────
 
   function downloadSampleCsv() {
-    const signerHeaders = signerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn]);
+    const sampleNames = ['Rahul Sharma', 'Amit Kumar', 'Neha Singh'];
+    const sampleEmails = ['rahul@example.com', 'amit@company.com', 'neha@masaischool.com'];
+    const signerHeaders = csvSignerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn]);
     const headers = [...fieldDefs.map((fd) => fd.key), ...signerHeaders];
     const sampleRow = [
       ...fieldDefs.map((fd) => fd.defaultValue ?? sampleForField(fd.key, fd.label)),
-      ...signerConfigs.flatMap((s, i) => [`${i === 0 ? 'Rahul Sharma' : i === 1 ? 'Amit Kumar' : 'Neha Singh'}`, i === 0 ? 'rahul@example.com' : i === 1 ? 'amit@company.com' : 'neha@masaischool.com']),
+      ...csvSignerConfigs.flatMap((s) => [sampleNames[s.index - 1] ?? 'Name', sampleEmails[s.index - 1] ?? 'name@example.com']),
     ];
     const escape = (v: string) => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
     const csv = [headers.map(escape).join(','), sampleRow.map(escape).join(',')].join('\n');
@@ -300,9 +365,10 @@ export default function NewBulkSendPage() {
           setCsvIssues([]);
           return;
         }
-        const headers = rows[0]!.map((h) => h.trim().toLowerCase());
-        // Signer columns are mandatory: we can't send without knowing who signs.
-        const signerHeaders = signerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn]);
+        // "Signer 1 Name", "signer_1_name" and "SIGNER-1-NAME" all match the same column.
+        const headers = rows[0]!.map((h) => normalizeFieldKey(h.replace(/^﻿/, '')));
+        // Signer columns are mandatory for CSV-sourced signers: we can't send without knowing who signs.
+        const signerHeaders = signerConfigs.filter((s) => !isFixedSigner(s)).flatMap((s) => [s.nameColumn, s.emailColumn]);
         const missingSignerHeaders = signerHeaders.filter((h) => !headers.includes(h));
         if (missingSignerHeaders.length > 0) {
           setCsvError(`CSV is missing signer column${missingSignerHeaders.length !== 1 ? 's' : ''}: ${missingSignerHeaders.join(', ')}`);
@@ -314,7 +380,7 @@ export default function NewBulkSendPage() {
         // Document variables are optional: absent columns and blank cells are
         // left for the signer to fill in on the signing page.
         const issues: CsvIssue[] = [];
-        const missingFieldColumns = fieldDefs.filter((fd) => !headers.includes(fd.key.toLowerCase()));
+        const missingFieldColumns = fieldDefs.filter((fd) => !headers.includes(fd.key));
         if (missingFieldColumns.length > 0) {
           issues.push({
             severity: 'info',
@@ -332,7 +398,7 @@ export default function NewBulkSendPage() {
           const fieldValues: Record<string, string> = {};
           const lockedFields: string[] = [];
           for (const fd of fieldDefs) {
-            const idx = headers.indexOf(fd.key.toLowerCase());
+            const idx = headers.indexOf(fd.key);
             const value = idx >= 0 ? (cols[idx] ?? '').trim() : (fd.defaultValue ?? '').trim();
             fieldValues[fd.key] = value;
             if (value) lockedFields.push(fd.key);
@@ -340,11 +406,12 @@ export default function NewBulkSendPage() {
           }
 
           const rowSigners = signerConfigs.map((s) => {
+            if (isFixedSigner(s)) return { name: s.fixedName ?? '', email: s.fixedEmail ?? '', role: s.role };
             const name = (cols[headers.indexOf(s.nameColumn)] ?? '').trim();
             const email = (cols[headers.indexOf(s.emailColumn)] ?? '').trim().toLowerCase();
             if (!name) issues.push({ row: rowNumber, severity: 'error', message: `Missing ${s.nameColumn}` });
             if (!email) issues.push({ row: rowNumber, severity: 'error', message: `Missing ${s.emailColumn}` });
-            else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) issues.push({ row: rowNumber, severity: 'error', message: `Invalid ${s.emailColumn}` });
+            else if (!SIGNER_EMAIL_RE.test(email)) issues.push({ row: rowNumber, severity: 'error', message: `Invalid ${s.emailColumn}: "${email}"` });
             const dedupeKey = `${rowNumber}:${email}`;
             if (emailSeen.has(dedupeKey)) issues.push({ row: rowNumber, severity: 'warning', message: `Duplicate signer email ${email} in this row` });
             emailSeen.add(dedupeKey);
@@ -427,6 +494,16 @@ export default function NewBulkSendPage() {
       toast.error('Maximum 200 recipients per batch.');
       return;
     }
+    if (signerSetupProblems.length > 0) {
+      toast.error(signerSetupProblems[0]!);
+      return;
+    }
+    const built = validRecipients.map((r) => signersForRow(r, signerConfigs));
+    const firstProblem = built.findIndex((b) => b.problems.length > 0);
+    if (firstProblem >= 0) {
+      toast.error(`Row ${firstProblem + 1}: ${built[firstProblem]!.problems[0]}`);
+      return;
+    }
 
     const ccList = ccEmails
       .split('\n')
@@ -440,11 +517,11 @@ export default function NewBulkSendPage() {
       body: JSON.stringify({
         title: title.trim(),
         templateId: templateId || undefined,
-        recipients: validRecipients.map((r) => ({
+        recipients: validRecipients.map((r, i) => ({
           name: r.name.trim(),
           email: r.email.trim(),
           fieldValues: r.fieldValues,
-          signers: r.signers,
+          signers: built[i]!.signers,
         })),
         signers: signerConfigs.map((s) => ({
           ...s,
@@ -651,48 +728,157 @@ export default function NewBulkSendPage() {
         <div className="rounded-lg border bg-card p-5 space-y-3">
           <div className="eyebrow mb-1">Signer configuration</div>
           <p className="text-xs text-muted-foreground -mt-2">
-            Configure who signs each generated document. CSV columns below are included in the sample file.
+            Who signs each generated document. Signer 1 is the recipient of each row. Later signers can come from CSV
+            columns, or be the same person on every document (for example the Masai signatory).
           </p>
           <div className="space-y-2">
-            {signerConfigs.map((s, i) => (
-              <div key={s.index} className="grid gap-2 rounded-md border bg-muted/20 p-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
-                <input
-                  value={s.role}
-                  onChange={(e) => updateSigner(i, { role: e.target.value })}
-                  placeholder={`Signer ${i + 1} role`}
-                  className="text-sm"
-                />
-                <input
-                  value={s.nameColumn}
-                  onChange={(e) => updateSigner(i, { nameColumn: e.target.value })}
-                  placeholder={`signer_${i + 1}_name`}
-                  className="font-mono text-sm"
-                />
-                <input
-                  value={s.emailColumn}
-                  onChange={(e) => updateSigner(i, { emailColumn: e.target.value })}
-                  placeholder={`signer_${i + 1}_email`}
-                  className="font-mono text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeSigner(i)}
-                  disabled={signerConfigs.length === 1}
-                  className="text-xs text-muted-foreground hover:text-primary disabled:opacity-40"
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
+            {signers.map((raw, i) => {
+              const s = signerConfigs[i]!;
+              const fixed = i > 0 && raw.source === 'fixed';
+              const emailTypedAsColumn = !fixed && (raw.emailColumn.includes('@') || raw.nameColumn.includes('@'));
+              const fixedEmailInvalid = fixed && !!raw.fixedEmail?.trim() && !SIGNER_EMAIL_RE.test(raw.fixedEmail.trim());
+              return (
+                <div key={i} className="space-y-2 rounded-md border bg-muted/20 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-medium">
+                      {i + 1}
+                    </span>
+                    <input
+                      value={raw.role}
+                      onChange={(e) => updateSigner(i, { role: e.target.value })}
+                      placeholder={`Signer ${i + 1} role, e.g. Student`}
+                      className="min-w-[180px] flex-1 text-sm"
+                      aria-label={`Signer ${i + 1} role`}
+                    />
+                    {i > 0 && (
+                      <div className="flex overflow-hidden rounded-md border text-xs" role="group" aria-label="Where this signer's details come from">
+                        <button
+                          type="button"
+                          onClick={() => updateSigner(i, { source: 'csv' })}
+                          className={`px-2.5 py-1 ${!fixed ? 'bg-foreground text-background' : 'hover:bg-muted'}`}
+                        >
+                          From CSV
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateSigner(i, { source: 'fixed' })}
+                          className={`border-l px-2.5 py-1 ${fixed ? 'bg-foreground text-background' : 'hover:bg-muted'}`}
+                        >
+                          Same person every row
+                        </button>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeSigner(i)}
+                      disabled={signers.length === 1}
+                      className="text-xs text-muted-foreground hover:text-primary disabled:opacity-40"
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  {fixed ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input
+                        value={raw.fixedName ?? ''}
+                        onChange={(e) => updateSigner(i, { fixedName: e.target.value })}
+                        placeholder="Full name, e.g. Jisshnu N S"
+                        className="text-sm"
+                        aria-label={`Signer ${i + 1} name`}
+                      />
+                      <input
+                        type="email"
+                        value={raw.fixedEmail ?? ''}
+                        onChange={(e) => updateSigner(i, { fixedEmail: e.target.value })}
+                        placeholder="name@masaischool.com"
+                        className={`text-sm ${fixedEmailInvalid ? '!border-destructive' : ''}`}
+                        aria-label={`Signer ${i + 1} email`}
+                      />
+                      <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                        {fixedEmailInvalid
+                          ? <span className="text-destructive">That email address doesn&apos;t look right.</span>
+                          : 'Signs every document in this batch. No CSV columns needed for this signer.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="text-[11px] text-muted-foreground">
+                        Name column in CSV
+                        <input
+                          value={raw.nameColumn}
+                          onChange={(e) => updateSigner(i, { nameColumn: e.target.value })}
+                          placeholder={`signer_${i + 1}_name`}
+                          className="mt-0.5 w-full font-mono text-sm text-foreground"
+                        />
+                      </label>
+                      <label className="text-[11px] text-muted-foreground">
+                        Email column in CSV
+                        <input
+                          value={raw.emailColumn}
+                          onChange={(e) => updateSigner(i, { emailColumn: e.target.value })}
+                          placeholder={`signer_${i + 1}_email`}
+                          className="mt-0.5 w-full font-mono text-sm text-foreground"
+                        />
+                      </label>
+                      {emailTypedAsColumn ? (
+                        <p className="text-[11px] text-amber-700 sm:col-span-2">
+                          These boxes take CSV column names, not a person&apos;s details.{' '}
+                          {i > 0 ? (
+                            <button
+                              type="button"
+                              className="font-medium underline"
+                              onClick={() =>
+                                updateSigner(i, {
+                                  source: 'fixed',
+                                  fixedEmail: raw.emailColumn.includes('@') ? raw.emailColumn : raw.fixedEmail,
+                                  fixedName: raw.nameColumn.includes('@') ? raw.fixedName : raw.fixedName ?? '',
+                                  emailColumn: `signer_${i + 1}_email`,
+                                })
+                              }
+                            >
+                              Use this email as the same person on every row
+                            </button>
+                          ) : (
+                            'Signer 1 is each row’s recipient, so enter their column names here.'
+                          )}
+                        </p>
+                      ) : (
+                        (s.nameColumn !== raw.nameColumn.trim() || s.emailColumn !== raw.emailColumn.trim()) && (
+                          <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                            Matches CSV headers <code className="font-mono">{s.nameColumn}</code> and{' '}
+                            <code className="font-mono">{s.emailColumn}</code> (case, spaces and symbols are ignored).
+                          </p>
+                        )
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-          <button
-            type="button"
-            onClick={addSigner}
-            disabled={signerConfigs.length >= 3}
-            className="text-xs text-primary hover:underline disabled:text-muted-foreground"
-          >
-            + Add signer
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={addSigner}
+              disabled={signers.length >= 3}
+              className="text-xs text-primary hover:underline disabled:text-muted-foreground"
+            >
+              + Add signer
+            </button>
+            {selectedTemplate && (
+              <button type="button" onClick={saveSignersToTemplate} className="text-xs text-primary hover:underline">
+                Save signer setup to “{selectedTemplate.title}”
+              </button>
+            )}
+          </div>
+          {signerSetupProblems.length > 0 && (
+            <ul className="space-y-0.5 text-xs text-destructive">
+              {signerSetupProblems.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          )}
 
           {/* Signing order toggle — visible when >1 signer */}
           {signerConfigs.length > 1 && (
@@ -845,7 +1031,7 @@ export default function NewBulkSendPage() {
                 <p className="text-xs font-medium">Upload CSV</p>
                 <p className="text-xs text-muted-foreground">
                   Required signer columns:{' '}
-                  {signerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn]).map((h, i, arr) => (
+                  {csvSignerConfigs.flatMap((s) => [s.nameColumn, s.emailColumn]).map((h, i, arr) => (
                     <span key={h}>
                       <code className="font-mono">{h}</code>
                       {i < arr.length - 1 ? ', ' : ''}
@@ -941,7 +1127,7 @@ export default function NewBulkSendPage() {
                         <td className="px-2 py-1">{r.name}</td>
                         <td className="px-2 py-1">{r.email}</td>
                         <td className="px-2 py-1 text-muted-foreground">
-                          {(r.signers ?? [{ name: r.name, email: r.email, role: 'Signer 1' }]).map((s) => `${s.role}: ${s.name}`).join(' / ')}
+                          {signersForRow(r, signerConfigs).signers.map((s) => `${s.role}: ${s.name || '—'}`).join(' / ')}
                         </td>
                         {fieldDefs.map((fd) => (
                           <td key={fd.key} className="px-2 py-1 text-muted-foreground whitespace-nowrap">
@@ -1018,11 +1204,11 @@ export default function NewBulkSendPage() {
                         placeholder="Full name"
                         className="w-full text-sm"
                       />
-                      {(r.signers?.length ?? 0) > 1 && (
+                      {signerConfigs.length > 1 && (
                         <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
-                          {r.signers!.slice(1).map((s, si) => (
-                            <div key={si} className="truncate" title={s.email}>
-                              + {s.role}: {s.name}
+                          {signersForRow(r, signerConfigs).signers.slice(1).map((s, si) => (
+                            <div key={si} className={`truncate ${s.email ? '' : 'text-destructive'}`} title={s.email}>
+                              + {s.role}: {s.name || 'missing — needs CSV or a fixed person'}
                             </div>
                           ))}
                         </div>
@@ -1130,10 +1316,7 @@ export default function NewBulkSendPage() {
             fieldValues: previewTarget.fieldValues,
             recipientName: previewTarget.name,
             recipientEmail: previewTarget.email,
-            signers: (previewTarget.signers?.length
-              ? previewTarget.signers
-              : [{ name: previewTarget.name, email: previewTarget.email, role: signerConfigs[0]?.role ?? 'Signer 1' }]
-            ).map((s) => ({ role: s.role, name: s.name })),
+            signers: signersForRow(previewTarget, signerConfigs).signers.map((s) => ({ role: s.role, name: s.name })),
             placements: activePlacements,
           }}
           onClose={() => setPreviewTarget(null)}

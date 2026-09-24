@@ -9,6 +9,16 @@ export interface BulkSignerConfig {
   role: string;
   nameColumn: string;
   emailColumn: string;
+  /** 'fixed' = the same person signs every row (e.g. the Masai signatory). */
+  source?: 'csv' | 'fixed';
+  fixedName?: string;
+  fixedEmail?: string;
+}
+
+export const SIGNER_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function isFixedSigner(s: Pick<BulkSignerConfig, 'source'>): boolean {
+  return s.source === 'fixed';
 }
 
 const PLACEHOLDER_RE = /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g;
@@ -93,16 +103,27 @@ export function defaultBulkSigners(): BulkSignerConfig[] {
   return [{ index: 1, role: 'Signer 1', nameColumn: 'signer_1_name', emailColumn: 'signer_1_email' }];
 }
 
+/**
+ * Cleans a signer setup for use. Apply this when the setup is *used* (parsing,
+ * sending, saving) — never to the text boxes while someone is typing, or spaces,
+ * "@" and "." get rewritten under their cursor.
+ */
 export function normalizeBulkSigners(input: BulkSignerConfig[]): BulkSignerConfig[] {
   const signers = input
     .slice(0, 3)
-    .map((s, i) => ({
-      index: i + 1,
-      role: s.role.trim() || `Signer ${i + 1}`,
-      nameColumn: normalizeFieldKey(s.nameColumn || `signer_${i + 1}_name`) || `signer_${i + 1}_name`,
-      emailColumn: normalizeFieldKey(s.emailColumn || `signer_${i + 1}_email`) || `signer_${i + 1}_email`,
-    }))
-    .filter((s) => s.nameColumn && s.emailColumn);
+    .map((s, i): BulkSignerConfig => {
+      // Signer 1 is the row's recipient, so it always comes from the CSV/table.
+      const fixed = i > 0 && s.source === 'fixed';
+      return {
+        index: i + 1,
+        role: (s.role ?? '').trim() || `Signer ${i + 1}`,
+        nameColumn: normalizeFieldKey(s.nameColumn || `signer_${i + 1}_name`) || `signer_${i + 1}_name`,
+        emailColumn: normalizeFieldKey(s.emailColumn || `signer_${i + 1}_email`) || `signer_${i + 1}_email`,
+        ...(fixed
+          ? { source: 'fixed' as const, fixedName: (s.fixedName ?? '').trim(), fixedEmail: (s.fixedEmail ?? '').trim().toLowerCase() }
+          : { source: 'csv' as const }),
+      };
+    });
   return signers.length ? signers : defaultBulkSigners();
 }
 

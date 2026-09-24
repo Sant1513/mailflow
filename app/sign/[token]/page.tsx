@@ -47,6 +47,39 @@ function extractVariableNames(content: string): string[] {
   return [...new Set(matches.map((m) => m[1] ?? ''))];
 }
 
+/**
+ * Transparent PNG cropped to the drawn strokes (plus a little padding), so a
+ * placed signature fills its box and never paints over the document's lines.
+ */
+function trimToInk(canvas: HTMLCanvasElement): string {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas.toDataURL('image/png');
+  const { width, height } = canvas;
+  const data = ctx.getImageData(0, 0, width, height).data;
+  let minX = width, minY = height, maxX = -1, maxY = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (data[(y * width + x) * 4 + 3]! > 8) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return canvas.toDataURL('image/png');
+  const pad = 6;
+  const sx = Math.max(0, minX - pad);
+  const sy = Math.max(0, minY - pad);
+  const sw = Math.min(width, maxX + pad + 1) - sx;
+  const sh = Math.min(height, maxY + pad + 1) - sy;
+  const out = document.createElement('canvas');
+  out.width = sw;
+  out.height = sh;
+  out.getContext('2d')?.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  return out.toDataURL('image/png');
+}
+
 function formatLabel(key: string): string {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -183,8 +216,7 @@ export default function SigningPage() {
 
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
 
     canvas.addEventListener('mousedown', startDraw);
@@ -211,8 +243,7 @@ export default function SigningPage() {
     const canvas = typeCanvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (typedName.trim()) {
       ctx.fillStyle = '#1a1a1a';
       ctx.font = 'italic 36px Georgia, "Times New Roman", serif';
@@ -225,14 +256,13 @@ export default function SigningPage() {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     setHasDrawing(false);
   }
 
   function getSignatureImage(): string {
-    if (mode === 'draw') return canvasRef.current?.toDataURL() ?? '';
-    return typeCanvasRef.current?.toDataURL() ?? '';
+    const canvas = mode === 'draw' ? canvasRef.current : typeCanvasRef.current;
+    return canvas ? trimToInk(canvas) : '';
   }
 
   const allVarNames = doc ? extractVariableNames(doc.content) : [];

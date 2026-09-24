@@ -40,7 +40,30 @@ h1,h2,h3,h4,h5,h6{color:#0d0d10;font-family:'Outfit',ui-sans-serif,system-ui,san
 strong,b,th,dt{color:#0d0d10}
 .doc{font-size:14px;line-height:1.625;color:#1f2937;font-weight:400}
 .doc img,.doc [data-signature-slot]{break-inside:avoid}
+a.mf-anchor{position:absolute!important;display:inline-block!important;width:2px!important;height:2px!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;color:transparent!important;overflow:hidden!important;font-size:0!important;line-height:0!important}
 `;
+
+const ANCHOR_HOST = 'mf-anchor.invalid';
+
+/**
+ * Puts an invisible, zero-layout link at the start of every block (paragraph,
+ * cell, heading, list item). Chromium turns links into PDF link annotations
+ * with exact page coordinates, which tells us where each block landed after
+ * printing — signature boxes are anchored to those blocks so they move with
+ * the text when values make it reflow. The links are removed afterwards.
+ */
+export function withAnchorMarkers(bodyHtml: string): string {
+  let n = 0;
+  return bodyHtml.replace(/<(p|div|h[1-6]|li|td|th|blockquote|pre)(\s[^>]*)?>/gi, (tag) => {
+    const id = n++;
+    return `${tag}<a class="mf-anchor" href="https://${ANCHOR_HOST}/${id}"></a>`;
+  });
+}
+
+export function anchorIdFromUri(uri: string): number | null {
+  const m = new RegExp(`^https://${ANCHOR_HOST.replace('.', '\\.')}/(\\d+)$`).exec(uri);
+  return m ? Number(m[1]) : null;
+}
 
 /** A complete, self-contained HTML page for printing a signing document. */
 export function buildPrintableHtml(bodyHtml: string, title: string): string {
