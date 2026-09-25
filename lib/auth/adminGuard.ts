@@ -7,6 +7,6 @@ export async function requireSuperAdminPage() {
   const session = await getServerSession(authOptions);
   const user = session?.user as any;
   if (!user) redirect('/login');
-  if (user.role !== 'SUPER_ADMIN') redirect('/dashboard');
+  if (user.role !== 'SUPER_ADMIN') redirect('/');
   return user;
 }

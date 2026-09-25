@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { lastPathFor, markCurrentProduct } from '@/lib/products-client';
 
 const SHORTCUTS = [
   { keys: '?', description: 'Show this help' },
@@ -9,6 +10,8 @@ const SHORTCUTS = [
   { keys: 'g c', description: 'Go to Campaigns' },
   { keys: 'g d', description: 'Go to Dashboard' },
   { keys: 'g s', description: 'Go to Settings' },
+  { keys: 'g m', description: 'Switch to Mail' },
+  { keys: 'g e', description: 'Switch to Sign (e-signature)' },
 ];
 
 /** Keyboard shortcuts for the app shell. Chords like "g i" have a 1.5 s window. */
@@ -49,6 +52,8 @@ export function KeyboardShortcuts() {
           case 'c': router.push('/campaigns'); return;
           case 'd': router.push('/dashboard'); return;
           case 's': router.push('/settings'); return;
+          case 'm': markCurrentProduct('mail'); router.push(lastPathFor('mail')); return;
+          case 'e': markCurrentProduct('sign'); router.push(lastPathFor('sign')); return;
         }
         // Unknown second key — fall through to normal handling.
       }

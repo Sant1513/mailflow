@@ -39,7 +39,8 @@ export function LoginButton() {
         // before redirecting, so there is a real gap where the button would
         // otherwise look dead.
         setBusy(true);
-        signIn('google', { callbackUrl: '/dashboard' });
+        // "/" routes to the product the user chose to start in, or the chooser.
+        signIn('google', { callbackUrl: '/' });
       }}
       disabled={busy}
       className="btn-primary flex w-full items-center justify-center gap-2.5 !py-3 text-sm disabled:cursor-wait disabled:opacity-60"

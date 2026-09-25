@@ -6,24 +6,9 @@ import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { NotificationBell } from '@/components/nav/NotificationBell';
-
-const MAIN_ITEMS = [
-  { href: '/dashboard', label: 'Dashboard' },
-  { href: '/inbox', label: 'Inbox' },
-  { href: '/data', label: 'Data' },
-  { href: '/contacts', label: 'Contacts' },
-  { href: '/campaigns', label: 'Campaigns' },
-  { href: '/templates', label: 'Templates' },
-  { href: '/documents', label: 'Documents' },
-  { href: '/documents/templates', label: 'Doc Templates' },
-  { href: '/documents/library', label: 'PDF Library' },
-  { href: '/automations', label: 'Automations' },
-  { href: '/batches', label: 'Batches' },
-  { href: '/suppressions', label: 'Suppressions' },
-  { href: '/performance', label: 'Performance' },
-  { href: '/reports', label: 'Reports' },
-  { href: '/history', label: 'History' },
-];
+import { ProductSwitcher } from '@/components/nav/ProductSwitcher';
+import { PRODUCT_NAV, PRODUCTS, activeNavHref, productForPath, type Product } from '@/lib/products';
+import { rememberVisit } from '@/lib/products-client';
 
 const REVIEWER_ITEMS = [{ href: '/approvals', label: 'Approvals' }];
 
@@ -55,18 +40,35 @@ function initials(name?: string | null, email?: string | null) {
 export function AppNav({
   user,
   pendingApprovals = 0,
+  initialProduct = 'mail',
 }: {
   user: { name?: string | null; email?: string | null; image?: string | null; role: string };
   pendingApprovals?: number;
+  /** The product last used (from a cookie), for shared pages like Settings. */
+  initialProduct?: Product;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const isSuperAdmin = user.role === 'SUPER_ADMIN';
   const isReviewer = isSuperAdmin || user.role === 'ADMIN';
 
+  // Product pages decide the product; shared pages keep the one you came from.
+  const [lastProduct, setLastProduct] = useState<Product>(initialProduct);
+  const product = productForPath(pathname) ?? lastProduct;
+  const productItems = PRODUCT_NAV[product];
+  const sharedItems = [
+    ...(isReviewer ? REVIEWER_ITEMS : []),
+    SETTINGS_ITEM,
+    ...(isSuperAdmin ? ADMIN_ITEMS : []),
+  ];
+  const activeHref = activeNavHref(pathname, [...productItems, ...sharedItems]);
+
   // Close the drawer on navigation and lock body scroll while it is open.
   useEffect(() => {
     setOpen(false);
+    const owner = productForPath(pathname);
+    if (owner) setLastProduct(owner);
+    if (pathname) rememberVisit(pathname + window.location.search);
   }, [pathname]);
   useEffect(() => {
     document.body.style.overflow = open ? 'hidden' : '';
@@ -76,29 +78,29 @@ export function AppNav({
   }, [open]);
 
   const links = (
-    <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4">
-      {MAIN_ITEMS.map((item) => (
-        <NavLink key={item.href} href={item.href} label={item.label} active={pathname?.startsWith(item.href)} />
+    <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4" aria-label={`${PRODUCTS[product].name} navigation`}>
+      {productItems.map((item) => (
+        <NavLink key={item.href} href={item.href} label={item.label} active={activeHref === item.href} />
       ))}
 
       {isReviewer && (
         <>
           <div className="my-3 border-t border-border-subtle" />
           {REVIEWER_ITEMS.map((item) => (
-            <NavLink key={item.href} href={item.href} label={item.label} active={pathname?.startsWith(item.href)} badge={pendingApprovals} />
+            <NavLink key={item.href} href={item.href} label={item.label} active={activeHref === item.href} badge={pendingApprovals} />
           ))}
         </>
       )}
 
       <div className="my-3 border-t border-border-subtle" />
-      <NavLink href={SETTINGS_ITEM.href} label={SETTINGS_ITEM.label} active={pathname?.startsWith(SETTINGS_ITEM.href)} />
+      <NavLink href={SETTINGS_ITEM.href} label={SETTINGS_ITEM.label} active={activeHref === SETTINGS_ITEM.href} />
 
       {isSuperAdmin && (
         <>
           <div className="my-3 border-t border-border-subtle" />
           <div className="eyebrow px-3 pb-1 pt-1">Super Admin</div>
           {ADMIN_ITEMS.map((item) => (
-            <NavLink key={item.href} href={item.href} label={item.label} active={pathname?.startsWith(item.href)} />
+            <NavLink key={item.href} href={item.href} label={item.label} active={activeHref === item.href} />
           ))}
         </>
       )}
@@ -119,19 +121,23 @@ export function AppNav({
       <div className="mb-3">
         <ThemeToggle />
       </div>
+      <Link href="/choose" className="mb-2 block text-center text-[11px] text-muted-foreground hover:text-foreground">
+        Choose start product
+      </Link>
       <button onClick={() => signOut({ callbackUrl: '/login' })} className="btn-secondary w-full !py-1.5 text-xs">
         Sign out
       </button>
     </div>
   );
 
+  const home = PRODUCTS[product].home;
   const wordmark = (
     <div className="flex items-center justify-between">
-      <Link href="/dashboard" className="block">
+      <Link href={home} className="block">
         <div className="font-heading text-2xl font-bold leading-none tracking-tight text-foreground">
           masai<span className="text-primary">.</span>
         </div>
-        <div className="eyebrow mt-2">MailFlow</div>
+        <div className="eyebrow mt-2">MailFlow {PRODUCTS[product].name}</div>
       </Link>
       <NotificationBell />
     </div>
@@ -141,19 +147,27 @@ export function AppNav({
     <>
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-border bg-card lg:flex">
-        <div className="border-b border-border px-4 py-4">{wordmark}</div>
+        <div className="space-y-3 border-b border-border px-4 py-4">
+          {wordmark}
+          <ProductSwitcher current={product} />
+        </div>
         {links}
         {footer}
       </aside>
 
       {/* Mobile top bar */}
-      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border bg-card px-4 lg:hidden">
-        <Link href="/dashboard" className="font-heading text-xl font-bold leading-none tracking-tight text-foreground">
-          masai<span className="text-primary">.</span>
-        </Link>
-        <div className="flex items-center gap-2">
+      <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b border-border bg-card px-4 lg:hidden">
+        <div className="flex min-w-0 items-center gap-3">
+          <Link href={home} className="font-heading text-xl font-bold leading-none tracking-tight text-foreground">
+            masai<span className="text-primary">.</span>
+          </Link>
+          <div className="w-36 shrink-0">
+            <ProductSwitcher current={product} compact />
+          </div>
+        </div>
+        {/* The theme toggle lives in the drawer on phones, leaving room for the product switcher. */}
+        <div className="flex shrink-0 items-center gap-2">
           <NotificationBell compact />
-          <ThemeToggle compact />
           <button
             onClick={() => setOpen(true)}
             aria-label="Open menu"
@@ -170,16 +184,19 @@ export function AppNav({
         <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/60" onClick={() => setOpen(false)} />
           <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col bg-card shadow-xl">
-            <div className="flex items-center justify-between border-b border-border px-4 py-4">
-              <Link href="/dashboard" className="block">
-                <div className="font-heading text-2xl font-bold leading-none tracking-tight text-foreground">
-                  masai<span className="text-primary">.</span>
-                </div>
-                <div className="eyebrow mt-2">MailFlow</div>
-              </Link>
-              <button onClick={() => setOpen(false)} aria-label="Close menu" className="flex h-9 w-9 items-center justify-center rounded-md border border-border text-foreground">
-                ✕
-              </button>
+            <div className="space-y-3 border-b border-border px-4 py-4">
+              <div className="flex items-center justify-between">
+                <Link href={home} className="block">
+                  <div className="font-heading text-2xl font-bold leading-none tracking-tight text-foreground">
+                    masai<span className="text-primary">.</span>
+                  </div>
+                  <div className="eyebrow mt-2">MailFlow {PRODUCTS[product].name}</div>
+                </Link>
+                <button onClick={() => setOpen(false)} aria-label="Close menu" className="flex h-9 w-9 items-center justify-center rounded-md border border-border text-foreground">
+                  ✕
+                </button>
+              </div>
+              <ProductSwitcher current={product} />
             </div>
             {links}
             {footer}

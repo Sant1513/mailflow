@@ -3,9 +3,9 @@ import { allowedDomain } from '@/lib/auth/options';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 
 const PILLARS = [
-  { title: 'Campaigns', body: 'Personalised sends to any batch, with dry runs and approvals before anything goes out.' },
-  { title: 'Automations', body: 'Trigger follow-ups from your own data — stop the moment someone replies.' },
-  { title: 'Inbox', body: 'Every reply, bounce and out-of-office threaded back to the record it came from.' },
+  { title: 'Mail · Campaigns', body: 'Personalised sends to any batch, with dry runs and approvals before anything goes out.' },
+  { title: 'Mail · Inbox', body: 'Every reply, bounce and out-of-office threaded back to the record it came from.' },
+  { title: 'Sign · E-signature', body: 'Send agreements for signature, one at a time or in bulk, and track every signer.' },
 ];
 
 export default function LoginPage() {
@@ -34,7 +34,7 @@ export default function LoginPage() {
       <main className="relative z-10 flex flex-1 items-center px-6 py-10 sm:px-10">
         <div className="mx-auto grid w-full max-w-6xl items-center gap-12 lg:grid-cols-[1.2fr_1fr]">
           <section className="rise-in">
-            <div className="eyebrow mb-5">Email communication &amp; CRM</div>
+            <div className="eyebrow mb-5">MailFlow Mail &amp; MailFlow Sign</div>
             <h1 className="font-heading text-4xl font-bold leading-[1.05] tracking-tight text-foreground sm:text-5xl lg:text-6xl">
               Every email to every batch,
               <br />
@@ -59,7 +59,8 @@ export default function LoginPage() {
             <div className="eyebrow mb-2">Sign in</div>
             <h2 className="font-heading text-2xl font-bold tracking-tight text-foreground">Continue to MailFlow</h2>
             <p className="mb-8 mt-2 text-sm text-muted-foreground">
-              Use the Google account you send from. You will connect Gmail separately after signing in.
+              Use the Google account you send from. After signing in you&apos;ll choose Mail or Sign, and you can switch any
+              time.
             </p>
             <LoginButton />
             <p className="mt-5 text-xs text-faint">

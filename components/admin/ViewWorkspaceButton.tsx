@@ -28,10 +28,11 @@ export function ViewWorkspaceButton({ workspaceId, className }: { workspaceId: s
     if (!json.viewingAs) {
       setBusy(false);
       toast.info('That is your own workspace');
-      router.push('/dashboard');
+      router.push('/');
       return;
     }
-    router.push('/dashboard');
+    // "/" opens the admin's start product (or the product chooser).
+    router.push('/');
     router.refresh();
   }
 

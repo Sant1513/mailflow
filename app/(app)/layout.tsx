@@ -1,4 +1,6 @@
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
+import { CURRENT_PRODUCT_COOKIE, isProduct } from '@/lib/products';
 import { getOptionalSession } from '@/lib/auth/session';
 import { prisma } from '@/lib/db/client';
 import { AppNav } from '@/components/nav/AppNav';
@@ -20,10 +22,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     pendingApprovals = await prisma.campaign.count({ where: { status: 'PENDING_APPROVAL', ...(await reviewScope(session)) } });
   }
 
+  const lastProduct = cookies().get(CURRENT_PRODUCT_COOKIE)?.value;
+
   return (
     <div className="flex min-h-dvh flex-col lg:flex-row">
       <KeyboardShortcuts />
-      <AppNav user={{ name: session.name, email: session.email, image: null, role: session.role }} pendingApprovals={pendingApprovals} />
+      <AppNav
+        user={{ name: session.name, email: session.email, image: null, role: session.role }}
+        pendingApprovals={pendingApprovals}
+        initialProduct={isProduct(lastProduct) ? lastProduct : 'mail'}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         {session.viewingAs && <ViewAsBanner viewingAs={session.viewingAs} />}
         {/* Pages that want a full-height layout use h-full inside this box. */}

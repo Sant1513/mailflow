@@ -6,7 +6,7 @@ export default async function PendingPage() {
   const session = await getOptionalSession();
 
   // Already approved — send them to the app.
-  if (session && session.status === 'ACTIVE') redirect('/dashboard');
+  if (session && session.status === 'ACTIVE') redirect('/');
   // Not signed in — send them to login.
   if (!session) redirect('/login');
 
