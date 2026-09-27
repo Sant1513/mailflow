@@ -104,6 +104,7 @@ Deeper docs: [ARCHITECTURE.md](ARCHITECTURE.md) (system design) · [PHASE_STATUS
 - **New Request**: send one document to one person, with CC, an expiry, a custom email subject/body and extra attachments (PDF, Word, images).
 - **Signing templates**: reusable documents with `{{variables}}`, a saved **signer setup** and saved **signature positions**.
   - **Import from Word or Google Docs**: upload a `.docx` or paste a Google Doc link (shared "Anyone with the link"). `{{fields}}` are detected automatically, even when Word splits them across formatting.
+  - **Keeps the exact formatting**: fonts, sizes, colours, highlights, spacing, line spacing, alignment, indents, tab stops, numbered and bulleted lists, tables (widths, borders, shading, merged cells), images, text boxes and the page header / footer are converted to inline CSS. Word fonts load as metric-compatible web fonts (Calibri → Carlito, Arial → Arimo, Times New Roman → Tinos) so lines wrap where they did in Word, and the signed PDF uses the document's own page size and margins, so pages break in the same places.
 - **Send for signature from Data**: select rows in a dataset, or use a contact segment. Columns are matched to template fields and to the signer's name and email automatically, and you can change any match.
 - **Bulk Send from a CSV**, one document per row:
   - Values present in the CSV are **locked** for the signer.
@@ -200,7 +201,7 @@ Being explicit about what is *not* live yet:
 - Not built yet: data-grid virtualisation beyond 5,000 rows, Gmail push (`users.watch`) renewal, attachment byte download for inbound mail, retention enforcement (deliberately deferred), workspace create/rename/disable actions, a visual template builder, and a per-org AI switch.
 - The start-product choice is saved per browser, so each new device shows the chooser once.
 - **Google Sheets sync** needs the Google Sheets API enabled in the Google Cloud project and the `spreadsheets` scope on the OAuth consent screen. Unless the consent screen is Internal, Google shows an "unverified app" warning for that scope. Sync handles up to 5,000 rows per sheet; if two people edit the same cell in both places between syncs, the MailFlow edit wins.
-- Google Doc import only works for docs shared "Anyone with the link can view" (otherwise download as .docx and upload).
+- Google Doc import only works for docs shared "Anyone with the link can view" (otherwise download as .docx and upload). Imported documents show the header once at the top rather than on every page, floating objects are placed approximately, and EMF/WMF images (old Word charts) are left out with a warning.
 
 ## Tech stack
 
@@ -287,7 +288,7 @@ Set production variables at the project level (`vercel env add NAME production`)
 ## Testing
 
 ```bash
-npm test                 # 564 unit tests across 47 files (no database needed)
+npm test                 # 585 unit tests across 48 files (no database needed)
 npm run verify           # typecheck + lint + unit tests + a real production build (into .next-verify)
 BASE_URL=https://<deployed-url> npx tsx scripts/verify-deployment.ts   # run after every deploy
 ```

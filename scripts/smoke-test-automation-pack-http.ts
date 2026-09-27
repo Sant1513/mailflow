@@ -206,6 +206,8 @@ async function main() {
     check('fields split by Word formatting are detected', imp.json?.fields?.map((f: any) => f.key).join(',') === 'student_name,stipend', imp.json?.fields);
     check('placeholders and signature token are clean', /\{\{student_name\}\}/.test(imp.json?.content ?? '') && /\{\{stipend\}\}/.test(imp.json?.content ?? '') && (imp.json?.content ?? '').includes('[[signature]]'), imp.json?.content);
     check('title comes from the file name', imp.json?.title === 'Offer Letter', imp.json?.title);
+    check('exact-format conversion was used (page geometry and fonts carried)', imp.json?.exact === true && /data-mf-page="\d+ \d+/.test(imp.json?.content ?? '') && (imp.json?.content ?? '').includes('fonts.googleapis.com'), { exact: imp.json?.exact });
+    check('bold formatting from Word is kept as inline CSS', /font-weight:700[^>]*>[^<]*\{\{student_name\}\}|font-weight:700[^>]*>\{\{student/.test(imp.json?.content ?? '') || (imp.json?.content ?? '').includes('font-weight:700'), imp.json?.content?.slice(0, 300));
     const badUrl = await call('POST', '/api/signing-templates/import', op.cookie, { url: 'https://example.com/document/d/abc' });
     check('non-Google-Docs links are refused before any fetch', badUrl.status === 400, badUrl);
     const notDocx = new FormData();

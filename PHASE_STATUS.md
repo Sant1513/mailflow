@@ -6,7 +6,7 @@
 > report, send for signature from Data, signing write-back, Google Sheets
 > sync, AI triage, Word / Google Doc import) — and the current known gaps are
 > summarised in the [README](README.md#phase-status). Current unit-test
-> count: 564 across 47 files.
+> count: 585 across 48 files.
 
 ## Deployment
 

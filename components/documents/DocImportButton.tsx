@@ -29,8 +29,9 @@ export function DocImportButton({ onImported, hasContent }: { onImported: (doc: 
       toast.error(json.error ?? 'Import failed');
       return;
     }
-    const doc = json as ImportedDoc & { warnings?: number };
+    const doc = json as ImportedDoc & { warnings?: string[] };
     onImported(doc);
+    for (const w of doc.warnings ?? []) toast.warning(w, { duration: 10000 });
     setOpen(false);
     setUrl('');
     toast.success(

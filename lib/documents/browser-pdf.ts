@@ -63,6 +63,26 @@ async function getBrowser(): Promise<Browser> {
   }
 }
 
+/**
+ * Page size and margins declared by an imported Word template
+ * (data-mf-page="width height top right bottom left", CSS px). Values are
+ * bounded so a hand-edited template can't produce an unusable page.
+ */
+export function documentPageGeometry(html: string) {
+  const m = /data-mf-page="(\d+) (\d+) (\d+) (\d+) (\d+) (\d+)"/.exec(html);
+  if (!m) return null;
+  const [width, height, top, right, bottom, left] = m.slice(1).map(Number) as [number, number, number, number, number, number];
+  if (width < 300 || width > 2000 || height < 300 || height > 3000) return null;
+  const clamp = (v: number, max: number) => Math.min(Math.max(v, 18), max);
+  const margins = {
+    top: clamp(top, height / 3),
+    bottom: clamp(bottom, height / 3),
+    left: clamp(left, width / 3),
+    right: clamp(right, width / 3),
+  };
+  return { width, height, margins };
+}
+
 export async function renderHtmlToPdf(html: string, opts: { footerLabel: string }): Promise<Buffer> {
   const browser = await getBrowser();
   const page = await browser.newPage();
@@ -71,17 +91,21 @@ export async function renderHtmlToPdf(html: string, opts: { footerLabel: string 
     await page.setJavaScriptEnabled(false);
     await page.setContent(html, { waitUntil: 'load', timeout: 20_000 });
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    // Templates imported from Word carry the document's own page size and margins, so the
+    // PDF paginates like Word; everything else uses the standard A4 page.
+    const geometry = documentPageGeometry(html);
+    const margins = geometry?.margins ?? PRINT_MARGINS;
     const pdf = await page.pdf({
-      format: 'A4',
+      ...(geometry ? { width: `${geometry.width}px`, height: `${geometry.height}px` } : { format: 'A4' as const }),
       printBackground: true,
       displayHeaderFooter: true,
       headerTemplate: '<span></span>',
-      footerTemplate: printFooterTemplate(opts.footerLabel),
+      footerTemplate: printFooterTemplate(opts.footerLabel, margins),
       margin: {
-        top: `${PRINT_MARGINS.top}px`,
-        bottom: `${PRINT_MARGINS.bottom}px`,
-        left: `${PRINT_MARGINS.left}px`,
-        right: `${PRINT_MARGINS.right}px`,
+        top: `${margins.top}px`,
+        bottom: `${margins.bottom}px`,
+        left: `${margins.left}px`,
+        right: `${margins.right}px`,
       },
       timeout: 30_000,
     });

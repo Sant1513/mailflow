@@ -6,6 +6,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { cleanImportedPlaceholders, googleDocId } from '@/lib/signing/docImport';
+import { docxToHtml } from '@/lib/signing/docx/convert';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -74,18 +75,33 @@ export const POST = withErrorHandling(async (req) => {
     source = 'google_doc';
   }
 
-  let converted: { value: string; messages: { type: string; message: string }[] };
+  // Exact formatting first: our converter keeps fonts, spacing, lists, tables, images and page
+  // size as inline CSS (its output is generated from parsed XML, so it needs no sanitising).
+  // A file it can't parse falls back to the plain conversion.
+  let rawHtml: string;
+  let warnings: string[] = [];
+  let exact = true;
   try {
-    converted = await mammoth.convertToHtml({ buffer });
-  } catch {
-    return NextResponse.json({ error: 'That file could not be read as a Word document.' }, { status: 400 });
+    const out = await docxToHtml(buffer);
+    rawHtml = out.html;
+    warnings = out.warnings;
+  } catch (err) {
+    console.error('[signing-import] exact conversion failed, using plain conversion', (err as Error).message);
+    exact = false;
+    try {
+      rawHtml = sanitizeDocument((await mammoth.convertToHtml({ buffer })).value);
+      warnings = ['Some formatting could not be kept for this file, so it was imported as plain text with basic formatting.'];
+    } catch {
+      return NextResponse.json({ error: 'That file could not be read as a Word document.' }, { status: 400 });
+    }
   }
 
-  const { html, fields } = cleanImportedPlaceholders(sanitizeDocument(converted.value));
-  if (!html.replace(/<[^>]+>/g, '').trim()) return NextResponse.json({ error: 'The document looks empty.' }, { status: 400 });
+  const { html, fields } = cleanImportedPlaceholders(rawHtml);
+  if (!html.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<(?!img)[^>]+>/g, '').trim()) {
+    return NextResponse.json({ error: 'The document looks empty.' }, { status: 400 });
+  }
 
-  await audit(session, 'SIGNING_TEMPLATE_IMPORTED', { metadata: { source, name: name.slice(0, 120), fields: fields.length } });
+  await audit(session, 'SIGNING_TEMPLATE_IMPORTED', { metadata: { source, name: name.slice(0, 120), fields: fields.length, exact } });
 
-  const warnings = converted.messages.filter((m) => m.type === 'warning').length;
-  return NextResponse.json({ title: name.slice(0, 200), content: html, fields, warnings });
+  return NextResponse.json({ title: name.slice(0, 200), content: html, fields, warnings, exact });
 });

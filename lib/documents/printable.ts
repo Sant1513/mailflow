@@ -78,8 +78,8 @@ export function buildPrintableHtml(bodyHtml: string, title: string): string {
 </html>`;
 }
 
-export function printFooterTemplate(label: string): string {
+export function printFooterTemplate(label: string, margins: { left: number; right: number } = PRINT_MARGINS): string {
   // Header/footer templates render in their own context: styles must be inline.
-  return `<div style="width:100%;padding:0 ${PRINT_MARGINS.right}px 0 ${PRINT_MARGINS.left}px;font-family:Helvetica,Arial,sans-serif;font-size:8px;color:#9ca3af;display:flex;justify-content:space-between;">
+  return `<div style="width:100%;padding:0 ${margins.right}px 0 ${margins.left}px;font-family:Helvetica,Arial,sans-serif;font-size:8px;color:#9ca3af;display:flex;justify-content:space-between;">
 <span>${escapeHtml(label)}</span><span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`;
 }
