@@ -1,5 +1,11 @@
 # Phase status
 
+> **Update 27 Sep 2026:** this file is the detailed log of Phases 1–7 up to
+> 10 Sep. Everything shipped since then — Mail round 3, MailFlow Sign (S1–S6),
+> the Mail/Sign product split — and the current known gaps are summarised in
+> the [README](README.md#phase-status). Current unit-test count: 509 across 41
+> files.
+
 ## Deployment
 
 - **Live:** https://mailflow-six-sooty.vercel.app (Vercel, production)
@@ -101,8 +107,8 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] Rate limiting from durable rows, so the cap survives restarts
 - [x] BullMQ + Redis worker (`npm run worker:email`) **and** a bounded drain endpoint for deployments without Redis — both call the same `processEmailJob`
 - [x] Test email (§26) — exactly one message, clearly marked, never to campaign recipients
-- [ ] Scheduling: `scheduledAt` is stored and shown, but no scheduler process dispatches it yet — a scheduled campaign still needs Send pressed
-- [ ] Attachments on campaigns (the MIME builder supports them; the campaign UI does not expose them yet)
+- [x] Scheduling (16 Sep): schedule picker on send; BullMQ delayed jobs when Redis is present, otherwise `/api/cron/scheduled-send` dispatches once a day (Vercel Hobby limit), so without Redis a scheduled campaign goes out at the next 00:00 UTC run
+- [x] Per-recipient personalised PDF attachments on campaigns (15 Sep, PDF Library); arbitrary file attachments on campaigns are still not exposed
 
 ## Phase 4 — Automation builder ✅ mostly done
 - [x] Condition engine: AND/OR trees, 8 operators, with type-loose comparison so `Trigger = 1` matches the string `"1"` people actually type
@@ -115,7 +121,7 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] §74 safety gate: enabling requires the caller to echo back the affected-record count it was shown, so mass email cannot be switched on without the number being displayed
 - [x] Run log records every evaluation including the no-ops (§72)
 - [x] Evaluation hooked into record create/update; a failing automation never blocks a data edit
-- [ ] WAIT action — recorded as not-implemented in the run log rather than faked; needs the delayed queue
+- [x] WAIT action (15 Sep): enqueues a delayed BullMQ job and resumes mid-sequence (`npm run worker:automation`). **Needs Redis** — production has none today, so WAIT is currently a no-op there
 - [ ] SCHEDULED trigger — stored but no cron process runs it yet
 
 ## Phase 5 — Threading / inbound sync / Inbox ✅ mostly done
@@ -199,4 +205,4 @@ Spec: docs/requests/2026-09-07-approvals-theme-ux.md
 2. ~~Phase 6: organization analytics, the "view as" banner, retention policy~~ — **done** (retention enforcement and workspace mutations deferred, see Phase 6).
 3. ~~Phase 7: `AIProvider` + `GeminiProvider` with per-user/org rate limits; reply suggestion, summary, classification behind the header-first classifier~~ — **done**, verified against real Gemini.
 4. ~~Close out Phase 1: saved views, filter/sort/group, bulk edit on the grid~~ — **done** (virtualization deferred to Phase 8).
-5. Scheduling dispatcher (Phase 3) and the `WAIT` action / `SCHEDULED` trigger (Phase 4) — both need the delayed queue.
+5. ~~Scheduling dispatcher (Phase 3) and the `WAIT` action (Phase 4)~~ — **built** (15–16 Sep); both run on time only with Redis. The `SCHEDULED` trigger is still open.
