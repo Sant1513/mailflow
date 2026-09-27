@@ -16,6 +16,7 @@ import {
   type BulkSignerConfig,
 } from '@/lib/signing/fields';
 import { parsePlacements, signaturePlacementsSchema, type SignaturePlacement } from '@/lib/signing/placements';
+import { syncSigningStatusToRecord } from '@/lib/signing/writeback';
 
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
@@ -55,6 +56,8 @@ const recipientSchema = z.object({
     email: z.string().email(),
     role: z.string().min(1).max(100),
   })).max(3).optional(),
+  /** The data row this document is for (Send for signature from Data); status is written back to it. */
+  source: z.object({ datasetId: z.string().min(1), recordId: z.string().min(1) }).optional(),
 });
 
 const attachmentSchema = z.object({
@@ -136,6 +139,20 @@ export const POST = withErrorHandling(async (req) => {
     );
   }
 
+  // Rows sent from Data must belong to this workspace before we link to them.
+  const sourceRecordIds = [...new Set(body.recipients.flatMap((r) => (r.source ? [r.source.recordId] : [])))];
+  if (sourceRecordIds.length) {
+    const owned = await prisma.record.findMany({
+      where: { id: { in: sourceRecordIds }, dataset: { workspaceId } },
+      select: { id: true, datasetId: true },
+    });
+    const byId = new Map(owned.map((r) => [r.id, r.datasetId]));
+    const bad = body.recipients.findIndex((r) => r.source && byId.get(r.source.recordId) !== r.source.datasetId);
+    if (bad >= 0) {
+      return NextResponse.json({ error: `Row ${bad + 1} links to a data row outside this workspace.` }, { status: 400 });
+    }
+  }
+
   // Blank document variables are allowed: the signer fills them in on the
   // signing page. Only the values the sender provided get locked.
   const expandedRecipients = body.recipients.flatMap((r, rowIndex) => {
@@ -164,6 +181,7 @@ export const POST = withErrorHandling(async (req) => {
         fieldValues: rowValues,
         assignedFields,
         lockedFields: lockedKeysForSigner(fieldKeys, rowValues, assignedFields, rowIsMulti),
+        source: r.source ?? null,
       };
     });
   });
@@ -229,6 +247,7 @@ export const POST = withErrorHandling(async (req) => {
             __bulkRow: String(r.rowIndex + 1),
             __signerIndex: String(r.signerIndex),
             __signerRole: r.role,
+            ...(r.source ? { __recordId: r.source.recordId, __datasetId: r.source.datasetId } : {}),
           },
           attachments: body.attachments,
           ccEmails: body.ccEmails,
@@ -304,8 +323,15 @@ export const POST = withErrorHandling(async (req) => {
   await audit(session, 'SIGNING_BATCH_SENT', {
     targetType: 'SigningBatch',
     targetId: batch.id,
-    metadata: { batchId: batch.id, totalCount: expandedRecipients.length, csvRows: body.recipients.length, signerCount: signers.length, signingOrder },
+    metadata: { batchId: batch.id, totalCount: expandedRecipients.length, csvRows: body.recipients.length, signerCount: signers.length, signingOrder, fromData: sourceRecordIds.length },
   });
+
+  // Rows sent from Data: mark them "Sent" (one write per document).
+  if (sourceRecordIds.length) {
+    for (const r of requests) {
+      if (r.signerOrder === 0) await syncSigningStatusToRecord(r.id);
+    }
+  }
 
   const fullBatch = await prisma.signingBatch.findUnique({
     where: { id: batch.id },

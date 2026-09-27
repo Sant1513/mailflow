@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { DocImportButton } from '@/components/documents/DocImportButton';
 import { TemplateSignaturePositions } from '@/components/documents/TemplateSignaturePositions';
 import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
 import { parsePlacements, type SignaturePlacement } from '@/lib/signing/placements';
@@ -259,7 +260,22 @@ export default function EditTemplatePage() {
 
         {/* Content */}
         <div className="rounded-lg border bg-card p-5">
-          <div className="eyebrow mb-1">Document Content</div>
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <div className="eyebrow">Document Content</div>
+            <DocImportButton
+              hasContent={!!content.trim()}
+              onImported={(doc) => {
+                setContent(doc.content);
+                setTitle((t) => t || doc.title);
+                // Keep fields already set up; add the ones the document introduces.
+                setFieldDefs((prev) => {
+                  const kept = prev.filter((f) => f.key.trim());
+                  const have = new Set(kept.map((f) => f.key.trim()));
+                  return [...kept, ...doc.fields.filter((f) => !have.has(f.key)).map((f) => ({ key: f.key, label: f.label, defaultValue: '' }))];
+                });
+              }}
+            />
+          </div>
           <p className="mb-3 text-xs text-muted-foreground">
             HTML or plain text. Use <code className="font-mono">{'{{key}}'}</code> placeholders
             matching the field keys above.

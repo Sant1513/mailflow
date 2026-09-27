@@ -16,6 +16,7 @@ import {
   publicSigningFieldValues,
 } from '@/lib/signing/fields';
 import { placementsOf } from '@/lib/signing/placements';
+import { syncSigningStatusToRecord } from '@/lib/signing/writeback';
 
 /** GET /api/e-sign/[id] — fetch a single signing request for the current workspace. */
 export const GET = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
@@ -154,6 +155,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       targetId: existing.id,
       metadata: existing.groupId ? { groupId: existing.groupId } : undefined,
     });
+    await syncSigningStatusToRecord(existing.id);
     return NextResponse.json({ voided: true });
   }
 

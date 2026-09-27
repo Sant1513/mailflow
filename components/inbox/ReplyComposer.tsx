@@ -89,6 +89,7 @@ export function ReplyComposer({
   subject,
   busy,
   onSend,
+  inject,
 }: {
   conversationId: string;
   recipientEmail: string;
@@ -97,6 +98,8 @@ export function ReplyComposer({
   subject: string;
   busy: boolean;
   onSend: (payload: ComposerPayload) => Promise<boolean>;
+  /** Text pushed in from outside (an AI draft to edit); a new `key` inserts it once. */
+  inject?: { text: string; key: number } | null;
 }) {
   const DRAFT_KEY = `draft:${conversationId}`;
 
@@ -288,6 +291,16 @@ export function ReplyComposer({
   function insertText(text: string) {
     insertHtml(textToParagraphs(text));
   }
+
+  const lastInject = useRef<number | null>(null);
+  useEffect(() => {
+    if (!inject || lastInject.current === inject.key) return;
+    lastInject.current = inject.key;
+    editorRef.current?.focus();
+    insertText(inject.text);
+    editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inject?.key]);
 
   function insertSnippet(s: Snippet) {
     insertHtml(s.rendered ?? s.html);

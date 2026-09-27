@@ -20,6 +20,7 @@ interface InboxRow {
   firstMessageDirection: string | null;
   slaBreached?: boolean;
   slaMinutesOverdue?: number;
+  aiDraft?: boolean;
 }
 
 const FILTERS: { key: string; label: string; countKey?: 'unread' | 'mine' | 'open' | 'waiting' }[] = [
@@ -355,8 +356,11 @@ export default function InboxPage() {
                                 )}
                                 {c.lastMessage?.snippet ?? ''}
                               </div>
-                              {c.tags.length > 0 && (
+                              {(c.tags.length > 0 || c.aiDraft) && (
                                 <div className="mt-1 flex flex-wrap gap-1">
+                                  {c.aiDraft && (
+                                    <span className="rounded bg-primary/10 px-1.5 text-[10px] font-medium text-primary">AI draft ready</span>
+                                  )}
                                   {c.tags.map((t) => (
                                     <span key={t.name} className="rounded px-1.5 text-[10px]"
                                       style={{ background: t.color ? `${t.color}22` : undefined, color: t.color ?? undefined }}>

@@ -4,46 +4,7 @@ import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { resolveWorkspaceId } from '@/lib/permissions/workspace';
 import { ConversationStatus, Prisma } from '@prisma/client';
-
-/** Returns the worst-case SLA breach (minutes overdue) for a conversation, or null if no breach. */
-function checkSlaBreach(
-  conv: {
-    firstMessageAt: Date | null;
-    status: string;
-    assigneeId: string | null;
-    tags: { tag: { name: string } }[];
-  },
-  rules: {
-    firstResponseMinutes: number;
-    appliesTo: string;
-    tagName: string | null;
-    assigneeId: string | null;
-  }[]
-): { slaBreached: boolean; slaMinutesOverdue: number } {
-  const openStatuses: string[] = [ConversationStatus.OPEN, ConversationStatus.IN_PROGRESS];
-  if (!openStatuses.includes(conv.status) || !conv.firstMessageAt) {
-    return { slaBreached: false, slaMinutesOverdue: 0 };
-  }
-
-  const tagNames = conv.tags.map((t) => t.tag.name.toLowerCase());
-  const minutesElapsed = (Date.now() - conv.firstMessageAt.getTime()) / 60_000;
-
-  let maxOverdue = 0;
-  for (const rule of rules) {
-    // Check if rule applies to this conversation
-    const applies =
-      rule.appliesTo === 'ALL' ||
-      (rule.appliesTo === 'TAG' && rule.tagName && tagNames.includes(rule.tagName.toLowerCase())) ||
-      (rule.appliesTo === 'ASSIGNEE' && rule.assigneeId === conv.assigneeId);
-
-    if (!applies) continue;
-
-    const overdue = minutesElapsed - rule.firstResponseMinutes;
-    if (overdue > maxOverdue) maxOverdue = overdue;
-  }
-
-  return { slaBreached: maxOverdue > 0, slaMinutesOverdue: Math.round(maxOverdue) };
-}
+import { checkSlaBreach } from '@/lib/sla';
 
 /**
  * §51 Inbox list. Filters: unread | mine | open | waiting | resolved | all,
@@ -142,6 +103,15 @@ export const GET = withErrorHandling(async (req) => {
       })
     : [];
   const firstDir = new Map(firstMessages.map((m) => [m.conversationId, m.direction]));
+  // AI triage drafts waiting for approval.
+  const drafts = convIds.length
+    ? await prisma.scheduledReply.findMany({
+        where: { conversationId: { in: convIds }, status: 'DRAFT' },
+        distinct: ['conversationId'],
+        select: { conversationId: true },
+      })
+    : [];
+  const hasDraft = new Set(drafts.map((d) => d.conversationId));
 
   return NextResponse.json({
     conversations: conversations.map((c) => {
@@ -170,6 +140,7 @@ export const GET = withErrorHandling(async (req) => {
         firstMessageDirection: firstDir.get(c.id) ?? null,
         slaBreached: sla.slaBreached,
         slaMinutesOverdue: sla.slaMinutesOverdue,
+        aiDraft: hasDraft.has(c.id),
       };
     }),
     total,

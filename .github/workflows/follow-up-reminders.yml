@@ -18,3 +18,7 @@ jobs:
         run: |
           curl -fsS -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "https://mailflow-six-sooty.vercel.app/api/cron/follow-ups"
+      - name: Google Sheets two-way sync
+        run: |
+          curl -fsS -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://mailflow-six-sooty.vercel.app/api/cron/sheets-sync"

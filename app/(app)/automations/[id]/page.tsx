@@ -227,6 +227,17 @@ export default function AutomationBuilderPage() {
             </select>
           </div>
 
+          <SigningPresets
+            hasSigningColumns={columns.includes('signing_status')}
+            onApply={(g, stop) => {
+              setTriggerType('RECORD_MATCHES_CONDITIONS');
+              setConditions(g);
+              setStopConditions(stop);
+              setFrequencyMode('ONCE');
+              toast.success('Conditions set. Pick the email to send, then save.');
+            }}
+          />
+
           <ConditionBuilder group={conditions} columns={columns} onChange={setConditions} label="Conditions" />
 
           <ConditionBuilder
@@ -318,6 +329,73 @@ export default function AutomationBuilderPage() {
             </table>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One-click conditions for documents sent from Data: MailFlow writes
+ * "Signing status" and "Days waiting to sign" onto each row (refreshed
+ * daily), so these are plain column conditions.
+ */
+function SigningPresets({ hasSigningColumns, onApply }: { hasSigningColumns: boolean; onApply: (conditions: Group, stop: Group) => void }) {
+  const [days, setDays] = useState(3);
+  if (!hasSigningColumns) {
+    return (
+      <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+        Signing automations (&quot;signed&quot;, &quot;not signed after N days&quot;) appear here once a document is sent for signature from this
+        dataset. Its rows then get Signing status and Days waiting to sign columns.
+      </p>
+    );
+  }
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <h2 className="mb-1 text-sm font-semibold">Signing presets</h2>
+      <p className="mb-2 text-xs text-muted-foreground">Start from a signing condition. You can edit the conditions afterwards.</p>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <button
+          type="button"
+          className="btn-secondary !px-3 !py-1 text-xs"
+          onClick={() =>
+            onApply(
+              { op: 'AND', rules: [{ field: 'signing_status', operator: 'equals', value: 'Signed' }] },
+              { op: 'OR', rules: [] },
+            )
+          }
+        >
+          When the document is signed
+        </button>
+        <span className="text-muted-foreground">or</span>
+        <button
+          type="button"
+          className="btn-secondary !px-3 !py-1 text-xs"
+          onClick={() =>
+            onApply(
+              { op: 'AND', rules: [{ field: 'days_waiting_to_sign', operator: 'greater_than', value: String(Math.max(0, days - 1)) }] },
+              {
+                op: 'OR',
+                rules: [
+                  { field: 'signing_status', operator: 'equals', value: 'Signed' },
+                  { field: 'signing_status', operator: 'equals', value: 'Voided' },
+                  { field: 'signing_status', operator: 'equals', value: 'Expired' },
+                ],
+              },
+            )
+          }
+        >
+          When not signed after
+        </button>
+        <input
+          type="number"
+          min={1}
+          max={60}
+          value={days}
+          onChange={(e) => setDays(Math.min(60, Math.max(1, Number(e.target.value) || 1)))}
+          className="w-16 !py-1 text-xs"
+          aria-label="Days"
+        />
+        <span className="text-muted-foreground">days</span>
       </div>
     </div>
   );

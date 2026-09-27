@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { DataGrid, type GridColumn, type GridRecord, type GridSort } from '@/components/data-grid/DataGrid';
 import { ConditionBuilder, type Group } from '@/components/automation-builder/ConditionBuilder';
+import { SheetSyncPanel } from '@/components/data/SheetSyncPanel';
 
 interface SavedView {
   id: string;
@@ -45,6 +46,7 @@ const EMPTY_FILTER: Group = { op: 'AND', rules: [] };
 /** §12 spreadsheet page: search, filter, sort, group, saved views, column controls, bulk edit. */
 export default function DatasetDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const [detail, setDetail] = useState<DatasetDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -59,7 +61,18 @@ export default function DatasetDetailPage() {
   const [freezeFirst, setFreezeFirst] = useState(true);
 
   // UI state
-  const [panel, setPanel] = useState<'filter' | 'columns' | 'bulk' | null>(null);
+  const [panel, setPanel] = useState<'filter' | 'columns' | 'bulk' | 'sheet' | null>(null);
+
+  // Back from "Connect Google Sheets": reopen the sheet panel and say how it went.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get('sheet') !== '1') return;
+    setPanel('sheet');
+    const err = q.get('gmailError');
+    if (err) toast.error(err, { duration: 12000 });
+    else if (q.get('gmail')) toast.success('Google Sheets access granted. Paste the sheet link to connect it.');
+    window.history.replaceState(null, '', window.location.pathname);
+  }, []);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkField, setBulkField] = useState('');
   const [bulkValue, setBulkValue] = useState('');
@@ -263,6 +276,17 @@ export default function DatasetDetailPage() {
   }
 
   // ── bulk ────────────────────────────────────────────────────────────
+  function sendForSignature() {
+    const ids = [...selected];
+    if (ids.length > 200) return toast.error('Send up to 200 rows at a time.');
+    try {
+      sessionStorage.setItem('mailflow.signSource', JSON.stringify({ datasetId: params.id, recordIds: ids }));
+    } catch {
+      return toast.error('Your browser blocked session storage, so the rows could not be passed on.');
+    }
+    router.push('/documents/bulk/new?from=data');
+  }
+
   async function bulk(action: 'update' | 'delete') {
     const ids = [...selected];
     if (ids.length === 0) return;
@@ -362,6 +386,10 @@ export default function DatasetDetailPage() {
           Columns{hiddenCount ? ` (${hiddenCount} hidden)` : ''}
         </button>
 
+        <button onClick={() => setPanel(panel === 'sheet' ? null : 'sheet')} className="btn-secondary !py-1.5 text-[11px]">
+          Google Sheet
+        </button>
+
         <label className="flex items-center gap-1 text-muted-foreground">
           <input type="checkbox" checked={freezeFirst} onChange={(e) => setFreezeFirst(e.target.checked)} /> Freeze first column
         </label>
@@ -398,6 +426,8 @@ export default function DatasetDetailPage() {
         </div>
       )}
 
+      {panel === 'sheet' && <SheetSyncPanel datasetId={params.id} onSynced={load} />}
+
       {panel === 'columns' && (
         <div className="mb-3 max-w-3xl rounded-md border p-3">
           <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Columns — show, hide, rename, reorder</div>
@@ -429,6 +459,9 @@ export default function DatasetDetailPage() {
           <input value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} placeholder="to value" className="w-40 !py-1 text-xs" />
           <button onClick={() => bulk('update')} disabled={busy || !bulkField} className="btn-primary !py-1 text-[11px]">
             {busy ? 'Working…' : 'Apply to selected'}
+          </button>
+          <button onClick={sendForSignature} disabled={busy} className="btn-secondary !py-1 text-[11px]" title="Open bulk signing with these rows, columns matched to the template">
+            Send for signature
           </button>
           <button onClick={() => bulk('delete')} disabled={busy} className="btn-secondary !py-1 text-[11px] !text-primary">Delete selected</button>
           <button onClick={() => setSelected(new Set())} className="ml-auto text-muted-foreground hover:text-foreground">Clear selection</button>

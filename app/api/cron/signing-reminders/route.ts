@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { GmailProvider } from '@/lib/email/gmail';
 import { appUrl } from '@/lib/campaigns/approvalEmails';
+import { refreshWaitingDocuments, syncSigningStatusToRecord } from '@/lib/signing/writeback';
+
+export const maxDuration = 60;
 
 /**
  * Daily cron: sends reminder emails for SigningRequests that are SENT or
@@ -19,6 +22,26 @@ export async function GET(req: Request) {
   if (!authorised(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const now = new Date();
+  const reminders = await sendReminders(now);
+
+  // Links past their expiry are marked EXPIRED here too (not only when someone
+  // opens them), then every document sent from Data refreshes its row —
+  // "Days waiting to sign" is what "not signed after N days" automations use.
+  const overdue = await prisma.signingRequest.findMany({
+    where: { status: { in: ['SENT', 'VIEWED'] }, expiresAt: { lt: now } },
+    select: { id: true },
+    take: 1000,
+  });
+  if (overdue.length) {
+    await prisma.signingRequest.updateMany({ where: { id: { in: overdue.map((r) => r.id) } }, data: { status: 'EXPIRED' } });
+    for (const r of overdue) await syncSigningStatusToRecord(r.id, now);
+  }
+  const rowsRefreshed = await refreshWaitingDocuments(now);
+
+  return NextResponse.json({ processed: reminders, expired: overdue.length, rowsRefreshed });
+}
+
+async function sendReminders(now: Date): Promise<number> {
   const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
   const oneDayFromNow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
@@ -36,9 +59,7 @@ export async function GET(req: Request) {
     take: 100,
   });
 
-  if (requests.length === 0) {
-    return NextResponse.json({ processed: 0 });
-  }
+  if (requests.length === 0) return 0;
 
   // Group by workspaceId to batch email account lookups
   const workspaceIds = [...new Set(requests.map((r) => r.workspaceId))];
@@ -134,5 +155,5 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ processed });
+  return processed;
 }

@@ -3,6 +3,7 @@ import { getOptionalSession } from '@/lib/auth/session';
 import { allowedDomain } from '@/lib/auth/options';
 import { RetentionPanel } from '@/components/admin/RetentionPanel';
 import { SlackSettings } from '@/components/admin/SlackSettings';
+import { AutomationSettings } from '@/components/admin/AutomationSettings';
 import { aiStatus } from '@/lib/ai/service';
 import { startOfTodayIst } from '@/lib/ai/limits';
 import { prisma } from '@/lib/db/client';
@@ -45,6 +46,14 @@ export default async function AdminSystemSettingsPage() {
           <p className="text-xs text-muted-foreground">§130 — per-organization policy, audited on every change.</p>
         </div>
         <RetentionPanel readOnly={readOnly} />
+      </section>
+
+      <section className="panel mt-4 max-w-3xl p-5">
+        <div className="mb-4">
+          <h2 className="font-heading text-base font-semibold">Automation</h2>
+          <p className="text-xs text-muted-foreground">Daily digest, weekly leadership report and AI inbox triage for the whole organisation.</p>
+        </div>
+        <AutomationSettings readOnly={readOnly} />
       </section>
 
       <section className="panel mt-4 max-w-3xl p-5">

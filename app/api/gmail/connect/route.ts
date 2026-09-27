@@ -4,7 +4,7 @@ import { cookies } from 'next/headers';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
-import { buildConsentUrl, OAUTH_STATE_COOKIE } from '@/lib/gmail/oauth';
+import { buildConsentUrl, OAUTH_RETURN_COOKIE, OAUTH_STATE_COOKIE, safeReturnPath, SHEETS_OAUTH_SCOPE } from '@/lib/gmail/oauth';
 import { audit } from '@/lib/audit/log';
 
 /**
@@ -12,7 +12,7 @@ import { audit } from '@/lib/audit/log';
  * grants identity only; this is where a user explicitly grants send access
  * to their own mailbox.
  */
-export const GET = withErrorHandling(async () => {
+export const GET = withErrorHandling(async (req) => {
   const session = await requireSession();
   requireCanWrite(session);
 
@@ -28,7 +28,23 @@ export const GET = withErrorHandling(async () => {
     maxAge: 600,
   });
 
-  await audit(session, 'GMAIL_CONNECT_STARTED');
+  // ?with=sheets adds Google Sheets access (incremental: Gmail access is kept).
+  const url = new URL(req.url);
+  const withSheets = url.searchParams.get('with') === 'sheets';
+  const returnTo = safeReturnPath(url.searchParams.get('return'));
+  if (returnTo) {
+    cookies().set(OAUTH_RETURN_COOKIE, returnTo, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 600,
+    });
+  } else {
+    cookies().delete(OAUTH_RETURN_COOKIE);
+  }
 
-  return NextResponse.redirect(buildConsentUrl(state));
+  await audit(session, 'GMAIL_CONNECT_STARTED', withSheets ? { metadata: { scopes: 'gmail+sheets' } } : undefined);
+
+  return NextResponse.redirect(buildConsentUrl(state, withSheets ? [SHEETS_OAUTH_SCOPE] : []));
 });

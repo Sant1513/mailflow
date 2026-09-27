@@ -171,16 +171,20 @@ export async function explainAutomationFacts(runId: string) {
  * store it BESIDE the header-first classification. Never throws, never
  * changes the classification, status, or any record: it only annotates.
  */
-export async function classifyStoredMessage(messageId: string, ctx: AiContext, opts: { timeoutMs?: number } = {}): Promise<void> {
+export async function classifyStoredMessage(
+  messageId: string,
+  ctx: AiContext,
+  opts: { timeoutMs?: number } = {},
+): Promise<{ intent: string; confidence: number } | null> {
   try {
     const msg = await prisma.conversationMessage.findUnique({ where: { id: messageId }, select: { conversationId: true, aiIntent: true } });
-    if (!msg || msg.aiIntent) return;
+    if (!msg || msg.aiIntent) return null;
     const context = await loadConversationContext(msg.conversationId, { maxMessages: 6 });
-    if (!context || context.messages.length === 0) return;
+    if (!context || context.messages.length === 0) return null;
 
     const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), opts.timeoutMs ?? 12_000));
     const outcome = await Promise.race([runAiFeature(ctx, 'classify_reply', (p) => p.classifyReply(context)), timeout]);
-    if (!outcome || !outcome.ok) return;
+    if (!outcome || !outcome.ok) return null;
 
     await prisma.conversationMessage.update({
       where: { id: messageId },
@@ -190,7 +194,9 @@ export async function classifyStoredMessage(messageId: string, ctx: AiContext, o
         aiIntentReason: outcome.data.reason.slice(0, 300),
       },
     });
+    return { intent: outcome.data.intent, confidence: outcome.data.confidence };
   } catch (err) {
     console.error('[ai] classifyStoredMessage failed (ignored)', err);
+    return null;
   }
 }

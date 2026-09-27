@@ -41,12 +41,24 @@ export function createOAuthClient(): OAuth2Client {
   return new google.auth.OAuth2(clientId, clientSecret, gmailRedirectUri());
 }
 
-export function buildConsentUrl(state: string): string {
+/** Where to land after the consent callback (a same-site path), e.g. back on a dataset. */
+export const OAUTH_RETURN_COOKIE = 'mailflow_gmail_oauth_return';
+
+/** Google Sheets read/write, asked for only when someone connects a sheet. */
+export const SHEETS_OAUTH_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
+
+/** Only plain same-site paths: never "//host" or a full URL (open redirect). */
+export function safeReturnPath(raw: string | null | undefined): string | null {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return null;
+  return raw.slice(0, 300);
+}
+
+export function buildConsentUrl(state: string, extraScopes: string[] = []): string {
   const client = createOAuthClient();
   return client.generateAuthUrl({
     access_type: 'offline', // we need a refresh token for background sending
     prompt: 'consent', // force a refresh token even on re-connect
-    scope: GMAIL_SCOPES,
+    scope: [...GMAIL_SCOPES, ...extraScopes],
     state,
     include_granted_scopes: true,
   });

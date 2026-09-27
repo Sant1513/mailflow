@@ -251,6 +251,8 @@ model Dataset {
   ownerId        String
   name           String
   description    String?
+  /// Google Sheets two-way sync config and last result (lib/sheets/config.ts)
+  sheetSync      Json?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -1081,6 +1083,8 @@ model IntegrationSettings {
   slackNotifyAssignments Boolean  @default(true)
   slackNotifyResolutions Boolean  @default(true)
   slackNotifyFollowUps   Boolean  @default(true)
+  /// Digest, weekly report and AI triage settings (lib/settings/org.ts)
+  settings               Json     @default("{}")
   updatedById            String?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt

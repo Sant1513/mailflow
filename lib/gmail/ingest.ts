@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db/client';
 import { classifyInbound, countsAsReply } from '@/lib/conversations/classify';
 import { classifyStoredMessage } from '@/lib/ai/context';
+import { triageReply } from '@/lib/ai/triage';
 import { normalizeSubject, type ParsedMessage } from '@/lib/gmail/parseMessage';
 import { MessageDirection, MessageClassification, type EmailProviderAccount } from '@prisma/client';
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
@@ -264,11 +265,19 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   if (isReply) {
     // §80 AI intent, stored beside the header-first result. Best effort:
     // AI being off, over limit or slow never delays or fails ingestion.
-    await classifyStoredMessage(result.messageId, {
-      userId: account.userId,
-      organizationId: account.organizationId,
-      workspaceId: account.workspaceId,
-    });
+    const aiCtx = { userId: account.userId, organizationId: account.organizationId, workspaceId: account.workspaceId };
+    const intent = await classifyStoredMessage(result.messageId, aiCtx);
+    // AI triage (tag, assign, close thank-yous, draft an answer): best effort, per-org settings.
+    if (intent) {
+      await triageReply({
+        messageId: result.messageId,
+        conversationId: result.conversationId,
+        intent: intent.intent,
+        confidence: intent.confidence,
+        ai: aiCtx,
+        mailboxEmail: account.emailAddress,
+      });
+    }
 
     dispatchWebhook(account.workspaceId, 'conversation.message.received', {
       conversationId: result.conversationId,

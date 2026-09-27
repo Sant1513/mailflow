@@ -5,6 +5,7 @@ import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
+import { syncSigningStatusToRecord } from '@/lib/signing/writeback';
 
 /** GET /api/signing-batches/[id] — fetch batch detail with all requests. */
 export const GET = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
@@ -97,6 +98,13 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     targetType: 'SigningBatch',
     targetId: batch.id,
   });
+
+  // One write-back per document (the first signer stands for its group).
+  const docs = await prisma.signingRequest.findMany({
+    where: { batchId: batch.id, signerOrder: 0 },
+    select: { id: true },
+  });
+  for (const d of docs) await syncSigningStatusToRecord(d.id);
 
   return NextResponse.json({ voided: true });
 });

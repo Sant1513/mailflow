@@ -8,6 +8,7 @@ import type { EmailAttachment } from '@/lib/email/provider';
 import { generateSignedPdf } from '@/lib/documents/pdf';
 import { lockedFieldsOf, publicSigningFieldValues, mergeGroupFieldValues } from '@/lib/signing/fields';
 import { placementsOf } from '@/lib/signing/placements';
+import { syncSigningStatusToRecord } from '@/lib/signing/writeback';
 
 // First PDF on a cold server starts Chromium, which can take several seconds.
 export const maxDuration = 60;
@@ -52,6 +53,7 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
         where: { id: request.id },
         data: { status: 'EXPIRED' },
       });
+      await syncSigningStatusToRecord(request.id);
     }
     return NextResponse.json({ error: 'expired' }, { status: 410 });
   }
@@ -62,6 +64,7 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
       where: { id: request.id },
       data: { status: 'VIEWED', viewedAt: now },
     });
+    await syncSigningStatusToRecord(request.id);
   }
 
   // For multi-signer groups, gather previous signers' info
@@ -155,6 +158,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
       where: { id: request.id },
       data: { status: 'EXPIRED' },
     });
+    await syncSigningStatusToRecord(request.id);
     return NextResponse.json({ error: 'expired' }, { status: 410 });
   }
 
@@ -598,6 +602,9 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
       metadata: { signerIp, signerAgent, signedAt: now.toISOString() },
     });
   }
+
+  // Sent from Data: update the source row (status, signed date, PDF link).
+  await syncSigningStatusToRecord(request.id);
 
   return NextResponse.json({ signed: true });
 });

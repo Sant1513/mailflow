@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 interface Segment {
@@ -33,6 +34,7 @@ const EMPTY_FILTERS: SegmentFilters = {
 };
 
 export default function SegmentsPage() {
+  const router = useRouter();
   const [segments, setSegments] = useState<Segment[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -140,6 +142,16 @@ export default function SegmentsPage() {
     toast.success(editingId ? 'Segment updated' : 'Segment created');
     closeForm();
     load();
+  }
+
+  function sendForSignature(seg: Segment) {
+    try {
+      sessionStorage.setItem('mailflow.signSource', JSON.stringify({ segmentId: seg.id }));
+    } catch {
+      toast.error('Your browser blocked session storage, so the segment could not be passed on.');
+      return;
+    }
+    router.push('/documents/bulk/new?from=data');
   }
 
   async function handleDelete(seg: Segment) {
@@ -368,6 +380,13 @@ export default function SegmentsPage() {
                       {contactCounts[seg.id]} contact{contactCounts[seg.id] !== 1 ? 's' : ''}
                     </span>
                   )}
+                  <button
+                    title="Send a document for signature to everyone in this segment"
+                    className="text-xs text-primary hover:underline"
+                    onClick={() => sendForSignature(seg)}
+                  >
+                    Send for signature
+                  </button>
                   <button
                     title="Edit"
                     className="text-muted-foreground hover:text-foreground"

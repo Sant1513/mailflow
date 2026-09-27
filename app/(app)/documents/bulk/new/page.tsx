@@ -39,7 +39,9 @@ function signersForRow(r: { name: string; email: string; signers?: RowSigner[] }
   return { signers, problems };
 }
 import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
+import { autoMapData, type DataMapping, type SigningSource } from '@/lib/signing/fromData';
 import { SigningPreviewModal } from '@/components/documents/SigningDocPreview';
+import { DataMappingPanel } from '@/components/documents/DataMappingPanel';
 import { SignaturePlacementEditor, signerColor } from '@/components/documents/SignaturePlacementEditor';
 import { parsePlacements, type SignaturePlacement } from '@/lib/signing/placements';
 
@@ -84,6 +86,8 @@ interface Recipient {
   /** Fields that came filled from the CSV; read-only in the table. */
   lockedFields?: string[];
   signers?: { name: string; email: string; role: string }[];
+  /** The data row this document is for; signing status is written back to it. */
+  source?: { datasetId: string; recordId: string };
 }
 
 interface CsvIssue {
@@ -195,6 +199,34 @@ export default function NewBulkSendPage() {
   const [placementEditorOpen, setPlacementEditorOpen] = useState(false);
   const [saveToTemplate, setSaveToTemplate] = useState(true);
 
+  // Rows handed over from Data / a segment ("Send for signature")
+  const [dataSource, setDataSource] = useState<(SigningSource & { truncated?: boolean }) | null>(null);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [mapping, setMapping] = useState<DataMapping | null>(null);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('from') !== 'data') return;
+    let stored: string | null = null;
+    try {
+      stored = sessionStorage.getItem('mailflow.signSource');
+    } catch {
+      /* storage blocked: nothing to load */
+    }
+    if (!stored) return;
+    setDataLoading(true);
+    fetch('/api/signing-batches/source', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: stored })
+      .then(async (res) => {
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? 'Could not load the rows');
+        const src = json as SigningSource & { truncated?: boolean };
+        setDataSource(src);
+        setTitle((t) => t || `Signing — ${src.label}`);
+        if (src.truncated) toast.warning('Only the first 200 rows were loaded (200 per batch).');
+      })
+      .catch((err: Error) => toast.error(err.message))
+      .finally(() => setDataLoading(false));
+  }, []);
+
   // Load templates on mount
   useEffect(() => {
     fetch('/api/signing-templates')
@@ -233,6 +265,70 @@ export default function NewBulkSendPage() {
   );
   const signerConfigs = useMemo(() => normalizeBulkSigners(signers), [signers]);
   const csvSignerConfigs = signerConfigs.filter((s) => !isFixedSigner(s));
+
+  // Re-match columns whenever the rows, the template's fields or the signer setup change.
+  const fieldKeySig = fieldDefs.map((f) => f.key).join('|');
+  const extraSignerSig = csvSignerConfigs.filter((s) => s.index > 1).map((s) => `${s.index}:${s.nameColumn}:${s.emailColumn}`).join('|');
+  useEffect(() => {
+    if (!dataSource) return;
+    setMapping(
+      autoMapData(
+        dataSource,
+        fieldKeySig ? fieldKeySig.split('|') : [],
+        csvSignerConfigs.filter((s) => s.index > 1),
+      ),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataSource, fieldKeySig, extraSignerSig]);
+
+  // The mapping drives the recipient table: one row per data row.
+  useEffect(() => {
+    if (!dataSource || !mapping) return;
+    setRecipients(
+      dataSource.rows.map((row) => {
+        const fieldValues: Record<string, string> = {};
+        const lockedFields: string[] = [];
+        for (const fd of fieldDefs) {
+          const col = mapping.fields[fd.key];
+          const value = (col ? row.data[col] ?? '' : fd.defaultValue ?? '').trim();
+          fieldValues[fd.key] = value;
+          if (value) lockedFields.push(fd.key);
+        }
+        const name = (row.data[mapping.nameColumn] ?? '').trim();
+        const email = (row.data[mapping.emailColumn] ?? '').trim().toLowerCase();
+        const rowSigners = signerConfigs.map((s, i) => {
+          if (isFixedSigner(s)) return { name: s.fixedName ?? '', email: s.fixedEmail ?? '', role: s.role };
+          if (i === 0) return { name, email, role: s.role };
+          const cols = mapping.signers[s.index];
+          return {
+            name: (cols?.nameColumn ? row.data[cols.nameColumn] ?? '' : '').trim(),
+            email: (cols?.emailColumn ? row.data[cols.emailColumn] ?? '' : '').trim().toLowerCase(),
+            role: s.role,
+          };
+        });
+        return {
+          name,
+          email,
+          fieldValues,
+          lockedFields,
+          signers: rowSigners,
+          source: row.recordId && row.datasetId ? { datasetId: row.datasetId, recordId: row.recordId } : undefined,
+        };
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataSource, mapping]);
+
+  function clearDataSource() {
+    setDataSource(null);
+    setMapping(null);
+    setRecipients([{ name: '', email: '', fieldValues: {} }]);
+    try {
+      sessionStorage.removeItem('mailflow.signSource');
+    } catch {
+      /* ignore */
+    }
+  }
   const signerSetupProblems = signerConfigs.flatMap((s) =>
     !isFixedSigner(s)
       ? []
@@ -522,6 +618,7 @@ export default function NewBulkSendPage() {
           email: r.email.trim(),
           fieldValues: r.fieldValues,
           signers: built[i]!.signers,
+          source: r.source,
         })),
         signers: signerConfigs.map((s) => ({
           ...s,
@@ -545,6 +642,11 @@ export default function NewBulkSendPage() {
     toast.success(
       `Bulk send created — ${validRecipients.length} row${validRecipients.length !== 1 ? 's' : ''} queued for signing`,
     );
+    try {
+      sessionStorage.removeItem('mailflow.signSource');
+    } catch {
+      /* ignore */
+    }
     router.push('/documents/bulk');
   }
 
@@ -1023,6 +1125,19 @@ export default function NewBulkSendPage() {
         {/* ── Recipients ────────────────────────────────────────────────── */}
         <div className="rounded-lg border bg-card p-5">
           <div className="eyebrow mb-3">Recipients</div>
+
+          {dataLoading && <p className="mb-4 text-xs text-muted-foreground">Loading rows from Data…</p>}
+          {dataSource && mapping && (
+            <DataMappingPanel
+              source={dataSource}
+              mapping={mapping}
+              onChange={setMapping}
+              fieldDefs={fieldDefs}
+              extraSigners={csvSignerConfigs.filter((s) => s.index > 1)}
+              readyCount={recipients.filter((r) => r.name.trim() && r.email.trim()).length}
+              onClear={clearDataSource}
+            />
+          )}
 
           {/* CSV Upload */}
           <div className="mb-4 rounded-md border border-dashed p-3">

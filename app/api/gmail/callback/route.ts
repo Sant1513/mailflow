@@ -4,14 +4,17 @@ import { google } from 'googleapis';
 import { prisma } from '@/lib/db/client';
 import { requireSession, ForbiddenError } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
-import { createOAuthClient, GMAIL_SCOPES, OAUTH_STATE_COOKIE } from '@/lib/gmail/oauth';
+import { createOAuthClient, GMAIL_SCOPES, OAUTH_RETURN_COOKIE, OAUTH_STATE_COOKIE, safeReturnPath } from '@/lib/gmail/oauth';
 import { encryptSecret } from '@/lib/crypto/secretBox';
 import { audit } from '@/lib/audit/log';
 import { EmailProvider as EmailProviderEnum } from '@prisma/client';
 
 function settingsRedirect(message: string, ok: boolean) {
   const base = process.env.NEXTAUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-  const url = new URL('/settings', base);
+  // Connect flows started elsewhere (e.g. a dataset's Google Sheet panel) return there.
+  const returnTo = safeReturnPath(cookies().get(OAUTH_RETURN_COOKIE)?.value);
+  if (returnTo) cookies().delete(OAUTH_RETURN_COOKIE);
+  const url = new URL(returnTo ?? '/settings', base);
   url.searchParams.set(ok ? 'gmail' : 'gmailError', message);
   return NextResponse.redirect(url);
 }

@@ -8,6 +8,7 @@ import { AiSummaryCard } from '@/components/ai/ReplyAssistant';
 import { MessageBody } from '@/components/inbox/MessageBody';
 import { ReplyComposer, type ComposerPayload } from '@/components/inbox/ReplyComposer';
 import { useAutoSync } from '@/components/inbox/useAutoSync';
+import { AiDraftCard } from '@/components/inbox/AiDraftCard';
 
 const STATUSES = ['OPEN', 'IN_PROGRESS', 'WAITING_FOR_STUDENT', 'RESOLVED', 'CLOSED'];
 
@@ -16,6 +17,7 @@ export default function ConversationPage() {
   const params = useParams<{ id: string }>();
   const [data, setData] = useState<any>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [inject, setInject] = useState<{ text: string; key: number } | null>(null);
 
   const [note, setNote] = useState('');
   const [tagInput, setTagInput] = useState('');
@@ -450,7 +452,15 @@ export default function ConversationPage() {
           </div>
 
           {/* Reply composer (§53/§54): rich text / HTML / preview, attachments, snippets */}
+          <AiDraftCard
+            conversationId={c.id}
+            refreshKey={data}
+            canWrite
+            onSent={load}
+            onEdit={(text) => setInject({ text, key: Date.now() })}
+          />
           <ReplyComposer
+            inject={inject}
             conversationId={c.id}
             recipientEmail={c.recipientEmail}
             fromEmail={c.account.emailAddress}
