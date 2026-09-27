@@ -49,6 +49,11 @@ Deeper docs: [ARCHITECTURE.md](ARCHITECTURE.md) (system design) · [PHASE_STATUS
 - Filters for unread, mine, open, waiting, resolved, assignee and tag, plus search across names, addresses, subjects and message text.
 - **SLA rules**: first-response and resolution targets per workspace, by tag or assignee; overdue conversations get a red badge.
 - Attach a student's signed documents to a reply in one click ("Current Document"), or upload files ("Old Document").
+- **AI triage** of every human reply (switchable per organisation in Admin → System settings → Automation):
+  - tags the conversation by intent (Question, Request, Complaint, Needs action, Completed, Thanks);
+  - assigns unassigned conversations (an assignee per intent, or the mailbox owner), with the usual notification;
+  - closes plain "thank you" replies when the AI is at least 85% sure and the team has already replied, leaving an internal note;
+  - drafts an answer to questions and requests. The conversation shows **AI draft ready** with **Approve & send**, **Edit** and **Discard**, and the inbox shows a badge.
 
 ### Campaigns
 - Dataset-backed campaigns sent from the operator's own Gmail, with From name, Reply-To, CC and BCC. The sending address is always the connected mailbox.
@@ -72,15 +77,25 @@ Deeper docs: [ARCHITECTURE.md](ARCHITECTURE.md) (system design) · [PHASE_STATUS
 - XSS-safe preview (escaped values, sanitised HTML, sandboxed iframe).
 - Airtable-style **Data** grid: import from paste, CSV or XLSX (with duplicate handling), inline edit, typed columns, saved views, filter / sort / group / search on the server, bulk edit and change history.
 - **Contacts** resolved from data automatically, contact **segments**, deduplication on import, and a per-contact timeline.
+- **Google Sheets two-way sync** per dataset ("Google Sheet" on the dataset toolbar). Rows are matched by a key column such as email and sync every 15 minutes or on **Sync now**:
+  - sheet edits come into MailFlow, and new sheet rows become records;
+  - cells edited in MailFlow since the last sync, and rows added in MailFlow, go to the sheet;
+  - signing columns always go from MailFlow to the sheet;
+  - nothing is deleted on either side, and the first sync imports rows without running automations.
+  It uses an extra Google permission (Sheets) added to the existing Gmail connection.
 
 ### Automations
 - Trigger → conditions (AND/OR, 8 operators) → actions (send email, update record, notify a user).
 - Stop conditions such as "already replied", frequency caps and cooldowns, versioning (editing turns the automation off until it's re-confirmed), a safety gate that shows the affected-record count before enabling, and a full run log.
 - **WAIT** steps (need Redis; see [Known gaps](#known-gaps)).
+- **Signing presets**: "when the document is signed" and "when not signed after N days", based on the signing columns written to each row.
 
 ### Dashboards and AI
 - **Dashboard**: sent, reply rate, failed, pending, unread, open conversations, resolution rate, follow-ups due, open and click rates, **first response time (FRT)** and **average response time (ART)**, over a 7 / 30 / 90 day window.
 - **Performance**: per-agent volume, FRT / ART and resolution rate, with a trend chart. **Reports**: signing and campaign KPIs with CSV export.
+- **Daily "needs attention" digest** by email and Slack (09:00 IST): unanswered replies older than 24 hours, SLA breaches, unsigned documents near expiry, and campaigns and users waiting for approval. Skipped on days with nothing to report.
+- **Weekly report** to super admins every Monday (email, optional Slack): campaigns, opens, clicks, replies, documents sent and signed, median time to sign, FRT / ART and top responders, compared with the week before.
+- Both are set up in **Admin → System settings → Automation** (sender mailbox, recipients, thresholds), with a preview and a test send.
 - **Gemini AI assistant**: write or improve templates, subject ideas, suggested replies, conversation summaries with a suggested next step, reply intent, and "Why was this sent?". Per-user and per-org daily limits. The AI never sends anything or changes data on its own.
 
 ## MailFlow Sign
@@ -88,6 +103,8 @@ Deeper docs: [ARCHITECTURE.md](ARCHITECTURE.md) (system design) · [PHASE_STATUS
 ### Sending
 - **New Request**: send one document to one person, with CC, an expiry, a custom email subject/body and extra attachments (PDF, Word, images).
 - **Signing templates**: reusable documents with `{{variables}}`, a saved **signer setup** and saved **signature positions**.
+  - **Import from Word or Google Docs**: upload a `.docx` or paste a Google Doc link (shared "Anyone with the link"). `{{fields}}` are detected automatically, even when Word splits them across formatting.
+- **Send for signature from Data**: select rows in a dataset, or use a contact segment. Columns are matched to template fields and to the signer's name and email automatically, and you can change any match.
 - **Bulk Send from a CSV**, one document per row:
   - Values present in the CSV are **locked** for the signer.
   - **Blank cells and missing columns are filled in by the signer** before they can sign.
@@ -116,6 +133,7 @@ Deeper docs: [ARCHITECTURE.md](ARCHITECTURE.md) (system design) · [PHASE_STATUS
 - **Preview / Edit before anyone signs**: correct values or the recipient and re-notify on the same link. Locked as soon as anyone signs.
 - **Void** cancels the whole document for everyone who hasn't signed. **Resend** reminds whoever's turn it is. **Re-request** issues a fresh link (single-signer documents).
 - **Automatic reminders** (up to 3, two days apart, with an urgency note near expiry), plus a **Sign analytics** dashboard, bulk batch pages and signed-PDF downloads.
+- **Status written back to the data row** for documents sent from Data: Signing status, Sent for signature, Signed at, Days waiting to sign, and a Signed document link. These update when a document is viewed, signed, voided or expires, and daily.
 
 ## Shared platform
 
@@ -150,6 +168,7 @@ Deeper docs: [ARCHITECTURE.md](ARCHITECTURE.md) (system design) · [PHASE_STATUS
 | S6 · Signer setup + documents list | Fixed signers, free-text setup, one row per document, whole-document void/resend | ✅ Done | 24 Sep |
 | Mail fixes | Live-site tracking links, signed redirects, link normalisation | ✅ Done | 24 Sep |
 | Product split | Mail / Sign chooser, separate sidebars, switcher | ✅ Done | 25 Sep |
+| Automation pack | Daily digest, weekly report, send for signature from Data, signing write-back and presets, Google Sheets two-way sync, AI inbox triage, Word / Google Doc template import | ✅ Done | 27 Sep |
 | 8 · Advanced analytics / integrations | Webhooks, SLA, performance, campaign analytics shipped; virtualisation and Gmail push renewal open | 🟡 In progress | — |
 
 ## Release history
@@ -158,6 +177,7 @@ Most recent first. Full detail is in `git log`.
 
 | Date | Release |
 | --- | --- |
+| 27 Sep | **Automation pack**: daily digest and weekly report, send for signature from Data, signing status written back to rows with automation presets, Google Sheets two-way sync, AI inbox triage with one-click drafts, and Word / Google Doc template import (`f0dd831`) |
 | 25 Sep | **Mail and Sign become two products** with a chooser after sign-in, separate sidebars and a one-click switcher (`f2ab486`) |
 | 24 Sep | **Email links fixed**: tracking used `localhost:3000` in production; links now use the live site, click redirects are signed, and scheme-less or pasted links open correctly (`c1befc3`) |
 | 24 Sep | **Signature boxes follow their text**; transparent, trimmed signatures; fixed-person signers; one row per document; whole-document Void/Resend; signed-PDF attachment in replies restored (`c7454de`) |
@@ -179,6 +199,8 @@ Being explicit about what is *not* live yet:
 - **Vercel Hobby crons run once a day.** Gmail sync and follow-up reminders run every 15 minutes via GitHub Actions; the other jobs run daily (see [Scheduled jobs](#scheduled-jobs)).
 - Not built yet: data-grid virtualisation beyond 5,000 rows, Gmail push (`users.watch`) renewal, attachment byte download for inbound mail, retention enforcement (deliberately deferred), workspace create/rename/disable actions, a visual template builder, and a per-org AI switch.
 - The start-product choice is saved per browser, so each new device shows the chooser once.
+- **Google Sheets sync** needs the Google Sheets API enabled in the Google Cloud project and the `spreadsheets` scope on the OAuth consent screen. Unless the consent screen is Internal, Google shows an "unverified app" warning for that scope. Sync handles up to 5,000 rows per sheet; if two people edit the same cell in both places between syncs, the MailFlow edit wins.
+- Google Doc import only works for docs shared "Anyone with the link can view" (otherwise download as .docx and upload).
 
 ## Tech stack
 
@@ -257,12 +279,15 @@ Set production variables at the project level (`vercel env add NAME production`)
 | `/api/cron/scheduled-send`: dispatch scheduled campaigns | 00:00 daily | — |
 | `/api/cron/scheduled-replies`: send scheduled replies | 00:00 daily | — |
 | `/api/cron/sla-check`: flag SLA breaches | 08:00 daily | — |
-| `/api/cron/signing-reminders`: remind unsigned signers | 09:00 daily | — |
+| `/api/cron/signing-reminders`: remind unsigned signers, expire overdue links, refresh "Days waiting to sign" on rows | 09:00 daily | — |
+| `/api/cron/daily-digest`: "needs attention" digest (email + Slack) | 03:30 daily (09:00 IST) | — |
+| `/api/cron/weekly-report`: weekly report to leadership | 03:30 Mondays | — |
+| `/api/cron/sheets-sync`: two-way Google Sheets sync | 03:15 daily | every 15 min |
 
 ## Testing
 
 ```bash
-npm test                 # 509 unit tests across 41 files (no database needed)
+npm test                 # 564 unit tests across 47 files (no database needed)
 npm run verify           # typecheck + lint + unit tests + a real production build (into .next-verify)
 BASE_URL=https://<deployed-url> npx tsx scripts/verify-deployment.ts   # run after every deploy
 ```
@@ -273,6 +298,7 @@ BASE_URL=https://<deployed-url> npx tsx scripts/verify-deployment.ts   # run aft
 
 | Script | Covers |
 | --- | --- |
+| `smoke-test-automation-pack-http.ts` | Send for signature from Data and segments, signing write-back, Word import, AI drafts and triage, Sheets connect flow, settings access (41 checks) |
 | `smoke-test-products-http.ts` | Mail/Sign chooser, remembered choice, sidebars for every route type (19 checks) |
 | `smoke-test-http.ts` | Core HTTP + RBAC for OPERATOR / VIEWER / SUPER_ADMIN |
 | `smoke-test-send.ts` · `smoke-test-automation.ts` | Send pipeline and automation engine against the live database |

@@ -2,9 +2,11 @@
 
 > **Update 27 Sep 2026:** this file is the detailed log of Phases 1–7 up to
 > 10 Sep. Everything shipped since then — Mail round 3, MailFlow Sign (S1–S6),
-> the Mail/Sign product split — and the current known gaps are summarised in
-> the [README](README.md#phase-status). Current unit-test count: 509 across 41
-> files.
+> the Mail/Sign product split, the 27 Sep automation pack (digest, weekly
+> report, send for signature from Data, signing write-back, Google Sheets
+> sync, AI triage, Word / Google Doc import) — and the current known gaps are
+> summarised in the [README](README.md#phase-status). Current unit-test
+> count: 564 across 47 files.
 
 ## Deployment
 
