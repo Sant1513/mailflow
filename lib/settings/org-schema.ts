@@ -27,6 +27,11 @@ export const orgSettingsSchema = z.object({
   /** IST dates (YYYY-MM-DD) of the last scheduled sends, so a cron that fires twice sends once. */
   lastDigestOn: z.string().nullable().default(null),
   lastWeeklyReportOn: z.string().nullable().default(null),
+  /**
+   * Gmail mailboxes (EmailProviderAccount ids) whose owners allow them to be used as a
+   * fallback sender on teammates' campaigns. Changed only by each owner, in Settings.
+   */
+  fallbackMailboxes: z.array(z.string()).max(500).default([]),
   digest: z
     .object({
       enabled: z.boolean().default(true),

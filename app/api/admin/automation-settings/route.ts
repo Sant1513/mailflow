@@ -44,7 +44,8 @@ export const GET = withErrorHandling(async () => {
 });
 
 // Every field optional: the form sends only what changed. Internal markers are never writable.
-const putSchema = orgSettingsSchema.omit({ lastDigestOn: true, lastWeeklyReportOn: true }).deepPartial();
+// Fallback-mailbox opt-ins belong to each mailbox owner (Settings), never to admins.
+const putSchema = orgSettingsSchema.omit({ lastDigestOn: true, lastWeeklyReportOn: true, fallbackMailboxes: true }).deepPartial();
 
 export const PUT = withErrorHandling(async (req) => {
   const session = await requireRole([Role.SUPER_ADMIN]);

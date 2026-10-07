@@ -44,7 +44,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     processed: result.sent + result.failed,
     batchStatus: after?.status,
     note: result.held
-      ? "On hold to stay within Google's sending limits (daily limit reached or Gmail asked to slow down). Sending resumes automatically."
+      ? "On hold: the campaign's mailbox reached Google's daily limit, was asked to slow down, or is disconnected, and no backup mailbox can send. Add a backup mailbox, or wait: sending resumes automatically."
       : result.busy
         ? 'Already sending in the background.'
       : result.remaining > 0

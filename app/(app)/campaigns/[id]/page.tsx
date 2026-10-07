@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { ExplainButton } from '@/components/ai/ExplainButton';
 import { SenderSettings } from '@/components/campaign/SenderSettings';
+import { FallbackSenders } from '@/components/campaign/FallbackSenders';
 import { CampaignReview, type CampaignPreview } from '@/components/campaign/CampaignReview';
 import { CampaignDocuments } from '@/components/campaign/CampaignDocuments';
 import { useDocumentPreview } from '@/components/documents/PdfPreviewDialog';
@@ -574,6 +575,11 @@ export default function CampaignDetailPage() {
             loadPreview(preview?.preview?.recordId);
           }}
         />
+      </div>
+
+      {/* Backup sender mailboxes (used when the campaign mailbox hits a Google limit) */}
+      <div className="mb-6">
+        <FallbackSenders campaignId={campaign.id} refreshKey={campaign.status} />
       </div>
 
       {/* Personalised PDFs attached to every email */}

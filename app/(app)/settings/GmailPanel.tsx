@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { FallbackOptIn } from '@/components/settings/FallbackOptIn';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 
@@ -95,6 +96,8 @@ export function GmailPanel() {
           </button>
         )}
       </div>
+
+      {connected && <FallbackOptIn />}
 
       <p className="mt-3 text-xs text-muted-foreground">
         Campaigns send from your own @masaischool.com address — never a shared &quot;noreply@&quot; sender.

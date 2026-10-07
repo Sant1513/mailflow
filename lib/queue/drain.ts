@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db/client';
 import { processEmailJob, reconcileBatchStatus } from '@/lib/email/processJob';
 import { SendEmailError, type EmailProvider } from '@/lib/email/provider';
+import { fallbackOptIns, holdReasonText, type HoldReason } from '@/lib/campaigns/fallback';
 import { EmailJobStatus, BatchStatus } from '@prisma/client';
 
 /**
@@ -29,7 +30,7 @@ export interface DrainResult {
   batchStatus: BatchStatus;
   rateLimited: boolean;
   /** Sending from this mailbox is on hold: Google's daily limit is near, or Gmail asked us to back off. */
-  heldReason?: 'daily_limit' | 'backoff';
+  heldReason?: 'daily_limit' | 'backoff' | 'disconnected';
 }
 
 function ratePerMinute(): number {
@@ -157,43 +158,79 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     where: { batchId, status: EmailJobStatus.QUEUED },
     orderBy: { createdAt: 'asc' },
     take: limit,
-    select: { id: true, emailProviderAccountId: true, ccEmails: true, bccEmails: true },
+    select: { id: true, emailProviderAccountId: true, ccEmails: true, bccEmails: true, sendReason: true },
   });
+
+  // Backup mailboxes for this campaign, in order (only owners who opted in; see lib/campaigns/fallback.ts).
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: batch.campaignId },
+    select: { organizationId: true, fromName: true, fallbackAccountIds: true },
+  });
+  const optIns = campaign?.fallbackAccountIds.length ? await fallbackOptIns(campaign.organizationId) : new Set<string>();
+  const fallbackIds = (campaign?.fallbackAccountIds ?? []).filter((id) => optIns.has(id));
 
   let sent = 0;
   let failed = 0;
   let skipped = 0;
   let rateLimited = false;
   let heldReason: DrainResult['heldReason'];
-  // Daily recipient count per mailbox: counted once, then kept up to date as we send.
+  // Per-mailbox state for this pass: daily recipient count (kept up to date as we send) and the account.
   const dailyUsed = new Map<string, number>();
+  const accounts = new Map<string, { id: string; emailAddress: string; displayName: string | null; status: string } | null>();
+  const accountOf = async (id: string) => {
+    if (!accounts.has(id)) {
+      accounts.set(id, await prisma.emailProviderAccount.findUnique({ where: { id }, select: { id: true, emailAddress: true, displayName: true, status: true } }));
+    }
+    return accounts.get(id)!;
+  };
+  /** Why this mailbox can't send `need` more recipients right now, or null if it can. */
+  const holdOf = async (id: string, need: number): Promise<HoldReason | null> => {
+    const account = await accountOf(id);
+    if (!account || account.status !== 'CONNECTED') return 'disconnected';
+    if ((await backoffUntil(id)) > 0) return 'backoff';
+    if (!dailyUsed.has(id)) dailyUsed.set(id, await recipientsSentLast24h(id));
+    if (dailyUsed.get(id)! + need > dailyLimit()) return 'daily_limit';
+    return null;
+  };
 
   for (const job of queued) {
-    const acct = job.emailProviderAccountId;
-    if (acct) {
-      if ((await backoffUntil(acct)) > 0) {
-        heldReason = 'backoff';
-        break;
-      }
-      if (!dailyUsed.has(acct)) dailyUsed.set(acct, await recipientsSentLast24h(acct));
-      if (dailyUsed.get(acct)! + recipientsOf(job) > dailyLimit()) {
-        heldReason = 'daily_limit';
-        break; // resumes on its own as the rolling 24-hour window frees up
-      }
-    }
     if (opts.deadline && Date.now() > opts.deadline) {
       break; // the next pass picks up where this one stopped
     }
+    const need = recipientsOf(job);
+    let acct = job.emailProviderAccountId;
+    let reroute: { id: string; emailAddress: string; displayName: string | null; because: string } | null = null;
+    if (acct) {
+      const hold = await holdOf(acct, need);
+      if (hold) {
+        // The campaign's mailbox can't send now: use the first backup mailbox that can.
+        for (const fb of fallbackIds) {
+          if (fb === acct) continue;
+          if (!(await holdOf(fb, need))) {
+            const account = (await accountOf(fb))!;
+            const main = await accountOf(acct);
+            reroute = { ...account, because: `${main?.emailAddress ?? 'the campaign mailbox'} ${holdReasonText(hold)}` };
+            break;
+          }
+        }
+        if (!reroute) {
+          // No backup available: hold. It resumes on its own (window frees / back-off ends / backup added).
+          heldReason = hold;
+          break;
+        }
+        acct = reroute.id;
+      }
+    }
+
     // Rate budget is per sending account (§44), counted fresh before every send so several
     // senders working at once (server, open tab, backup cron) still share one limit.
-    const accountId = job.emailProviderAccountId;
-    if (accountId && (await remainingRateBudget(accountId)) <= 0) {
+    if (acct && (await remainingRateBudget(acct)) <= 0) {
       rateLimited = true;
       break;
     }
     // Space emails out: at least sendGapMs() (3 s by default) after this mailbox's previous one.
-    if (accountId) {
-      const wait = await msUntilNextSendSlot(accountId);
+    if (acct) {
+      const wait = await msUntilNextSendSlot(acct);
       if (wait > 0) {
         if (opts.deadline && Date.now() + wait > opts.deadline) break;
         await new Promise((r) => setTimeout(r, wait));
@@ -201,10 +238,22 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     }
 
     // Claim the job: only one sender can move it from QUEUED to SENDING, so two senders
-    // working the same batch never email the same person twice.
+    // working the same batch never email the same person twice. A rerouted job takes the
+    // backup mailbox as its sender (From address; the campaign's From name is kept if set).
     const claimed = await prisma.emailJob.updateMany({
       where: { id: job.id, status: EmailJobStatus.QUEUED },
-      data: { status: EmailJobStatus.SENDING, lastAttemptAt: new Date() },
+      data: {
+        status: EmailJobStatus.SENDING,
+        lastAttemptAt: new Date(),
+        ...(reroute
+          ? {
+              emailProviderAccountId: reroute.id,
+              fromEmail: reroute.emailAddress,
+              ...(campaign?.fromName?.trim() ? {} : { fromName: reroute.displayName ?? reroute.emailAddress }),
+              sendReason: `${job.sendReason ?? ''}\nSent from backup mailbox ${reroute.emailAddress} because ${reroute.because}.`.trim(),
+            }
+          : {}),
+      },
     });
     if (!claimed.count) continue;
 
@@ -212,7 +261,7 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
       const outcome = await processEmailJob(job.id, { providerFactory: opts.providerFactory });
       if (outcome.status === 'SENT') {
         sent += 1;
-        if (acct) dailyUsed.set(acct, (dailyUsed.get(acct) ?? 0) + recipientsOf(job));
+        if (acct) dailyUsed.set(acct, (dailyUsed.get(acct) ?? 0) + need);
       } else if (outcome.status === 'FAILED') failed += 1;
       else {
         skipped += 1;
@@ -225,12 +274,10 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
       // Anything left SENDING after an unexpected error is resolved by
       // recoverStuckJobs, which checks Gmail before re-queuing.
       failed += 1;
-      // Gmail pushed back (rate or quota): stop now instead of trying the next emails.
-      // The worker re-queues this email once the back-off has passed.
-      if (err instanceof SendEmailError && (err.kind === 'RATE_LIMIT' || err.kind === 'QUOTA')) {
-        heldReason = 'backoff';
-        break;
-      }
+      // Gmail pushed back (rate or quota): that mailbox is now on hold (backoffUntil sees this
+      // refusal), so the next email goes to a backup mailbox, or the batch holds if there is none.
+      // The refused email is re-queued once the back-off has passed.
+      if (err instanceof SendEmailError && (err.kind === 'RATE_LIMIT' || err.kind === 'QUOTA')) continue;
     }
   }
 
