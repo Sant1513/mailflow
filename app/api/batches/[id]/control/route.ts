@@ -5,6 +5,7 @@ import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
+import { kickSendWorker } from '@/lib/queue/sendWorker';
 import { loadBatchForSession } from '@/lib/campaigns/batchAccess';
 import { enqueueEmailJobs } from '@/lib/queue/queues';
 import { BatchStatus, CampaignStatus, EmailJobStatus } from '@prisma/client';
@@ -53,6 +54,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     await enqueueEmailJobs(pending.map((j) => ({ emailJobId: j.id, batchId: batch.id })));
 
     await audit(session, 'BATCH_RESUME', { targetType: 'Batch', targetId: batch.id, metadata: { requeued: pending.length } });
+    kickSendWorker('resume');
     return NextResponse.json({ batch: updated, requeued: pending.length });
   }
 
@@ -110,6 +112,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     metadata: { retried: retryable.length, permanentlyFailed: failed.length - retryable.length },
   });
 
+  kickSendWorker('retry-failed');
   return NextResponse.json({
     retried: retryable.length,
     notRetried: failed.length - retryable.length,

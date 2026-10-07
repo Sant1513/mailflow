@@ -93,6 +93,36 @@ export default function CampaignDetailPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive]);
 
+  const autoSendRef = useRef(false);
+  useEffect(() => {
+    if (!isLive || campaign?.status === 'PAUSED' || !latestBatch) return;
+    let stopped = false;
+    const pass = async () => {
+      if (stopped || autoSendRef.current) return;
+      autoSendRef.current = true;
+      try {
+        const res = await fetch(`/api/batches/${latestBatch.id}/drain`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ seconds: 40 }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.remaining) stopped = true;
+      } catch {
+        /* network hiccup: the server keeps sending; try again on the next tick */
+      } finally {
+        autoSendRef.current = false;
+      }
+    };
+    pass();
+    const t = setInterval(pass, 10_000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive, campaign?.status, latestBatch?.id]);
+
   const loadBatch = useCallback(async () => {
     if (!latestBatch) return;
     const res = await fetch(`/api/batches/${latestBatch.id}`);
@@ -278,7 +308,7 @@ export default function CampaignDetailPage() {
     const res = await fetch(`/api/batches/${latestBatch.id}/drain`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ limit: 25 }),
+      body: JSON.stringify({ seconds: 40 }),
     });
     setBusy(null);
     const json = await res.json();
@@ -286,7 +316,8 @@ export default function CampaignDetailPage() {
       toast.error(json.error ?? 'Drain failed');
       return;
     }
-    toast.success(`${json.sent} sent, ${json.failed} failed, ${json.remaining} remaining.`);
+    if (json.busy) toast.info(`${json.note} ${json.remaining} remaining.`);
+    else toast.success(`${json.sent} sent, ${json.failed} failed, ${json.remaining} remaining.${json.remaining ? ' Sending continues automatically.' : ''}`);
     load();
     loadBatch();
   }
@@ -702,7 +733,7 @@ export default function CampaignDetailPage() {
                 compact
               />
               <button onClick={drain} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-elevated">
-                {busy === 'drain' ? 'Sending…' : 'Process queue'}
+                {busy === 'drain' ? 'Sending…' : 'Send now'}
               </button>
               <button onClick={() => batchControl('PAUSE')} disabled={!!busy} className="rounded border px-2 py-1 text-xs hover:bg-elevated">
                 Pause

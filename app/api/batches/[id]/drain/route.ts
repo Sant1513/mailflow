@@ -5,19 +5,22 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { loadBatchForSession } from '@/lib/campaigns/batchAccess';
-import { drainBatch, DEFAULT_DRAIN_LIMIT } from '@/lib/queue/drain';
+import { prisma } from '@/lib/db/client';
+import { kickSendWorker, runSendWorker } from '@/lib/queue/sendWorker';
+
+export const maxDuration = 60;
 
 const drainSchema = z.object({
-  limit: z.number().int().min(1).max(50).default(DEFAULT_DRAIN_LIMIT),
+  /** Seconds to keep sending in this request (the open campaign page uses short passes). */
+  seconds: z.number().int().min(5).max(45).default(40),
+  /** Kept for older clients; the worker now sends until time runs out. */
+  limit: z.number().int().optional(),
 });
 
 /**
- * Processes a bounded slice of a batch. This is the send path for
- * deployments without Redis + a persistent worker (see lib/queue/drain.ts).
- *
- * It is capped per invocation and rate-limited per sender, so it does not
- * become the "send 500 emails in one HTTP request" anti-pattern §40 warns
- * about. Call it repeatedly (or from a cron ping) until `remaining` is 0.
+ * "Process queue": sends this batch's queued emails for up to ~40 s (3 s
+ * apart, within the per-minute limit), then hands any remainder to the
+ * background worker so sending carries on with the tab closed.
  */
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
@@ -26,8 +29,10 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   if (!batch) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = drainSchema.parse(await req.json().catch(() => ({})));
-  const result = await drainBatch(batch.id, body.limit);
+  const result = await runSendWorker({ budgetMs: body.seconds * 1000, batchId: batch.id });
+  if (!result.busy && result.remaining > 0) kickSendWorker('process-queue', { continuation: true });
 
+  const after = await prisma.batch.findUnique({ where: { id: batch.id }, select: { status: true } });
   await audit(session, 'BATCH_DRAIN', {
     targetType: 'Batch',
     targetId: batch.id,
@@ -36,10 +41,12 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
 
   return NextResponse.json({
     ...result,
-    note: result.rateLimited
-      ? 'Stopped early: the per-minute send rate limit was reached. Call again shortly to continue.'
+    processed: result.sent + result.failed,
+    batchStatus: after?.status,
+    note: result.busy
+      ? 'Already sending in the background.'
       : result.remaining > 0
-        ? 'More jobs remain — call again to continue.'
+        ? 'Sending continues automatically in the background.'
         : 'Batch complete.',
   });
 });

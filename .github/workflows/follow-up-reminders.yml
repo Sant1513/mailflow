@@ -10,6 +10,10 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
+      - name: Send queued campaign emails (restarts background sending if it stopped)
+        run: |
+          curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://mailflow-six-sooty.vercel.app/api/cron/send-queue?reason=github"
       - name: Sync every connected Gmail mailbox
         run: |
           curl -fsS -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \

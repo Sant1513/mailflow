@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { enqueueEmailJobs } from '@/lib/queue/queues';
+import { kickSendWorker } from '@/lib/queue/sendWorker';
 import { CampaignStatus, BatchStatus, EmailJobStatus } from '@prisma/client';
 
 /**
@@ -77,5 +78,6 @@ export async function GET(req: Request) {
     fired++;
   }
 
+  if (fired) kickSendWorker('scheduled-send');
   return NextResponse.json({ fired, campaigns: campaignIds.length });
 }

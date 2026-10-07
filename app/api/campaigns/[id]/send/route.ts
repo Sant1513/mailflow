@@ -15,6 +15,7 @@ import {
 import { dryRun, validateCampaign } from '@/lib/campaigns/evaluate';
 import { renderTemplate } from '@/lib/templates/variables';
 import { enqueueEmailJobs } from '@/lib/queue/queues';
+import { kickSendWorker } from '@/lib/queue/sendWorker';
 import { documentValidationIssues, jobAttachmentRows } from '@/lib/documents/campaign';
 import { CampaignStatus, BatchStatus, EmailJobStatus, type Prisma } from '@prisma/client';
 
@@ -244,6 +245,9 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     data: { status: enqueued.queued ? BatchStatus.QUEUED : BatchStatus.PREPARING },
   });
 
+  // Without Redis the jobs wait in the database: start the background sender now.
+  if (!enqueued.queued && !isScheduled) kickSendWorker('campaign-send');
+
   await audit(session, 'CAMPAIGN_SEND', {
     targetType: 'Campaign',
     targetId: campaign.id,
@@ -272,7 +276,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       scheduledAt: isScheduled ? scheduledAt!.toISOString() : null,
       note: scheduleNote ?? (enqueued.queued
         ? 'Jobs handed to the email-send queue.'
-        : 'REDIS_URL is not configured, so jobs are queued in the database. Process them with POST /api/batches/:id/drain (or run the worker with Redis).'),
+        : 'Sending started. Emails go out 3 seconds apart and continue in the background until the batch is done.'),
       simulation: { wouldSend: simulation.wouldSend, skipped: simulation.skipped, byReason: simulation.byReason },
     },
     { status: 201 }

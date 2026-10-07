@@ -49,8 +49,40 @@ export async function remainingRateBudget(emailProviderAccountId: string): Promi
   return Math.max(0, ratePerMinute() - recentSends);
 }
 
+/** Minimum gap between two emails from the same mailbox (EMAIL_SEND_GAP_MS, default 3 s). */
+export function sendGapMs(): number {
+  const configured = Number(process.env.EMAIL_SEND_GAP_MS ?? 3000);
+  return Number.isFinite(configured) && configured >= 0 ? Math.min(configured, 60_000) : 3000;
+}
+
+/** How long to wait so this mailbox's next email goes out at least sendGapMs() after its last one. */
+export async function msUntilNextSendSlot(emailProviderAccountId: string): Promise<number> {
+  const gap = sendGapMs();
+  if (!gap) return 0;
+  const last = await prisma.emailJob.findFirst({
+    where: { emailProviderAccountId, status: EmailJobStatus.SENT, sentAt: { gte: new Date(Date.now() - gap) } },
+    orderBy: { sentAt: 'desc' },
+    select: { sentAt: true },
+  });
+  return last?.sentAt ? Math.max(0, last.sentAt.getTime() + gap - Date.now()) : 0;
+}
+
+/** When the per-minute budget frees up again: a minute after the oldest send in the window. */
+export async function msUntilRateBudget(emailProviderAccountId: string): Promise<number> {
+  const since = new Date(Date.now() - 60_000);
+  const oldest = await prisma.emailJob.findFirst({
+    where: { emailProviderAccountId, status: EmailJobStatus.SENT, sentAt: { gte: since } },
+    orderBy: { sentAt: 'asc' },
+    select: { sentAt: true },
+  });
+  if (!oldest?.sentAt) return 0;
+  return Math.max(0, oldest.sentAt.getTime() + 60_000 - Date.now()) + 250;
+}
+
 export interface DrainOptions {
   limit?: number;
+  /** Epoch ms after which no new send is started, so a request is never cut off mid-send. */
+  deadline?: number;
   /**
    * Overrides the email provider. Exists so this path — which is the real
    * send path on deployments without Redis — can be exercised end-to-end in
@@ -95,31 +127,48 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
   let skipped = 0;
   let rateLimited = false;
 
-  // Rate budget is per sending account (§44).
-  const budgets = new Map<string, number>();
-
   for (const job of queued) {
-    const accountId = job.emailProviderAccountId;
-    if (accountId) {
-      if (!budgets.has(accountId)) {
-        budgets.set(accountId, await remainingRateBudget(accountId));
-      }
-      const budget = budgets.get(accountId)!;
-      if (budget <= 0) {
-        rateLimited = true;
-        break; // stop early; the next invocation picks up where we left off
-      }
-      budgets.set(accountId, budget - 1);
+    if (opts.deadline && Date.now() > opts.deadline) {
+      break; // the next pass picks up where this one stopped
     }
+    // Rate budget is per sending account (§44), counted fresh before every send so several
+    // senders working at once (server, open tab, backup cron) still share one limit.
+    const accountId = job.emailProviderAccountId;
+    if (accountId && (await remainingRateBudget(accountId)) <= 0) {
+      rateLimited = true;
+      break;
+    }
+    // Space emails out: at least sendGapMs() (3 s by default) after this mailbox's previous one.
+    if (accountId) {
+      const wait = await msUntilNextSendSlot(accountId);
+      if (wait > 0) {
+        if (opts.deadline && Date.now() + wait > opts.deadline) break;
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    }
+
+    // Claim the job: only one sender can move it from QUEUED to SENDING, so two senders
+    // working the same batch never email the same person twice.
+    const claimed = await prisma.emailJob.updateMany({
+      where: { id: job.id, status: EmailJobStatus.QUEUED },
+      data: { status: EmailJobStatus.SENDING, lastAttemptAt: new Date() },
+    });
+    if (!claimed.count) continue;
 
     try {
       const outcome = await processEmailJob(job.id, { providerFactory: opts.providerFactory });
       if (outcome.status === 'SENT') sent += 1;
       else if (outcome.status === 'FAILED') failed += 1;
-      else skipped += 1;
+      else {
+        skipped += 1;
+        // Skipped before anything was sent (e.g. the batch was paused this instant): back in the queue.
+        await prisma.emailJob.updateMany({ where: { id: job.id, status: EmailJobStatus.SENDING }, data: { status: EmailJobStatus.QUEUED } });
+      }
     } catch {
       // processEmailJob rethrows retryable errors for BullMQ's benefit; in
       // drain mode the job stays FAILED and is picked up by retry-failed.
+      // Anything left SENDING after an unexpected error is resolved by
+      // recoverStuckJobs, which checks Gmail before re-queuing.
       failed += 1;
     }
   }
