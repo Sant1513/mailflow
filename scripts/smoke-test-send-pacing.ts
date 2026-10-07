@@ -6,14 +6,15 @@
  *
  * Checks: emails from one mailbox go out at least 3 s apart; two senders
  * working the same batch at once never send anyone a duplicate; a paused
- * batch stops and its jobs stay queued.
+ * batch stops and its jobs stay queued; the daily cap stops a mailbox;
+ * a Gmail "slow down" error stops sending and holds the mailbox for 10 minutes.
  *
  * Usage: npx tsx scripts/smoke-test-send-pacing.ts
  */
 import 'dotenv/config';
 import { prisma } from '../lib/db/client';
-import { drainBatch, sendGapMs } from '../lib/queue/drain';
-import type { EmailProvider } from '../lib/email/provider';
+import { drainBatch, sendGapMs, backoffUntil } from '../lib/queue/drain';
+import { SendEmailError, type EmailProvider } from '../lib/email/provider';
 import { BatchStatus, CampaignStatus, EmailJobStatus, EmailProvider as EmailProviderEnum, Role } from '@prisma/client';
 
 let pass = 0;
@@ -57,6 +58,17 @@ async function main() {
   const accountB = await prisma.emailProviderAccount.create({
     data: { organizationId: org.id, workspaceId: workspace2.id, userId: user.id, provider: EmailProviderEnum.GMAIL, emailAddress: `pacing2+${stamp}@masaischool.com`, status: 'CONNECTED' },
   });
+  const extraWorkspaces: string[] = [];
+  const extraAccounts: string[] = [];
+  const mkMailbox = async (tag: string) => {
+    const ws = await prisma.workspace.create({ data: { organizationId: org.id, ownerId: user.id, name: `Pacing ${tag} ${stamp}` } });
+    const acc = await prisma.emailProviderAccount.create({
+      data: { organizationId: org.id, workspaceId: ws.id, userId: user.id, provider: EmailProviderEnum.GMAIL, emailAddress: `pacing-${tag}+${stamp}@masaischool.com`, status: 'CONNECTED' },
+    });
+    extraWorkspaces.push(ws.id);
+    extraAccounts.push(acc.id);
+    return acc;
+  };
   const dataset = await prisma.dataset.create({ data: { organizationId: org.id, workspaceId: workspace.id, ownerId: user.id, name: 'Pacing data' } });
   const template = await prisma.template.create({
     data: {
@@ -67,7 +79,9 @@ async function main() {
   });
   const version = template.versions[0]!;
   const campaign = await prisma.campaign.create({
-    data: { organizationId: org.id, workspaceId: workspace.id, name: 'Pacing campaign', datasetId: dataset.id, templateId: template.id, templateVersionId: version.id, createdById: user.id, status: CampaignStatus.RUNNING, senderAccountId: accountA.id },
+    data: { organizationId: org.id, workspaceId: workspace.id, name: 'Pacing campaign', datasetId: dataset.id, templateId: template.id, templateVersionId: version.id, createdById: user.id, senderAccountId: accountA.id,
+      // Scheduled a year out so the live background sender leaves these fixture batches alone.
+      status: CampaignStatus.SCHEDULED, scheduledAt: new Date(Date.now() + 365 * 86_400_000) },
   });
 
   const mkBatch = async (label: string, n: number, accountId: string) => {
@@ -115,6 +129,38 @@ async function main() {
     const rc = await drainBatch(c.id, { limit: 10, providerFactory: pc.factory });
     const queuedC = await prisma.emailJob.count({ where: { batchId: c.id, status: EmailJobStatus.QUEUED } });
     check('a paused batch sends nothing and keeps its jobs queued', rc.sent === 0 && pc.sent.length === 0 && queuedC === 3, { rc, queuedC });
+
+    console.log('\nDaily cap (set to 2 for this check)');
+    const accountC = await mkMailbox('cap');
+    const d = await mkBatch('d', 4, accountC.id);
+    const savedCap = process.env.EMAIL_DAILY_LIMIT;
+    process.env.EMAIL_DAILY_LIMIT = '2';
+    const pd = fakeProvider();
+    const rd = await drainBatch(d.id, { limit: 10, deadline: Date.now() + 30_000, providerFactory: pd.factory });
+    if (savedCap === undefined) delete process.env.EMAIL_DAILY_LIMIT;
+    else process.env.EMAIL_DAILY_LIMIT = savedCap;
+    const queuedD = await prisma.emailJob.count({ where: { batchId: d.id, status: EmailJobStatus.QUEUED } });
+    check('sends up to the cap, then holds the rest in the queue', rd.sent === 2 && pd.sent.length === 2 && queuedD === 2 && rd.heldReason === 'daily_limit', { rd, queuedD });
+
+    console.log('\nGmail says slow down');
+    const accountD = await mkMailbox('backoff');
+    const e = await mkBatch('e', 3, accountD.id);
+    let calls = 0;
+    const slowDown = (): EmailProvider => ({
+      name: 'fake',
+      async sendEmail() {
+        calls++;
+        throw new SendEmailError('User-rate limit exceeded', 'RATE_LIMIT');
+      },
+    });
+    const re1 = await drainBatch(e.id, { limit: 10, providerFactory: slowDown });
+    const failedE = await prisma.emailJob.count({ where: { batchId: e.id, status: EmailJobStatus.FAILED, errorCode: 'RATE_LIMIT' } });
+    const queuedE = await prisma.emailJob.count({ where: { batchId: e.id, status: EmailJobStatus.QUEUED } });
+    check('stops at the first refusal instead of trying the next emails', calls === 1 && failedE === 1 && queuedE === 2 && re1.heldReason === 'backoff', { calls, failedE, queuedE, re1 });
+    const until = await backoffUntil(accountD.id);
+    check('the mailbox is held for about 10 minutes', until - Date.now() > 9 * 60_000 && until - Date.now() <= 10 * 60_000, Math.round((until - Date.now()) / 1000));
+    const re2 = await drainBatch(e.id, { limit: 10, providerFactory: slowDown });
+    check('while held, nothing more is attempted', calls === 1 && re2.heldReason === 'backoff' && re2.processed === 0, { calls, re2 });
   } finally {
     await prisma.emailJob.deleteMany({ where: { campaignId: campaign.id } });
     await prisma.batch.deleteMany({ where: { campaignId: campaign.id } });
@@ -123,9 +169,9 @@ async function main() {
     await prisma.template.deleteMany({ where: { id: template.id } });
     await prisma.record.deleteMany({ where: { datasetId: dataset.id } });
     await prisma.dataset.deleteMany({ where: { id: dataset.id } });
-    await prisma.emailProviderAccount.deleteMany({ where: { id: { in: [accountA.id, accountB.id] } } });
+    await prisma.emailProviderAccount.deleteMany({ where: { id: { in: [accountA.id, accountB.id, ...extraAccounts] } } });
     await prisma.auditLog.deleteMany({ where: { actorId: user.id } });
-    await prisma.workspace.deleteMany({ where: { id: { in: [workspace.id, workspace2.id] } } });
+    await prisma.workspace.deleteMany({ where: { id: { in: [workspace.id, workspace2.id, ...extraWorkspaces] } } });
     await prisma.user.delete({ where: { id: user.id } });
     console.log('\nFixtures removed.');
   }

@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db/client';
 import { processEmailJob, reconcileBatchStatus } from '@/lib/email/processJob';
-import type { EmailProvider } from '@/lib/email/provider';
+import { SendEmailError, type EmailProvider } from '@/lib/email/provider';
 import { EmailJobStatus, BatchStatus } from '@prisma/client';
 
 /**
@@ -28,6 +28,8 @@ export interface DrainResult {
   remaining: number;
   batchStatus: BatchStatus;
   rateLimited: boolean;
+  /** Sending from this mailbox is on hold: Google's daily limit is near, or Gmail asked us to back off. */
+  heldReason?: 'daily_limit' | 'backoff';
 }
 
 function ratePerMinute(): number {
@@ -79,6 +81,42 @@ export async function msUntilRateBudget(emailProviderAccountId: string): Promise
   return Math.max(0, oldest.sentAt.getTime() + 60_000 - Date.now()) + 250;
 }
 
+/**
+ * Google Workspace lets a user send to 2,000 recipients per rolling 24 hours (500 on trial
+ * accounts); going over blocks sending for up to 24 hours. Campaigns stop at
+ * EMAIL_DAILY_LIMIT (default 1,500, never above 1,900) so the person's own email still has room.
+ */
+export function dailyLimit(): number {
+  const configured = Number(process.env.EMAIL_DAILY_LIMIT ?? 1500);
+  return Number.isFinite(configured) && configured > 0 ? Math.min(configured, 1900) : 1500;
+}
+
+const recipientsOf = (j: { ccEmails: string[]; bccEmails: string[] }) => 1 + j.ccEmails.length + j.bccEmails.length;
+
+/** Recipients (To + Cc + Bcc) this mailbox has sent campaign email to in the last 24 hours. */
+export async function recipientsSentLast24h(emailProviderAccountId: string): Promise<number> {
+  const rows = await prisma.emailJob.findMany({
+    where: { emailProviderAccountId, status: EmailJobStatus.SENT, sentAt: { gte: new Date(Date.now() - 24 * 3600_000) } },
+    select: { ccEmails: true, bccEmails: true },
+  });
+  return rows.reduce((n, r) => n + recipientsOf(r), 0);
+}
+
+/** After Gmail says "slow down", wait 10 minutes; after a quota error, an hour (Google's guidance). */
+export const BACKOFF_MS: Record<string, number> = { RATE_LIMIT: 10 * 60_000, QUOTA: 60 * 60_000 };
+
+/** Epoch ms until which this mailbox should not send because Gmail pushed back recently (0 = free). */
+export async function backoffUntil(emailProviderAccountId: string): Promise<number> {
+  const last = await prisma.emailJob.findFirst({
+    where: { emailProviderAccountId, status: EmailJobStatus.FAILED, errorCode: { in: Object.keys(BACKOFF_MS) }, lastAttemptAt: { gte: new Date(Date.now() - 60 * 60_000) } },
+    orderBy: { lastAttemptAt: 'desc' },
+    select: { errorCode: true, lastAttemptAt: true },
+  });
+  if (!last?.lastAttemptAt || !last.errorCode) return 0;
+  const until = last.lastAttemptAt.getTime() + (BACKOFF_MS[last.errorCode] ?? 0);
+  return until > Date.now() ? until : 0;
+}
+
 export interface DrainOptions {
   limit?: number;
   /** Epoch ms after which no new send is started, so a request is never cut off mid-send. */
@@ -119,15 +157,30 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     where: { batchId, status: EmailJobStatus.QUEUED },
     orderBy: { createdAt: 'asc' },
     take: limit,
-    select: { id: true, emailProviderAccountId: true },
+    select: { id: true, emailProviderAccountId: true, ccEmails: true, bccEmails: true },
   });
 
   let sent = 0;
   let failed = 0;
   let skipped = 0;
   let rateLimited = false;
+  let heldReason: DrainResult['heldReason'];
+  // Daily recipient count per mailbox: counted once, then kept up to date as we send.
+  const dailyUsed = new Map<string, number>();
 
   for (const job of queued) {
+    const acct = job.emailProviderAccountId;
+    if (acct) {
+      if ((await backoffUntil(acct)) > 0) {
+        heldReason = 'backoff';
+        break;
+      }
+      if (!dailyUsed.has(acct)) dailyUsed.set(acct, await recipientsSentLast24h(acct));
+      if (dailyUsed.get(acct)! + recipientsOf(job) > dailyLimit()) {
+        heldReason = 'daily_limit';
+        break; // resumes on its own as the rolling 24-hour window frees up
+      }
+    }
     if (opts.deadline && Date.now() > opts.deadline) {
       break; // the next pass picks up where this one stopped
     }
@@ -157,19 +210,27 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
 
     try {
       const outcome = await processEmailJob(job.id, { providerFactory: opts.providerFactory });
-      if (outcome.status === 'SENT') sent += 1;
-      else if (outcome.status === 'FAILED') failed += 1;
+      if (outcome.status === 'SENT') {
+        sent += 1;
+        if (acct) dailyUsed.set(acct, (dailyUsed.get(acct) ?? 0) + recipientsOf(job));
+      } else if (outcome.status === 'FAILED') failed += 1;
       else {
         skipped += 1;
         // Skipped before anything was sent (e.g. the batch was paused this instant): back in the queue.
         await prisma.emailJob.updateMany({ where: { id: job.id, status: EmailJobStatus.SENDING }, data: { status: EmailJobStatus.QUEUED } });
       }
-    } catch {
+    } catch (err) {
       // processEmailJob rethrows retryable errors for BullMQ's benefit; in
       // drain mode the job stays FAILED and is picked up by retry-failed.
       // Anything left SENDING after an unexpected error is resolved by
       // recoverStuckJobs, which checks Gmail before re-queuing.
       failed += 1;
+      // Gmail pushed back (rate or quota): stop now instead of trying the next emails.
+      // The worker re-queues this email once the back-off has passed.
+      if (err instanceof SendEmailError && (err.kind === 'RATE_LIMIT' || err.kind === 'QUOTA')) {
+        heldReason = 'backoff';
+        break;
+      }
     }
   }
 
@@ -185,5 +246,6 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     remaining,
     batchStatus,
     rateLimited,
+    heldReason,
   };
 }

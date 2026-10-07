@@ -44,6 +44,7 @@ export class GmailProvider implements EmailProvider {
       attachments: input.attachments,
       inReplyTo: input.inReplyTo,
       references: input.references,
+      listUnsubscribeUrl: input.listUnsubscribeUrl,
     });
 
     try {
@@ -125,7 +126,13 @@ export class GmailProvider implements EmailProvider {
       await markAccountExpired(this.account.id, message);
     } else if (status === 429 || reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded') {
       kind = 'RATE_LIMIT';
-    } else if (reason === 'quotaExceeded' || /quota/i.test(message)) {
+    } else if (
+      reason === 'quotaExceeded' ||
+      reason === 'dailyLimitExceeded' ||
+      /quota|sending limit|limit exceeded/i.test(message)
+    ) {
+      // Gmail's daily sending limit (2,000 / rolling 24 h) arrives as a 403 too; it is a
+      // wait-and-retry condition, never a reason to mark the mailbox as disconnected.
       kind = 'QUOTA';
     } else if (status === 400 && /invalid.*(address|recipient)|malformed/i.test(message)) {
       kind = 'INVALID_RECIPIENT';

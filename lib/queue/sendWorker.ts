@@ -4,7 +4,7 @@ import { BatchStatus, CampaignStatus, EmailJobStatus } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { authorizedClientFor } from '@/lib/gmail/oauth';
 import { appBaseUrl } from '@/lib/app-url';
-import { drainBatch, msUntilRateBudget } from '@/lib/queue/drain';
+import { BACKOFF_MS, drainBatch, msUntilRateBudget } from '@/lib/queue/drain';
 import { reconcileBatchStatus } from '@/lib/email/processJob';
 
 /**
@@ -106,6 +106,41 @@ export interface WorkerResult {
   recovered: { markedSent: number; requeued: number };
   /** Another sender was already working, so this one stepped aside. */
   busy?: boolean;
+  /** Emails remain but every mailbox is on hold (daily limit or Gmail back-off); nothing to do until later. */
+  held?: boolean;
+}
+
+/**
+ * Emails Gmail turned away with "slow down" / "quota" go back in the queue once their
+ * back-off has passed (10 minutes / 1 hour), up to 5 attempts, and their batch carries on.
+ */
+async function requeueAfterBackoff(): Promise<number> {
+  const candidates = await prisma.emailJob.findMany({
+    where: {
+      status: EmailJobStatus.FAILED,
+      errorCode: { in: Object.keys(BACKOFF_MS) },
+      retryCount: { lt: 5 },
+      lastAttemptAt: { gte: new Date(Date.now() - 24 * 3600_000) },
+      batch: { status: { notIn: [BatchStatus.PAUSED, BatchStatus.CANCELLED] } },
+    },
+    select: { id: true, batchId: true, campaignId: true, errorCode: true, lastAttemptAt: true },
+    take: 500,
+  });
+  const due = candidates.filter((j) => j.lastAttemptAt && j.lastAttemptAt.getTime() + (BACKOFF_MS[j.errorCode!] ?? 0) <= Date.now());
+  if (!due.length) return 0;
+  await prisma.emailJob.updateMany({
+    where: { id: { in: due.map((j) => j.id) }, status: EmailJobStatus.FAILED },
+    data: { status: EmailJobStatus.QUEUED, errorCode: null, errorMessage: null },
+  });
+  for (const batchId of new Set(due.map((j) => j.batchId))) {
+    const n = due.filter((j) => j.batchId === batchId).length;
+    await prisma.batch.update({ where: { id: batchId }, data: { status: BatchStatus.RUNNING, failedCount: { decrement: n } } }).catch(() => undefined);
+  }
+  await prisma.campaign.updateMany({
+    where: { id: { in: [...new Set(due.map((j) => j.campaignId))] }, status: { in: [CampaignStatus.PARTIALLY_FAILED, CampaignStatus.RUNNING] } },
+    data: { status: CampaignStatus.RUNNING },
+  });
+  return due.length;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -142,26 +177,39 @@ export async function runSendWorker(opts: { budgetMs?: number; batchId?: string;
   }
   const deadline = Date.now() + (opts.budgetMs ?? 45_000);
   const recovered = await recoverStuckJobs();
+  await requeueAfterBackoff();
   let sent = 0;
   let failed = 0;
   let batches = await activeBatches(opts.batchId);
   const batchCount = batches.length;
+  const heldBatches = new Set<string>();
 
   while (batches.length && Date.now() < deadline) {
     let progressed = false;
     let rateLimitedAccounts: string[] = [];
     for (const b of batches) {
       if (Date.now() >= deadline) break;
-      const r = await drainBatch(b.id, { limit: 25, deadline });
+      let r;
+      try {
+        r = await drainBatch(b.id, { limit: 25, deadline });
+      } catch (err) {
+        // One broken batch (e.g. deleted mid-send) must never stop everyone else's sending.
+        console.error('[send-worker] batch pass failed, skipping it this run', { batchId: b.id, err: (err as Error).message });
+        heldBatches.add(b.id);
+        continue;
+      }
       sent += r.sent;
       failed += r.failed;
       if (r.processed > 0) progressed = true;
+      if (r.heldReason) heldBatches.add(b.id);
+      else heldBatches.delete(b.id);
       if (r.rateLimited) {
         const acc = await prisma.emailJob.findFirst({ where: { batchId: b.id, status: EmailJobStatus.QUEUED }, select: { emailProviderAccountId: true } });
         if (acc?.emailProviderAccountId) rateLimitedAccounts.push(acc.emailProviderAccountId);
       }
     }
-    batches = await activeBatches(opts.batchId);
+    // Batches on hold (daily limit / Gmail back-off) wait for a later run.
+    batches = (await activeBatches(opts.batchId)).filter((b) => !heldBatches.has(b.id));
     if (!batches.length) break;
     if (!progressed) {
       // Everything is waiting on the per-minute limit: sleep until a slot frees up.
@@ -182,7 +230,8 @@ export async function runSendWorker(opts: { budgetMs?: number; batchId?: string;
   });
   for (const b of settled) await reconcileBatchStatus(b.id).catch(() => undefined);
 
-  return { sent, failed, remaining, batches: batchCount, recovered };
+  const held = remaining > 0 && heldBatches.size > 0 && batches.length === 0;
+  return { sent, failed, remaining, batches: batchCount, recovered, held };
 }
 
 /**

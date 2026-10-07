@@ -30,7 +30,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
 
   const body = drainSchema.parse(await req.json().catch(() => ({})));
   const result = await runSendWorker({ budgetMs: body.seconds * 1000, batchId: batch.id });
-  if (!result.busy && result.remaining > 0) kickSendWorker('process-queue', { continuation: true });
+  if (!result.busy && !result.held && result.remaining > 0) kickSendWorker('process-queue', { continuation: true });
 
   const after = await prisma.batch.findUnique({ where: { id: batch.id }, select: { status: true } });
   await audit(session, 'BATCH_DRAIN', {
@@ -43,8 +43,10 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     ...result,
     processed: result.sent + result.failed,
     batchStatus: after?.status,
-    note: result.busy
-      ? 'Already sending in the background.'
+    note: result.held
+      ? "On hold to stay within Google's sending limits (daily limit reached or Gmail asked to slow down). Sending resumes automatically."
+      : result.busy
+        ? 'Already sending in the background.'
       : result.remaining > 0
         ? 'Sending continues automatically in the background.'
         : 'Batch complete.',

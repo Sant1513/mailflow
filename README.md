@@ -61,6 +61,7 @@ Deeper docs: [ARCHITECTURE.md](ARCHITECTURE.md) (system design) · [PHASE_STATUS
 - **Approval gate**: campaigns need an admin's sign-off, with request and decision emails in one thread and a full audit trail.
 - **Scheduling** with a date-time picker, or send now.
 - **Automatic sending at a safe pace**: once a campaign is sent, emails go out on their own, **3 seconds apart** and at most 20 a minute per mailbox, until the batch is done, even with the tab closed. Each email is claimed before it is sent, so nobody gets a duplicate; an email interrupted mid-send is checked against Gmail's Sent folder before it is retried.
+- **Within Google Workspace's sending limits**: each mailbox stops at 1,500 recipients per rolling 24 hours (Google's limit is 2,000; 500 on trial accounts) and carries on as the window frees up. If Gmail says "slow down" the mailbox pauses for 10 minutes, after a quota error for an hour, then resumes at the normal pace; Gmail's limit errors never mark the mailbox as disconnected. Every campaign email has a visible unsubscribe link and one-click `List-Unsubscribe` headers, as Google's sender guidelines ask.
 - **Batches** with live progress, pause / resume / cancel, retry of failed sends (permanent failures are never retried), and duplicate protection enforced by a database constraint.
 - **Personalised PDFs**: attach a per-recipient filled PDF to every email, built in the **PDF Library**.
 - Draft campaigns can swap dataset or template and re-sync to the latest template version.
@@ -265,7 +266,7 @@ https://<your-deployment>/api/gmail/callback
 | `SLACK_BOT_TOKEN` | — | Slack notifications (channel set in System Settings) |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | — | AI assistant (the app runs without it) |
 | `AI_ENABLED`, `AI_USER_DAILY_LIMIT`, `AI_ORG_DAILY_LIMIT` | — | AI switch and daily limits (defaults 100 per user, 1000 per org) |
-| `EMAIL_RATE_LIMIT_PER_MINUTE`, `EMAIL_SEND_GAP_MS`, `EMAIL_MAX_ATTEMPTS` | — | Send pacing (default 20 a minute, 3000 ms between emails) and retry limit |
+| `EMAIL_RATE_LIMIT_PER_MINUTE`, `EMAIL_SEND_GAP_MS`, `EMAIL_DAILY_LIMIT`, `EMAIL_MAX_ATTEMPTS` | — | Send pacing (default 20 a minute, 3000 ms between emails, 1,500 recipients a day per mailbox, max 1,900; set 500 for trial Workspace accounts) and retry limit |
 | `GMAIL_PUBSUB_TOPIC` / `GMAIL_PUBSUB_VERIFICATION_TOKEN` | — | Gmail push notifications (Sync Now and auto-sync work without them) |
 | `CHROME_PATH` | — | Local Chrome/Edge for signing PDFs (auto-detected on Windows, macOS and Linux) |
 | `SIGNING_PDF_RENDERER` | — | `pdf-lib` forces the built-in renderer; `browser` forces Chrome |
@@ -304,7 +305,7 @@ BASE_URL=https://<deployed-url> npx tsx scripts/verify-deployment.ts   # run aft
 | `smoke-test-automation-pack-http.ts` | Send for signature from Data and segments, signing write-back, Word import, AI drafts and triage, Sheets connect flow, settings access (41 checks) |
 | `smoke-test-products-http.ts` | Mail/Sign chooser, remembered choice, sidebars for every route type (19 checks) |
 | `smoke-test-http.ts` | Core HTTP + RBAC for OPERATOR / VIEWER / SUPER_ADMIN |
-| `smoke-test-send-pacing.ts` | 3-second spacing, no duplicate sends with two senders at once, pause (fake provider) |
+| `smoke-test-send-pacing.ts` | 3-second spacing, no duplicate sends with two senders at once, pause, daily cap, Gmail back-off (fake provider) |
 | `smoke-test-send.ts` · `smoke-test-automation.ts` | Send pipeline and automation engine against the live database |
 | `smoke-test-inbox.ts` · `smoke-test-inbox-http.ts` · `smoke-test-inbox-notify-http.ts` | Gmail ingestion, conversations, composer, notifications |
 | `smoke-test-approvals-http.ts` · `smoke-test-admin-http.ts` · `smoke-test-grid-http.ts` · `smoke-test-pages-http.ts` | Approvals, super admin, data grid, page sweep |

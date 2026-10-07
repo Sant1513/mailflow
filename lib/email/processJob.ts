@@ -158,6 +158,7 @@ export async function processEmailJob(
       html: trackedHtml,
       plainText: job.plainText,
       threadId: job.gmailThreadId,
+      listUnsubscribeUrl: unsubscribeUrl,
       ...(documents.length > 0
         ? { attachments: documents.map((d) => ({ filename: d.filename, mimeType: 'application/pdf', content: d.content })) }
         : {}),

@@ -24,6 +24,8 @@ export interface BuildMessageInput {
   attachments?: EmailAttachment[];
   inReplyTo?: string | null;
   references?: string | null;
+  /** One-click unsubscribe URL (RFC 8058); adds List-Unsubscribe and List-Unsubscribe-Post. */
+  listUnsubscribeUrl?: string | null;
   /** Overridable for deterministic tests. */
   messageId?: string;
   date?: Date;
@@ -95,6 +97,13 @@ export function buildMimeMessage(input: BuildMessageInput): BuiltMessage {
   // Threading headers — only present when replying (§46/§54).
   if (input.inReplyTo) headers.push(`In-Reply-To: ${sanitizeHeaderValue(input.inReplyTo)}`);
   if (input.references) headers.push(`References: ${sanitizeHeaderValue(input.references)}`);
+
+  // Google's sender guidelines: bulk mail carries one-click unsubscribe headers, so mail
+  // clients can show their own Unsubscribe button. Only https URLs are accepted.
+  if (input.listUnsubscribeUrl && /^https:\/\/[^\s<>]+$/.test(input.listUnsubscribeUrl)) {
+    headers.push(`List-Unsubscribe: <${input.listUnsubscribeUrl}>`);
+    headers.push('List-Unsubscribe-Post: List-Unsubscribe=One-Click');
+  }
 
   const plain = input.plainText?.trim()
     ? input.plainText
