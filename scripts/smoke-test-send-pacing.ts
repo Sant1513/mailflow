@@ -7,7 +7,9 @@
  * Checks: emails from one mailbox go out at least 3 s apart; two senders
  * working the same batch at once never send anyone a duplicate; a paused
  * batch stops and its jobs stay queued; the daily cap stops a mailbox;
- * a Gmail "slow down" error stops sending and holds the mailbox for 10 minutes.
+ * a Gmail "slow down" error stops sending and holds the mailbox for 10 minutes;
+ * when the main mailbox is capped the rest go out from an opted-in backup mailbox,
+ * and a backup whose owner has not opted in is never used.
  *
  * Usage: npx tsx scripts/smoke-test-send-pacing.ts
  */
@@ -16,6 +18,7 @@ import { prisma } from '../lib/db/client';
 import { drainBatch, sendGapMs, backoffUntil } from '../lib/queue/drain';
 import { SendEmailError, type EmailProvider } from '../lib/email/provider';
 import { BatchStatus, CampaignStatus, EmailJobStatus, EmailProvider as EmailProviderEnum, Role } from '@prisma/client';
+import { setFallbackOptIn } from '../lib/campaigns/fallback';
 
 let pass = 0;
 let fail = 0;
@@ -60,6 +63,7 @@ async function main() {
   });
   const extraWorkspaces: string[] = [];
   const extraAccounts: string[] = [];
+  const optedIn: string[] = [];
   const mkMailbox = async (tag: string) => {
     const ws = await prisma.workspace.create({ data: { organizationId: org.id, ownerId: user.id, name: `Pacing ${tag} ${stamp}` } });
     const acc = await prisma.emailProviderAccount.create({
@@ -161,7 +165,33 @@ async function main() {
     check('the mailbox is held for about 10 minutes', until - Date.now() > 9 * 60_000 && until - Date.now() <= 10 * 60_000, Math.round((until - Date.now()) / 1000));
     const re2 = await drainBatch(e.id, { limit: 10, providerFactory: slowDown });
     check('while held, nothing more is attempted', calls === 1 && re2.heldReason === 'backoff' && re2.processed === 0, { calls, re2 });
+
+    console.log('\nBackup mailbox (daily cap 2 for this check)');
+    const main = await mkMailbox('main');
+    const backup = await mkMailbox('backup');
+    await prisma.campaign.update({ where: { id: campaign.id }, data: { fallbackAccountIds: [backup.id], senderAccountId: main.id } });
+    await setFallbackOptIn(org.id, backup.id, true, user.id);
+    optedIn.push(backup.id);
+    const f = await mkBatch('f', 4, main.id);
+    const savedCap2 = process.env.EMAIL_DAILY_LIMIT;
+    process.env.EMAIL_DAILY_LIMIT = '2';
+    const pf = fakeProvider();
+    const rf = await drainBatch(f.id, { limit: 10, deadline: Date.now() + 40_000, providerFactory: pf.factory });
+    const jobsF = await prisma.emailJob.findMany({ where: { batchId: f.id }, orderBy: { createdAt: 'asc' }, select: { status: true, fromEmail: true, emailProviderAccountId: true, sendReason: true } });
+    check('all 4 sent: 2 from the main mailbox, then 2 from the backup', rf.sent === 4 && jobsF.filter((j) => j.emailProviderAccountId === main.id).length === 2 && jobsF.filter((j) => j.emailProviderAccountId === backup.id).length === 2, jobsF.map((j) => [j.status, j.fromEmail]));
+    check('rerouted emails go out from the backup address', jobsF.filter((j) => j.emailProviderAccountId === backup.id).every((j) => j.fromEmail === backup.emailAddress), jobsF.map((j) => j.fromEmail));
+    check('each rerouted email records why', jobsF.filter((j) => j.emailProviderAccountId === backup.id).every((j) => /backup mailbox .* because .*sending limit/.test(j.sendReason ?? '')), jobsF.map((j) => j.sendReason));
+
+    console.log('\nBackup whose owner withdrew permission');
+    await setFallbackOptIn(org.id, backup.id, false, user.id);
+    const g = await mkBatch('g', 2, main.id);
+    const pg = fakeProvider();
+    const rg = await drainBatch(g.id, { limit: 10, providerFactory: pg.factory });
+    if (savedCap2 === undefined) delete process.env.EMAIL_DAILY_LIMIT;
+    else process.env.EMAIL_DAILY_LIMIT = savedCap2;
+    check('is never used: the batch holds instead', rg.sent === 0 && pg.sent.length === 0 && rg.heldReason === 'daily_limit', rg);
   } finally {
+    for (const id of optedIn) await setFallbackOptIn(org.id, id, false, user.id).catch(() => undefined);
     await prisma.emailJob.deleteMany({ where: { campaignId: campaign.id } });
     await prisma.batch.deleteMany({ where: { campaignId: campaign.id } });
     await prisma.campaign.deleteMany({ where: { id: campaign.id } });
