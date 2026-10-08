@@ -83,24 +83,58 @@ export async function msUntilRateBudget(emailProviderAccountId: string): Promise
 }
 
 /**
- * Google Workspace lets a user send to 2,000 recipients per rolling 24 hours (500 on trial
- * accounts); going over blocks sending for up to 24 hours. Campaigns stop at
- * EMAIL_DAILY_LIMIT (default 1,500, never above 1,900) so the person's own email still has room.
+ * Google Workspace limits per user, per rolling 24 hours (going over blocks sending for up to
+ * 24 hours): 2,000 messages (500 on trial accounts), 2,000 unique external recipients, and
+ * 10,000 recipients in total counting every To/Cc/Bcc. A Cc that is on every email (e.g. the
+ * placements inbox) is ONE unique recipient. Campaigns stop below each limit, leaving room for
+ * the person's own email:
+ *   - EMAIL_DAILY_LIMIT messages (default 1,500, never above 1,900),
+ *   - 1,800 unique recipients,
+ *   - 9,000 recipients in total.
  */
 export function dailyLimit(): number {
   const configured = Number(process.env.EMAIL_DAILY_LIMIT ?? 1500);
   return Number.isFinite(configured) && configured > 0 ? Math.min(configured, 1900) : 1500;
 }
+export const DAILY_UNIQUE_RECIPIENT_LIMIT = 1800;
+export const DAILY_TOTAL_RECIPIENT_LIMIT = 9000;
 
-const recipientsOf = (j: { ccEmails: string[]; bccEmails: string[] }) => 1 + j.ccEmails.length + j.bccEmails.length;
+const addressesOf = (j: { toEmail: string; ccEmails: string[]; bccEmails: string[] }) =>
+  [j.toEmail, ...j.ccEmails, ...j.bccEmails].map((e) => e.trim().toLowerCase()).filter(Boolean);
 
-/** Recipients (To + Cc + Bcc) this mailbox has sent campaign email to in the last 24 hours. */
-export async function recipientsSentLast24h(emailProviderAccountId: string): Promise<number> {
+export interface DailyUsage {
+  messages: number;
+  totalRecipients: number;
+  unique: Set<string>;
+}
+
+/** What this mailbox has sent as campaign email in the last 24 hours. */
+export async function usageLast24h(emailProviderAccountId: string): Promise<DailyUsage> {
   const rows = await prisma.emailJob.findMany({
     where: { emailProviderAccountId, status: EmailJobStatus.SENT, sentAt: { gte: new Date(Date.now() - 24 * 3600_000) } },
-    select: { ccEmails: true, bccEmails: true },
+    select: { toEmail: true, ccEmails: true, bccEmails: true },
   });
-  return rows.reduce((n, r) => n + recipientsOf(r), 0);
+  const usage: DailyUsage = { messages: 0, totalRecipients: 0, unique: new Set() };
+  for (const r of rows) addUsage(usage, r);
+  return usage;
+}
+
+export function addUsage(usage: DailyUsage, job: { toEmail: string; ccEmails: string[]; bccEmails: string[] }): void {
+  const addrs = addressesOf(job);
+  usage.messages += 1;
+  usage.totalRecipients += addrs.length;
+  for (const a of addrs) usage.unique.add(a);
+}
+
+/** True if sending this email would take the mailbox past any of the daily limits. */
+export function wouldExceedDaily(usage: DailyUsage, job: { toEmail: string; ccEmails: string[]; bccEmails: string[] }): boolean {
+  const addrs = addressesOf(job);
+  const newUnique = addrs.filter((a) => !usage.unique.has(a)).length;
+  return (
+    usage.messages + 1 > dailyLimit() ||
+    usage.totalRecipients + addrs.length > DAILY_TOTAL_RECIPIENT_LIMIT ||
+    usage.unique.size + newUnique > DAILY_UNIQUE_RECIPIENT_LIMIT
+  );
 }
 
 /** After Gmail says "slow down", wait 10 minutes; after a quota error, an hour (Google's guidance). */
@@ -158,7 +192,7 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     where: { batchId, status: EmailJobStatus.QUEUED },
     orderBy: { createdAt: 'asc' },
     take: limit,
-    select: { id: true, emailProviderAccountId: true, ccEmails: true, bccEmails: true, sendReason: true },
+    select: { id: true, emailProviderAccountId: true, toEmail: true, ccEmails: true, bccEmails: true, sendReason: true },
   });
 
   // Backup mailboxes for this campaign, in order (only owners who opted in; see lib/campaigns/fallback.ts).
@@ -175,7 +209,7 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
   let rateLimited = false;
   let heldReason: DrainResult['heldReason'];
   // Per-mailbox state for this pass: daily recipient count (kept up to date as we send) and the account.
-  const dailyUsed = new Map<string, number>();
+  const dailyUsed = new Map<string, DailyUsage>();
   const accounts = new Map<string, { id: string; emailAddress: string; displayName: string | null; status: string } | null>();
   const accountOf = async (id: string) => {
     if (!accounts.has(id)) {
@@ -183,13 +217,13 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     }
     return accounts.get(id)!;
   };
-  /** Why this mailbox can't send `need` more recipients right now, or null if it can. */
-  const holdOf = async (id: string, need: number): Promise<HoldReason | null> => {
+  /** Why this mailbox can't send this email right now, or null if it can. */
+  const holdOf = async (id: string, job: { toEmail: string; ccEmails: string[]; bccEmails: string[] }): Promise<HoldReason | null> => {
     const account = await accountOf(id);
     if (!account || account.status !== 'CONNECTED') return 'disconnected';
     if ((await backoffUntil(id)) > 0) return 'backoff';
-    if (!dailyUsed.has(id)) dailyUsed.set(id, await recipientsSentLast24h(id));
-    if (dailyUsed.get(id)! + need > dailyLimit()) return 'daily_limit';
+    if (!dailyUsed.has(id)) dailyUsed.set(id, await usageLast24h(id));
+    if (wouldExceedDaily(dailyUsed.get(id)!, job)) return 'daily_limit';
     return null;
   };
 
@@ -197,16 +231,15 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     if (opts.deadline && Date.now() > opts.deadline) {
       break; // the next pass picks up where this one stopped
     }
-    const need = recipientsOf(job);
     let acct = job.emailProviderAccountId;
     let reroute: { id: string; emailAddress: string; displayName: string | null; because: string } | null = null;
     if (acct) {
-      const hold = await holdOf(acct, need);
+      const hold = await holdOf(acct, job);
       if (hold) {
         // The campaign's mailbox can't send now: use the first backup mailbox that can.
         for (const fb of fallbackIds) {
           if (fb === acct) continue;
-          if (!(await holdOf(fb, need))) {
+          if (!(await holdOf(fb, job))) {
             const account = (await accountOf(fb))!;
             const main = await accountOf(acct);
             reroute = { ...account, because: `${main?.emailAddress ?? 'the campaign mailbox'} ${holdReasonText(hold)}` };
@@ -261,7 +294,7 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
       const outcome = await processEmailJob(job.id, { providerFactory: opts.providerFactory });
       if (outcome.status === 'SENT') {
         sent += 1;
-        if (acct) dailyUsed.set(acct, (dailyUsed.get(acct) ?? 0) + need);
+        if (acct && dailyUsed.has(acct)) addUsage(dailyUsed.get(acct)!, job);
       } else if (outcome.status === 'FAILED') failed += 1;
       else {
         skipped += 1;

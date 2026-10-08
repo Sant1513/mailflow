@@ -20,7 +20,7 @@ vi.mock('@/lib/db/client', () => ({ prisma: {} }));
 
 const { GmailProvider } = await import('@/lib/email/gmail');
 const { buildMimeMessage } = await import('@/lib/email/mime');
-const { dailyLimit, sendGapMs, BACKOFF_MS } = await import('@/lib/queue/drain');
+const { dailyLimit, sendGapMs, BACKOFF_MS, addUsage, wouldExceedDaily, DAILY_UNIQUE_RECIPIENT_LIMIT } = await import('@/lib/queue/drain');
 
 const account = { id: 'acct1', emailAddress: 'abhishesh@masaischool.com', displayName: 'A', status: 'CONNECTED' } as any;
 const input = { to: 'student@example.com', fromName: 'A', fromEmail: 'abhishesh@masaischool.com', subject: 'Hi', html: '<p>Hi</p>' };
@@ -89,7 +89,7 @@ describe('pacing settings', () => {
     process.env = { ...saved };
   });
 
-  it('defaults: 3 s between emails, 1,500 recipients a day (under Google’s 2,000)', () => {
+  it('defaults: 3 s between emails, 1,500 emails a day (under Google’s 2,000)', () => {
     delete process.env.EMAIL_SEND_GAP_MS;
     delete process.env.EMAIL_DAILY_LIMIT;
     expect(sendGapMs()).toBe(3000);
@@ -106,5 +106,46 @@ describe('pacing settings', () => {
   it('back-off: 10 minutes after "slow down", an hour after a quota error', () => {
     expect(BACKOFF_MS.RATE_LIMIT).toBe(10 * 60_000);
     expect(BACKOFF_MS.QUOTA).toBe(60 * 60_000);
+  });
+});
+
+describe('daily limits follow Google: messages, unique recipients, total recipients', () => {
+  const fresh = () => ({ messages: 0, totalRecipients: 0, unique: new Set<string>() });
+  const job = (n: number, cc: string[] = []) => ({ toEmail: `student${n}@example.com`, ccEmails: cc, bccEmails: [] as string[] });
+
+  it('the same Cc on every email counts once as a unique recipient (750 emails + placements Cc is fine)', () => {
+    delete process.env.EMAIL_DAILY_LIMIT;
+    const u = fresh();
+    for (let i = 0; i < 750; i++) addUsage(u, job(i, ['placements@masaischool.com']));
+    expect(u.messages).toBe(750);
+    expect(u.unique.size).toBe(751);
+    expect(u.totalRecipients).toBe(1500);
+    expect(wouldExceedDaily(u, job(750, ['placements@masaischool.com']))).toBe(false);
+  });
+
+  it('stops at 1,500 emails', () => {
+    delete process.env.EMAIL_DAILY_LIMIT;
+    const u = fresh();
+    for (let i = 0; i < 1500; i++) addUsage(u, job(i));
+    expect(wouldExceedDaily(u, job(1500))).toBe(true);
+  });
+
+  it('stops before 1,800 different recipients even with fewer emails', () => {
+    process.env.EMAIL_DAILY_LIMIT = '1900';
+    const u = fresh();
+    for (let i = 0; i < 900; i++) addUsage(u, job(i, [`cc${i}@example.com`]));
+    expect(u.unique.size).toBe(1800);
+    expect(wouldExceedDaily(u, job(900))).toBe(true);
+    // A repeat recipient adds nothing new.
+    expect(wouldExceedDaily(u, job(5, ['cc5@example.com']))).toBe(u.messages + 1 > 1900);
+    delete process.env.EMAIL_DAILY_LIMIT;
+    expect(DAILY_UNIQUE_RECIPIENT_LIMIT).toBeLessThan(2000);
+  });
+
+  it('addresses are compared case-insensitively', () => {
+    const u = fresh();
+    addUsage(u, { toEmail: 'A@Example.com', ccEmails: ['P@masaischool.com'], bccEmails: [] });
+    addUsage(u, { toEmail: 'a@example.com', ccEmails: ['p@MASAISCHOOL.com'], bccEmails: [] });
+    expect(u.unique.size).toBe(2);
   });
 });

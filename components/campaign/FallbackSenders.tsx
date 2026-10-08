@@ -71,7 +71,7 @@ export function FallbackSenders({ campaignId, refreshKey }: { campaignId: string
     <div className="rounded-lg border bg-card p-4">
       <h2 className="mb-1 text-sm font-semibold">Backup sender mailboxes</h2>
       <p className="mb-3 text-xs text-muted-foreground">
-        If {state.main?.emailAddress ?? 'the campaign mailbox'} reaches Google&apos;s daily limit (1,500 recipients a day here), is asked by
+        If {state.main?.emailAddress ?? 'the campaign mailbox'} reaches Google&apos;s daily limit (1,500 emails or 1,800 different recipients a day here), is asked by
         Gmail to slow down, or gets disconnected, the remaining emails go out from these mailboxes in order, at the same 3-second pace.
         Replies to those emails come to the backup mailbox and show on this campaign.
       </p>
