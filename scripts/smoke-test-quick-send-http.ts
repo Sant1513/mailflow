@@ -107,6 +107,14 @@ async function main() {
     const nav = page.text.slice(page.text.indexOf('Mail navigation'));
     check('it is the first item in the Mail sidebar', nav.indexOf('href="/quick-send"') > -1 && nav.indexOf('href="/quick-send"') < nav.indexOf('href="/dashboard"'));
 
+    console.log('\nPasting a plain list');
+    const { normalizePastedList } = await import('../lib/quickSend/paste');
+    const pastedList = await call('POST', '/api/datasets/import/preview', op.cookie, {
+      mode: 'paste',
+      text: normalizePastedList('Rahul Sharma, rahul@example.com\nNeha Singh <neha@example.com>\namit@example.com'),
+    });
+    check('a pasted list is read as Name + Email rows', pastedList.status === 200 && JSON.stringify(pastedList.json?.headers) === '["Name","Email"]' && pastedList.json?.rows?.length === 3 && pastedList.json?.suggestedEmailColumn === 'Email', pastedList.json);
+
     console.log('\nCheck (dry run + preview, nothing saved)');
     const before = await prisma.campaign.count({ where: { workspaceId: op.ws.id } });
     const chk = await call('POST', '/api/quick-send', op.cookie, { mode: 'check', recipients, ...message });

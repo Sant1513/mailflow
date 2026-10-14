@@ -142,7 +142,7 @@ export default function QuickSendPage() {
       return;
     }
     const t = setTimeout(() => {
-      parse({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: normalizePastedList(pasted) }) }, 'Pasted list');
+      parse({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'paste', text: normalizePastedList(pasted) }) }, 'Pasted list');
     }, 500);
     return () => clearTimeout(t);
   }, [pasted, source]);
