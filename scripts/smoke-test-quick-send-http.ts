@@ -49,9 +49,14 @@ async function removeFixtures() {
   const ids = users.map((u) => u.id);
   const wss = (await prisma.workspace.findMany({ where: { ownerId: { in: ids } }, select: { id: true } })).map((w) => w.id);
   const campaigns = (await prisma.campaign.findMany({ where: { workspaceId: { in: wss } }, select: { id: true } })).map((c) => c.id);
+  await prisma.attachment.deleteMany({ where: { emailJob: { campaignId: { in: campaigns } } } });
   await prisma.emailJob.deleteMany({ where: { campaignId: { in: campaigns } } });
   await prisma.batch.deleteMany({ where: { campaignId: { in: campaigns } } });
+  await prisma.campaignDocument.deleteMany({ where: { campaignId: { in: campaigns } } });
   await prisma.campaign.deleteMany({ where: { id: { in: campaigns } } });
+  const docs = await prisma.documentTemplate.findMany({ where: { workspaceId: { in: wss } }, select: { id: true, fileId: true } });
+  await prisma.documentTemplate.deleteMany({ where: { id: { in: docs.map((d) => d.id) } } });
+  await prisma.documentFile.deleteMany({ where: { id: { in: docs.map((d) => d.fileId) }, documentTemplates: { none: {} } } });
   const templates = (await prisma.template.findMany({ where: { workspaceId: { in: wss } }, select: { id: true } })).map((t) => t.id);
   await prisma.templateVersion.deleteMany({ where: { templateId: { in: templates } } });
   await prisma.template.deleteMany({ where: { id: { in: templates } } });
@@ -130,8 +135,31 @@ async function main() {
     const asViewer = await call('POST', '/api/quick-send', viewer.cookie, { mode: 'check', recipients, ...message });
     check('a viewer cannot use it', asViewer.status === 403, asViewer.status);
 
+    console.log('\nSignature, attachment, test send');
+    await prisma.user.update({ where: { id: op.user.id }, data: { emailSignature: '<p>Regards,<br>QS Signature Line</p>' } });
+    const withSig = await call('POST', '/api/quick-send', op.cookie, { mode: 'check', recipients, ...message, includeSignature: true });
+    check('the saved signature is added to the email', withSig.json?.hasSignature === true && (withSig.json?.preview?.html ?? '').includes('QS Signature Line'), withSig.json?.preview?.html?.slice(-200));
+    const { PDFDocument } = await import('pdf-lib');
+    const pdf = await PDFDocument.create();
+    pdf.addPage([300, 200]);
+    const pdfBytes = await pdf.save();
+    const fd = new FormData();
+    fd.append('file', new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' }), 'Offer Brochure.pdf');
+    fd.append('name', 'Offer Brochure');
+    const up = await fetch(`${BASE_URL}/api/documents`, { method: 'POST', headers: { Cookie: op.cookie }, body: fd });
+    const upJson: any = await up.json().catch(() => ({}));
+    const docId = upJson?.document?.id as string | undefined;
+    check('a PDF can be attached (stored in the PDF Library)', up.status === 201 && !!docId, upJson);
+    const withAtt = await call('POST', '/api/quick-send', op.cookie, { mode: 'check', recipients, ...message, attachmentDocumentIds: [docId] });
+    check('the check lists the attachment', withAtt.json?.attachments?.length === 1 && withAtt.json.attachments[0].size > 0, withAtt.json?.attachments);
+    const foreignAtt = await call('POST', '/api/quick-send', op.cookie, { mode: 'check', recipients, ...message, attachmentDocumentIds: ['not-a-real-document-id'] });
+    check('an unknown attachment is refused', foreignAtt.status === 400, foreignAtt.status);
+    const test = await call('POST', '/api/quick-send', op.cookie, { mode: 'test', recipients, ...message, attachmentDocumentIds: [docId] });
+    // The fixture mailbox has no Google login, so the test email cannot leave: the route reports it instead of pretending.
+    check('a test send goes through the real mailbox (fails safely for a fixture)', test.status === 502 && /could not be sent/.test(test.json?.error ?? ''), test.json);
+
     console.log('\nOperator sends → approval → sends on approval');
-    const sent = await call('POST', '/api/quick-send', op.cookie, { mode: 'send', recipients, ...message, cc: 'placements@example.com', scheduledAt: YEAR_AHEAD });
+    const sent = await call('POST', '/api/quick-send', op.cookie, { mode: 'send', recipients, ...message, cc: 'placements@example.com', scheduledAt: YEAR_AHEAD, attachmentDocumentIds: docId ? [docId] : [] });
     check('goes to approval', sent.status === 201 && sent.json?.state === 'awaiting_approval', sent.json);
     const id = sent.json?.campaignId as string;
     const camp = await prisma.campaign.findUnique({ where: { id }, include: { dataset: { include: { columns: true } }, templateVersion: true } });
@@ -148,6 +176,8 @@ async function main() {
     const afterApprove = await prisma.campaign.findUnique({ where: { id }, select: { status: true } });
     const jobs = await prisma.emailJob.findMany({ where: { campaignId: id }, select: { toEmail: true, subject: true, ccEmails: true } });
     check('3 personalised emails queued, scheduled (nothing goes out)', afterApprove?.status === CampaignStatus.SCHEDULED && jobs.length === 3 && jobs.every((j) => j.subject.startsWith('Hi ') && j.ccEmails[0] === 'placements@example.com'), { status: afterApprove?.status, jobs: jobs.length });
+    const atts = await prisma.attachment.findMany({ where: { emailJob: { campaignId: id } }, select: { filename: true, campaignDocument: { select: { stampReference: true } } } });
+    check('every email carries the PDF, unstamped', atts.length === 3 && atts.every((a) => /\.pdf$/i.test(a.filename) && a.campaignDocument?.stampReference === false), atts);
 
     console.log('\nTracking');
     const stats = await call('GET', `/api/quick-send/${id}`, op.cookie);

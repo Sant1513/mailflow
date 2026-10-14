@@ -118,113 +118,70 @@ export async function startCampaignSend(opts: StartSendOptions): Promise<StartSe
       },
     });
 
-    const attachmentRows: Prisma.AttachmentCreateManyInput[] = [];
-
-    // Without personalised documents nothing needs each job's id, so every
-    // snapshot is written in one insert (a 1,000-recipient send in a few
-    // statements instead of 2,000 round trips).
-    if (built.documents.length === 0) {
-      const jobs: Prisma.EmailJobCreateManyInput[] = sendable.map((evaluation) => {
-        const record = recordsById.get(evaluation.recordId)!;
-        const rendered = renderTemplate(
-          { subject: campaign.templateVersion.subject, html: campaign.templateVersion.html, plainText: campaign.templateVersion.plainText },
-          record.data
-        );
-        return {
-          batchId: created.id,
-          campaignId: campaign.id,
-          recordId: record.id,
-          templateVersionId: campaign.templateVersionId,
-          emailProviderAccountId: sender.id,
-          status: EmailJobStatus.QUEUED,
-          toEmail: evaluation.email!,
-          ccEmails: campaign.ccEmails,
-          bccEmails: campaign.bccEmails,
-          fromName,
-          fromEmail: sender.emailAddress,
-          replyTo: campaign.replyTo,
-          subject: rendered.subject,
-          html: campaign.templateVersion.css ? `<style>${campaign.templateVersion.css}</style>${rendered.html}` : rendered.html,
-          plainText: rendered.plainText,
-          sendReason: evaluation.sendReason,
-        };
-      });
-      for (let i = 0; i < jobs.length; i += 1000) await tx.emailJob.createMany({ data: jobs.slice(i, i + 1000) });
-      await tx.record.updateMany({
-        where: { id: { in: sendable.map((e) => e.recordId) } },
-        data: { emailStatus: 'QUEUED', lastBatchId: created.id },
-      });
-    }
-
-    for (const evaluation of built.documents.length === 0 ? [] : sendable) {
+    // Every snapshot is written in bulk (a 1,000-recipient send in a few statements instead of
+    // 2,000+ round trips). Each job is rendered ONCE here and the worker sends exactly these
+    // bytes — it never re-renders from the template (§89/§126). Campaign-level Cc/Bcc go on
+    // every message (§22), and the sender is snapshotted (§30).
+    const evaluationByRecord = new Map(sendable.map((e) => [e.recordId, e]));
+    const jobs: Prisma.EmailJobCreateManyInput[] = sendable.map((evaluation) => {
       const record = recordsById.get(evaluation.recordId)!;
-      // Render ONCE, here, and store the result. The worker sends exactly
-      // these bytes — it never re-renders from the template (§89/§126).
       const rendered = renderTemplate(
-        {
-          subject: campaign.templateVersion.subject,
-          html: campaign.templateVersion.html,
-          plainText: campaign.templateVersion.plainText,
-        },
+        { subject: campaign.templateVersion.subject, html: campaign.templateVersion.html, plainText: campaign.templateVersion.plainText },
         record.data
       );
+      return {
+        batchId: created.id,
+        campaignId: campaign.id,
+        recordId: record.id,
+        templateVersionId: campaign.templateVersionId,
+        emailProviderAccountId: sender.id,
+        status: EmailJobStatus.QUEUED,
+        toEmail: evaluation.email!,
+        ccEmails: campaign.ccEmails,
+        bccEmails: campaign.bccEmails,
+        fromName,
+        fromEmail: sender.emailAddress,
+        replyTo: campaign.replyTo,
+        subject: rendered.subject,
+        html: campaign.templateVersion.css ? `<style>${campaign.templateVersion.css}</style>${rendered.html}` : rendered.html,
+        plainText: rendered.plainText,
+        sendReason: evaluation.sendReason,
+      };
+    });
 
-      const html = campaign.templateVersion.css
-        ? `<style>${campaign.templateVersion.css}</style>${rendered.html}`
-        : rendered.html;
-
-      const job = await tx.emailJob.create({
-        data: {
-          batchId: created.id,
-          campaignId: campaign.id,
-          recordId: record.id,
-          templateVersionId: campaign.templateVersionId,
-          emailProviderAccountId: sender.id,
-          status: EmailJobStatus.QUEUED,
-          toEmail: evaluation.email!,
-          // Campaign-level Cc/Bcc go on every message (§22).
-          ccEmails: campaign.ccEmails,
-          bccEmails: campaign.bccEmails,
-          // §30 sender snapshot — immutable, even if the user later renames
-          // themselves or disconnects the account.
-          fromName,
-          fromEmail: sender.emailAddress,
-          replyTo: campaign.replyTo,
-          subject: rendered.subject,
-          html,
-          plainText: rendered.plainText,
-          sendReason: evaluation.sendReason,
-        },
-      });
-
-      await tx.record.update({
-        where: { id: record.id },
-        data: { emailStatus: 'QUEUED', lastBatchId: created.id },
-      });
-
-      // Personalised documents: freeze each copy's values, file name and
-      // reference now; the PDF itself is generated when this email is sent.
+    const attachmentRows: Prisma.AttachmentCreateManyInput[] = [];
+    for (let i = 0; i < jobs.length; i += 1000) {
+      const createdJobs = await tx.emailJob.createManyAndReturn({ data: jobs.slice(i, i + 1000), select: { id: true, recordId: true } });
+      // Personalised documents: freeze each copy's values, file name and reference now; the PDF
+      // itself is generated when this email is sent.
       if (built.documents.length > 0) {
-        attachmentRows.push(
-          ...jobAttachmentRows({
-            emailJobId: job.id,
-            docs: built.documents,
-            data: record.data,
-            recipientEmail: evaluation.email!,
-            system: {
-              campaignName: campaign.name,
-              timezone: campaign.timezone,
-              senderName: fromName,
-              senderEmail: sender.emailAddress,
-              now: sendTime,
-            },
-          })
-        );
+        for (const job of createdJobs) {
+          const record = recordsById.get(job.recordId)!;
+          attachmentRows.push(
+            ...jobAttachmentRows({
+              emailJobId: job.id,
+              docs: built.documents,
+              data: record.data,
+              recipientEmail: evaluationByRecord.get(job.recordId)!.email!,
+              system: {
+                campaignName: campaign.name,
+                timezone: campaign.timezone,
+                senderName: fromName,
+                senderEmail: sender.emailAddress,
+                now: sendTime,
+              },
+            })
+          );
+        }
       }
     }
+    await tx.record.updateMany({
+      where: { id: { in: sendable.map((e) => e.recordId) } },
+      data: { emailStatus: 'QUEUED', lastBatchId: created.id },
+    });
 
-    if (attachmentRows.length > 0) {
-      await tx.attachment.createMany({ data: attachmentRows });
+    for (let i = 0; i < attachmentRows.length; i += 2000) {
+      await tx.attachment.createMany({ data: attachmentRows.slice(i, i + 2000) });
     }
 
     // Skipped records get their reason persisted too (§91), so "why was

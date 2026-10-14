@@ -15,6 +15,12 @@ interface Table {
   label: string;
 }
 
+interface Attachment {
+  id: string;
+  name: string;
+  size: number;
+}
+
 interface Check {
   source: string;
   columns: { key: string; label: string }[];
@@ -30,6 +36,8 @@ interface Check {
   backups: { id: string; emailAddress: string; ownerName: string; status: string }[];
   estimatedMinutes: number;
   approval: 'none' | 'required';
+  hasSignature: boolean;
+  attachments: Attachment[];
 }
 
 interface Stats {
@@ -62,18 +70,23 @@ const REASONS: Record<string, string> = {
   UNSUBSCRIBED_OR_BOUNCED: 'unsubscribed or bounced before',
 };
 
+const DRAFT_KEY = 'mf.quickSend.draft';
+const FIELD = 'w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none';
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
+const mb = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
 /**
  * Quick Send: the whole campaign on one screen. Recipients, message, preview,
- * send and live tracking. Under the hood it is a normal campaign, so pacing,
- * Google's limits, backup mailboxes, tracking, unsubscribe and the Inbox all apply.
+ * a test to yourself, send and live tracking. Under the hood it is a normal
+ * campaign, so pacing, Google's limits, backup mailboxes, tracking,
+ * unsubscribe and the Inbox all apply.
  */
 export default function QuickSendPage() {
   // 1. Recipients
   const [source, setSource] = useState<Source>('paste');
   const [pasted, setPasted] = useState('');
   const [table, setTable] = useState<Table | null>(null);
+  const [tableError, setTableError] = useState<string | null>(null);
   const [emailHeader, setEmailHeader] = useState('');
   const [parsing, setParsing] = useState(false);
   const [datasets, setDatasets] = useState<{ id: string; name: string; _count?: { records: number } }[]>([]);
@@ -82,9 +95,14 @@ export default function QuickSendPage() {
   const [segmentId, setSegmentId] = useState('');
 
   // 2. Message
+  const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [format, setFormat] = useState<'text' | 'html'>('text');
+  const [includeSignature, setIncludeSignature] = useState(true);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [library, setLibrary] = useState<{ id: string; name: string; fileName: string; size: number; fieldCount: number }[]>([]);
+  const [uploading, setUploading] = useState(false);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const subjectRef = useRef<HTMLInputElement>(null);
   const [lastFocus, setLastFocus] = useState<'subject' | 'body'>('body');
@@ -97,20 +115,63 @@ export default function QuickSendPage() {
   const [scheduleAt, setScheduleAt] = useState('');
   const [backups, setBackups] = useState<string[]>([]);
 
-  // Check + send + tracking
+  // Check, test, send, tracking
   const [check, setCheck] = useState<Check | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [sending, setSending] = useState(false);
   const [current, setCurrent] = useState<{ id: string; state: string; note?: string } | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [recent, setRecent] = useState<Stats[]>([]);
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
+  const restored = useRef(false);
 
   useEffect(() => {
-    fetch('/api/datasets').then((r) => (r.ok ? r.json() : null)).then((j) => j && setDatasets(j.datasets ?? [])).catch(() => undefined);
-    fetch('/api/segments').then((r) => (r.ok ? r.json() : null)).then((j) => j && setSegments(j.segments ?? [])).catch(() => undefined);
+    const get = (url: string, set: (j: any) => void) =>
+      fetch(url)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => j && set(j))
+        .catch(() => undefined);
+    get('/api/datasets', (j) => setDatasets(j.datasets ?? []));
+    get('/api/segments', (j) => setSegments(j.segments ?? []));
+    get('/api/templates', (j) => setTemplates((j.templates ?? []).filter((t: any) => !t.archived)));
+    get('/api/documents', (j) => setLibrary((j.documents ?? []).filter((d: any) => !d.archived)));
   }, []);
+
+  // Draft autosave: a refresh or a closed tab keeps what was typed.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        const d = JSON.parse(raw);
+        setSubject(d.subject ?? '');
+        setBody(d.body ?? '');
+        setFormat(d.format === 'html' ? 'html' : 'text');
+        setFromName(d.fromName ?? '');
+        setReplyTo(d.replyTo ?? '');
+        setCc(d.cc ?? '');
+        setBcc(d.bcc ?? '');
+        if (d.pasted) setPasted(d.pasted);
+        if (Array.isArray(d.attachments)) setAttachments(d.attachments);
+        if (typeof d.includeSignature === 'boolean') setIncludeSignature(d.includeSignature);
+      }
+    } catch {
+      /* storage unavailable: start empty */
+    }
+    restored.current = true;
+  }, []);
+  useEffect(() => {
+    if (!restored.current || current) return;
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ subject, body, format, fromName, replyTo, cc, bcc, pasted: pasted.length < 200_000 ? pasted : '', attachments, includeSignature }));
+      } catch {
+        /* ignore */
+      }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [subject, body, format, fromName, replyTo, cc, bcc, pasted, attachments, includeSignature, current]);
 
   const loadRecent = useCallback(async () => {
     const res = await fetch('/api/quick-send');
@@ -120,7 +181,7 @@ export default function QuickSendPage() {
     loadRecent();
   }, [loadRecent]);
 
-  // ── recipients: parse pasted text / files with the same parser as Data → Import ──
+  // ── recipients: pasted text / files go through the same reader as Data → Import ──
   async function parse(init: RequestInit, label: string) {
     setParsing(true);
     const res = await fetch('/api/datasets/import/preview', { method: 'POST', ...init });
@@ -128,9 +189,10 @@ export default function QuickSendPage() {
     setParsing(false);
     if (!res.ok) {
       setTable(null);
-      toast.error(json.error ?? 'Could not read that list');
+      setTableError(json.error ?? 'Could not read that list. Paste one email per line, or rows with a header row.');
       return;
     }
+    setTableError(null);
     setTable({ headers: json.headers, rows: json.rows, suggestedEmailColumn: json.suggestedEmailColumn, label });
     setEmailHeader(json.suggestedEmailColumn ?? '');
   }
@@ -139,6 +201,7 @@ export default function QuickSendPage() {
     if (source !== 'paste') return;
     if (!pasted.trim()) {
       setTable(null);
+      setTableError(null);
       return;
     }
     const t = setTimeout(() => {
@@ -163,12 +226,14 @@ export default function QuickSendPage() {
   }, [source, table, emailHeader, datasetId, segmentId]);
 
   const payload = useCallback(
-    (mode: 'check' | 'send') => ({
+    (mode: 'check' | 'test' | 'send') => ({
       mode,
       recipients,
       subject,
       body,
       format,
+      includeSignature,
+      attachmentDocumentIds: attachments.map((a) => a.id),
       fromName: fromName || undefined,
       replyTo: replyTo || '',
       cc: cc || undefined,
@@ -176,7 +241,7 @@ export default function QuickSendPage() {
       fallbackAccountIds: backups,
       scheduledAt: scheduleAt ? new Date(scheduleAt).toISOString() : undefined,
     }),
-    [recipients, subject, body, format, fromName, replyTo, cc, bcc, backups, scheduleAt],
+    [recipients, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt],
   );
 
   // ── live check: dry run + preview as you type ──
@@ -231,14 +296,70 @@ export default function QuickSendPage() {
     setBody(body.slice(0, at) + token + body.slice(el?.selectionEnd ?? at));
   }
 
+  async function loadTemplate(id: string) {
+    if (!id) return;
+    if ((subject.trim() || body.trim()) && !confirm('Replace the subject and message with this template?')) return;
+    const res = await fetch(`/api/templates/${id}`);
+    const json = await res.json().catch(() => ({}));
+    const v = json.template?.versions?.[0];
+    if (!res.ok || !v) {
+      toast.error('Could not load that template');
+      return;
+    }
+    setSubject(v.subject ?? '');
+    setBody(v.html ?? '');
+    setFormat('html');
+    toast.success(`Loaded "${json.template.name}". It's in HTML; edit it there or switch to Simple to write fresh.`);
+  }
+
+  async function uploadPdf(file: File) {
+    if (!/\.pdf$/i.test(file.name)) {
+      toast.error('Only PDF files can be attached. Save Word or Excel files as PDF first.');
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      toast.error('That PDF is over 4 MB. Compress it, or split it, and try again.');
+      return;
+    }
+    setUploading(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('name', file.name.replace(/\.pdf$/i, ''));
+    const res = await fetch('/api/documents', { method: 'POST', body: fd });
+    const json = await res.json().catch(() => ({}));
+    setUploading(false);
+    if (!res.ok) {
+      toast.error(json.error ?? 'Could not attach that PDF');
+      return;
+    }
+    setAttachments((prev) => [...prev, { id: json.document.id, name: file.name, size: file.size }]);
+  }
+
+  function addFromLibrary(id: string) {
+    const d = library.find((x) => x.id === id);
+    if (!d || attachments.some((a) => a.id === id)) return;
+    if (d.fieldCount > 0) toast.warning(`"${d.name}" has fill-in fields; they are filled per recipient where your list has matching columns.`);
+    setAttachments((prev) => [...prev, { id: d.id, name: d.fileName, size: d.size }]);
+  }
+
+  async function sendTest() {
+    setTesting(true);
+    const res = await fetch('/api/quick-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload('test')) });
+    const json = await res.json().catch(() => ({}));
+    setTesting(false);
+    if (!res.ok) toast.error(json.issues?.[0]?.message ?? json.error ?? 'Could not send the test');
+    else toast.success(`Test sent to ${json.sentTo} (filled in as ${json.filledAs}). Check your inbox.`, { duration: 8000 });
+  }
+
   async function send() {
     if (!check) return;
     const who = `${check.wouldSend} ${check.wouldSend === 1 ? 'person' : 'people'}`;
     const when = scheduleAt ? ` at ${new Date(scheduleAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}` : ' now';
+    const att = attachments.length ? ` with ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}` : '';
     const msg =
       check.approval === 'required'
-        ? `Send this to ${who}? It goes to an admin first and sends automatically as soon as it is approved.`
-        : `Send this to ${who}${when}? Emails go out 3 seconds apart from ${check.sender?.emailAddress}.`;
+        ? `Send this${att} to ${who}? It goes to an admin first and sends automatically as soon as it is approved.`
+        : `Send this${att} to ${who}${when}? Emails go out 3 seconds apart from ${check.sender?.emailAddress}.`;
     if (!confirm(msg)) return;
     setSending(true);
     const res = await fetch('/api/quick-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload('send')) });
@@ -249,6 +370,11 @@ export default function QuickSendPage() {
       return;
     }
     setCurrent({ id: json.campaignId, state: json.state, note: json.note });
+    try {
+      localStorage.removeItem(DRAFT_KEY);
+    } catch {
+      /* ignore */
+    }
     toast.success(json.state === 'awaiting_approval' ? 'Sent for approval. It goes out as soon as an admin approves it.' : json.state === 'scheduled' ? 'Scheduled.' : 'Sending started.');
     loadRecent();
   }
@@ -269,11 +395,13 @@ export default function QuickSendPage() {
     setSubject('');
     setBody('');
     setScheduleAt('');
+    setAttachments([]);
   }
 
   const fields = check?.columns ?? (table ? table.headers.map((h) => ({ key: h, label: h })) : []);
   const overCapacity = check?.sender && check.wouldSend > check.sender.capacityToday;
-  const canSend = !!check && check.wouldSend > 0 && !check.unknownVariables.length && check.sender?.status === 'CONNECTED' && !sending && !checking;
+  const ready = !!check && check.wouldSend > 0 && !check.unknownVariables.length && check.sender?.status === 'CONNECTED' && !checking;
+  const attachedBytes = attachments.reduce((n, a) => n + a.size, 0);
 
   return (
     <div className="mx-auto max-w-7xl p-4 sm:p-6">
@@ -315,18 +443,18 @@ export default function QuickSendPage() {
                 onChange={(e) => setPasted(e.target.value)}
                 rows={6}
                 placeholder={'One email per line, or "Name, email" per line:\nrahul@example.com\nNeha Singh, neha@example.com\n\nOr copy rows straight from Google Sheets / Excel, including the header row (Name, Email, Company…)'}
-                className="w-full font-mono text-sm"
+                className={`${FIELD} font-mono`}
               />
             )}
             {source === 'file' && (
-              <label className="flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed p-6 text-sm text-muted-foreground hover:border-primary hover:text-primary">
-                <span>{table && source === 'file' ? table.label : 'Choose a .csv or .xlsx file'}</span>
+              <label className="flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground hover:border-primary hover:text-primary">
+                <span>{table ? table.label : 'Choose a .csv or .xlsx file'}</span>
                 <span className="text-[11px]">The first row must be the column names (Name, Email, …)</span>
                 <input type="file" accept=".csv,.xlsx" className="sr-only" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
               </label>
             )}
             {source === 'dataset' && (
-              <select value={datasetId} onChange={(e) => setDatasetId(e.target.value)} className="w-full text-sm">
+              <select value={datasetId} onChange={(e) => setDatasetId(e.target.value)} className={FIELD}>
                 <option value="">Choose a list from Data…</option>
                 {datasets.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -337,7 +465,7 @@ export default function QuickSendPage() {
               </select>
             )}
             {source === 'segment' && (
-              <select value={segmentId} onChange={(e) => setSegmentId(e.target.value)} className="w-full text-sm">
+              <select value={segmentId} onChange={(e) => setSegmentId(e.target.value)} className={FIELD}>
                 <option value="">Choose a segment…</option>
                 {segments.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -348,53 +476,102 @@ export default function QuickSendPage() {
             )}
 
             {parsing && <p className="mt-2 text-xs text-muted-foreground">Reading the list…</p>}
+            {tableError && (source === 'paste' || source === 'file') && <p className="mt-2 text-xs text-destructive">{tableError}</p>}
             {table && (source === 'paste' || source === 'file') && (
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="text-success">✓ {table.rows.length} rows</span>
-                <span>· columns: {table.headers.join(', ')}</span>
-                {table.headers.length > 1 && (
-                  <label className="ml-auto flex items-center gap-1">
-                    Email column
-                    <select value={emailHeader} onChange={(e) => setEmailHeader(e.target.value)} className="!w-auto !py-0.5 text-xs">
-                      <option value="">Auto-detect</option>
-                      {table.headers.map((h) => (
-                        <option key={h}>{h}</option>
+              <div className="mt-3">
+                <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-success">✓ {table.rows.length} rows read</span>
+                  {table.headers.length > 1 && (
+                    <label className="ml-auto flex items-center gap-1">
+                      Email column
+                      <select value={emailHeader} onChange={(e) => setEmailHeader(e.target.value)} className="!w-auto rounded border border-border bg-background px-1 py-0.5 text-xs">
+                        <option value="">Auto-detect</option>
+                        {table.headers.map((h) => (
+                          <option key={h}>{h}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+                <div className="overflow-x-auto rounded-md border border-border">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40 text-left text-muted-foreground">
+                      <tr>
+                        {table.headers.map((h) => (
+                          <th key={h} className="px-2 py-1 font-medium">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {table.rows.slice(0, 4).map((r, i) => (
+                        <tr key={i} className="border-t border-border-subtle">
+                          {table.headers.map((h) => (
+                            <td key={h} className="max-w-[220px] truncate px-2 py-1">
+                              {r[h]}
+                            </td>
+                          ))}
+                        </tr>
                       ))}
-                    </select>
-                  </label>
-                )}
+                    </tbody>
+                  </table>
+                  {table.rows.length > 4 && <div className="border-t border-border-subtle px-2 py-1 text-[11px] text-muted-foreground">…and {table.rows.length - 4} more</div>}
+                </div>
               </div>
             )}
           </section>
 
           <section className="rounded-lg border bg-card p-4">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-semibold">2. The email</h2>
-              <div className="flex rounded-full border border-border p-0.5 text-[11px]">
-                <button onClick={() => setFormat('text')} className={`rounded-full px-2 py-0.5 ${format === 'text' ? 'bg-foreground text-background' : 'text-muted-foreground'}`}>Simple</button>
-                <button onClick={() => setFormat('html')} className={`rounded-full px-2 py-0.5 ${format === 'html' ? 'bg-foreground text-background' : 'text-muted-foreground'}`}>HTML</button>
+              <div className="flex items-center gap-2">
+                {templates.length > 0 && (
+                  <select value="" onChange={(e) => loadTemplate(e.target.value)} className="!w-auto rounded-md border border-border bg-background px-2 py-1 text-xs" aria-label="Start from a saved template">
+                    <option value="">Start from a template…</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <div className="flex rounded-full border border-border p-0.5 text-[11px]">
+                  <button onClick={() => setFormat('text')} className={`rounded-full px-2 py-0.5 ${format === 'text' ? 'bg-foreground text-background' : 'text-muted-foreground'}`}>Simple</button>
+                  <button onClick={() => setFormat('html')} className={`rounded-full px-2 py-0.5 ${format === 'html' ? 'bg-foreground text-background' : 'text-muted-foreground'}`}>HTML</button>
+                </div>
               </div>
             </div>
+
+            <label htmlFor="qs-subject" className="mb-1 block text-xs font-medium">
+              Subject
+            </label>
             <input
+              id="qs-subject"
               ref={subjectRef}
               value={subject}
               onFocus={() => setLastFocus('subject')}
               onChange={(e) => setSubject(e.target.value)}
-              placeholder="Subject, e.g. {{Name}}, your interview is confirmed"
-              className="mb-2 w-full text-sm"
+              placeholder="e.g. {{Name}}, your interview is confirmed"
+              className={`${FIELD} mb-4 font-medium`}
             />
+
+            <label htmlFor="qs-body" className="mb-1 block text-xs font-medium">
+              Message
+            </label>
             <textarea
+              id="qs-body"
               ref={bodyRef}
               value={body}
               onFocus={() => setLastFocus('body')}
               onChange={(e) => setBody(e.target.value)}
               rows={12}
-              placeholder={format === 'text' ? 'Hi {{Name}},\n\nWrite your message here. Links are clickable automatically.\n\nRegards,\nPlacement Team' : '<p>Hi {{Name}},</p>\n<p>…</p>'}
-              className={`w-full text-sm ${format === 'html' ? 'font-mono' : ''}`}
+              placeholder={format === 'text' ? 'Hi {{Name}},\n\nWrite your message here. Links become clickable automatically.\n\nRegards,\nPlacement Team' : '<p>Hi {{Name}},</p>\n<p>…</p>'}
+              className={`${FIELD} ${format === 'html' ? 'font-mono' : ''}`}
             />
             {fields.length > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-1 text-xs">
-                <span className="text-muted-foreground">Insert a field:</span>
+                <span className="text-muted-foreground">Insert a field into the {lastFocus === 'subject' ? 'subject' : 'message'}:</span>
                 {fields.map((f) => (
                   <button key={f.key} onClick={() => insertField(f.key)} className="rounded-full border border-border px-2 py-0.5 hover:border-primary hover:text-primary">
                     {f.label}
@@ -402,40 +579,105 @@ export default function QuickSendPage() {
                 ))}
               </div>
             )}
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              Write a column name in double braces, like <code className="font-mono">{'{{Name}}'}</code>, to personalise. An unsubscribe link is added at the bottom automatically.
+
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+              <label className="flex items-center gap-1.5">
+                <input type="checkbox" checked={includeSignature} onChange={(e) => setIncludeSignature(e.target.checked)} className="accent-primary" />
+                Add my email signature
+              </label>
+              {check && !check.hasSignature && includeSignature && (
+                <span className="text-muted-foreground">
+                  You haven&apos;t saved one yet: <Link href="/settings" className="underline">Settings → Email signature</Link>
+                </span>
+              )}
+            </div>
+
+            {/* Attachments (PDF) */}
+            <div className="mt-4 rounded-md border border-dashed border-border p-3">
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-medium">Attachments</span>
+                <span className="text-muted-foreground">PDF only, up to 4 MB each and 10 MB in total. The same file goes to everyone.</span>
+              </div>
+              {attachments.length > 0 && (
+                <ul className="mb-2 space-y-1">
+                  {attachments.map((a) => (
+                    <li key={a.id} className="flex items-center gap-2 rounded-md bg-muted/40 px-2 py-1 text-sm">
+                      <span aria-hidden>📎</span>
+                      <span className="flex-1 truncate">{a.name}</span>
+                      <span className="text-xs text-muted-foreground">{mb(a.size)}</span>
+                      <button onClick={() => setAttachments((prev) => prev.filter((x) => x.id !== a.id))} className="text-xs text-muted-foreground hover:text-destructive" aria-label={`Remove ${a.name}`}>
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {attachedBytes > 10 * 1024 * 1024 && <p className="mb-2 text-xs text-destructive">Attachments are over 10 MB in total. Remove one.</p>}
+              <div className="flex flex-wrap items-center gap-2">
+                <label className={`btn-secondary cursor-pointer !py-1 text-xs ${uploading || attachments.length >= 5 ? 'pointer-events-none opacity-50' : ''}`}>
+                  {uploading ? 'Uploading…' : '+ Attach a PDF'}
+                  <input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) uploadPdf(f);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+                {library.length > 0 && (
+                  <select value="" onChange={(e) => addFromLibrary(e.target.value)} disabled={attachments.length >= 5} className="!w-auto rounded-md border border-border bg-background px-2 py-1 text-xs">
+                    <option value="">…or pick from the PDF Library</option>
+                    {library
+                      .filter((d) => !attachments.some((a) => a.id === d.id))
+                      .map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name} ({mb(d.size)})
+                        </option>
+                      ))}
+                  </select>
+                )}
+              </div>
+            </div>
+            <p className="mt-3 text-[11px] text-muted-foreground">
+              Personalise with a column name in double braces, like <code className="font-mono">{'{{Name}}'}</code>. An unsubscribe link is added at the bottom automatically.
             </p>
           </section>
 
           <details className="rounded-lg border bg-card p-4">
-            <summary className="cursor-pointer text-sm font-semibold">3. More options <span className="font-normal text-muted-foreground">(sender name, Cc, schedule, backup mailboxes)</span></summary>
+            <summary className="cursor-pointer text-sm font-semibold">
+              3. More options <span className="font-normal text-muted-foreground">(sender name, Reply-To, Cc/Bcc, send later, backup mailboxes)</span>
+            </summary>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <label className="text-xs text-muted-foreground">
+              <label className="text-xs font-medium">
                 From name
-                <input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="Placement Team" className="mt-0.5 w-full text-sm text-foreground" />
+                <input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="Placement Team" className={`${FIELD} mt-1 font-normal`} />
               </label>
-              <label className="text-xs text-muted-foreground">
+              <label className="text-xs font-medium">
                 Reply-To (optional)
-                <input value={replyTo} onChange={(e) => setReplyTo(e.target.value)} placeholder="placements@masaischool.com" className="mt-0.5 w-full text-sm text-foreground" />
+                <input value={replyTo} onChange={(e) => setReplyTo(e.target.value)} placeholder="placements@masaischool.com" className={`${FIELD} mt-1 font-normal`} />
               </label>
-              <label className="text-xs text-muted-foreground">
+              <label className="text-xs font-medium">
                 Cc on every email
-                <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="placements@masaischool.com" className="mt-0.5 w-full text-sm text-foreground" />
+                <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="placements@masaischool.com" className={`${FIELD} mt-1 font-normal`} />
               </label>
-              <label className="text-xs text-muted-foreground">
+              <label className="text-xs font-medium">
                 Bcc on every email
-                <input value={bcc} onChange={(e) => setBcc(e.target.value)} className="mt-0.5 w-full text-sm text-foreground" />
+                <input value={bcc} onChange={(e) => setBcc(e.target.value)} className={`${FIELD} mt-1 font-normal`} />
               </label>
-              <label className="text-xs text-muted-foreground">
+              <label className="text-xs font-medium">
                 Send later (optional)
-                <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} className="mt-0.5 w-full text-sm text-foreground" />
+                <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} className={`${FIELD} mt-1 font-normal`} />
               </label>
-              <div className="text-xs text-muted-foreground">
-                Backup mailboxes (if yours hits Google&apos;s daily limit)
+              <div className="text-xs font-medium">
+                Backup mailboxes
+                <span className="block font-normal text-muted-foreground">Used if yours reaches Google&apos;s daily limit.</span>
                 {check?.backups.length ? (
-                  <div className="mt-1 space-y-1">
+                  <div className="mt-1 space-y-1 font-normal">
                     {check.backups.map((b) => (
-                      <label key={b.id} className="flex items-center gap-2 text-sm text-foreground">
+                      <label key={b.id} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
                           disabled={b.status !== 'CONNECTED'}
@@ -448,14 +690,14 @@ export default function QuickSendPage() {
                     ))}
                   </div>
                 ) : (
-                  <p className="mt-1">None available. Teammates offer theirs in Settings → Gmail.</p>
+                  <p className="mt-1 font-normal text-muted-foreground">None available. Teammates offer theirs in Settings → Gmail.</p>
                 )}
               </div>
             </div>
           </details>
         </div>
 
-        {/* ── Right: preview, check, send / tracking ── */}
+        {/* ── Right: check, test, send / tracking, preview ── */}
         <div className="space-y-4 lg:sticky lg:top-4 lg:self-start">
           {current ? (
             <TrackingCard current={current} stats={stats} onPause={() => control('PAUSE')} onResume={() => control('RESUME')} onNew={startOver} />
@@ -463,7 +705,12 @@ export default function QuickSendPage() {
             <section className="rounded-lg border bg-card p-4">
               <h2 className="mb-2 text-sm font-semibold">Ready to send?</h2>
               {!recipients || !subject.trim() || !body.trim() ? (
-                <p className="text-sm text-muted-foreground">Add who gets it, a subject and a message. The check and preview appear here as you type.</p>
+                <ul className="space-y-1 text-sm text-muted-foreground">
+                  <li>{recipients ? '✓' : '○'} Who gets it</li>
+                  <li>{subject.trim() ? '✓' : '○'} Subject</li>
+                  <li>{body.trim() ? '✓' : '○'} Message</li>
+                  <li className="pt-1 text-xs">The check and a preview of the real email appear here as you type.</li>
+                </ul>
               ) : checking && !check ? (
                 <p className="text-sm text-muted-foreground">Checking…</p>
               ) : checkError ? (
@@ -492,6 +739,11 @@ export default function QuickSendPage() {
                       These fields aren&apos;t in your list: {check.unknownVariables.map((v) => `{{${v}}}`).join(', ')}. Use the field buttons, or fix the spelling.
                     </p>
                   )}
+                  {check.attachments.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      📎 {check.attachments.length} attachment{check.attachments.length === 1 ? '' : 's'} ({mb(check.attachments.reduce((n, a) => n + a.size, 0))}) on every email
+                    </p>
+                  )}
                   {!check.sender || check.sender.status !== 'CONNECTED' ? (
                     <p className="text-xs text-destructive">
                       Connect your Gmail first: <Link href="/settings" className="underline">Settings → Gmail</Link>.
@@ -507,14 +759,17 @@ export default function QuickSendPage() {
                       )}
                     </p>
                   )}
-                  <button onClick={send} disabled={!canSend} className="btn-primary w-full !py-2.5 text-sm disabled:opacity-50">
+                  <button onClick={send} disabled={!ready || sending || attachedBytes > 10 * 1024 * 1024} className="btn-primary w-full !py-2.5 text-sm disabled:opacity-50">
                     {sending
                       ? 'Starting…'
                       : check.approval === 'required'
                         ? `Send to ${check.wouldSend} (after admin approval)`
                         : scheduleAt
-                          ? `Schedule for ${check.wouldSend} people`
+                          ? `Schedule for ${check.wouldSend} ${check.wouldSend === 1 ? 'person' : 'people'}`
                           : `Send to ${check.wouldSend} ${check.wouldSend === 1 ? 'person' : 'people'}`}
+                  </button>
+                  <button onClick={sendTest} disabled={!ready || testing} className="btn-secondary w-full !py-1.5 text-xs disabled:opacity-50">
+                    {testing ? 'Sending test…' : 'Send a test to me first'}
                   </button>
                   {check.approval === 'required' && (
                     <p className="text-[11px] text-muted-foreground">An admin approves it in one click; it then sends by itself. You&apos;ll get an email when it&apos;s approved.</p>
@@ -566,11 +821,17 @@ export default function QuickSendPage() {
                 {recent.map((s) => (
                   <tr key={s.campaignId} className="border-t border-border-subtle">
                     <td className="px-3 py-2">
-                      <Link href={`/campaigns/${s.campaignId}`} className="hover:text-primary">{s.name}</Link>
+                      <Link href={`/campaigns/${s.campaignId}`} className="hover:text-primary">
+                        {s.name}
+                      </Link>
                     </td>
                     <td className="px-3 py-2 text-xs">{statusWords(s)}</td>
-                    <td className="px-3 py-2 text-right">{s.sent}/{s.total}</td>
-                    <td className="px-3 py-2 text-right">{s.opened} <span className="text-xs text-muted-foreground">({pct(s.opened, s.sent)}%)</span></td>
+                    <td className="px-3 py-2 text-right">
+                      {s.sent}/{s.total}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {s.opened} <span className="text-xs text-muted-foreground">({pct(s.opened, s.sent)}%)</span>
+                    </td>
                     <td className="px-3 py-2 text-right">{s.clicked}</td>
                     <td className="px-3 py-2 text-right">{s.replied}</td>
                     <td className="px-3 py-2 text-right">{s.failed}</td>
@@ -653,14 +914,24 @@ function TrackingCard({
       <div className="mt-3 flex flex-wrap gap-2">
         {stats?.queued ? (
           stats.status === 'PAUSED' ? (
-            <button onClick={onResume} className="btn-secondary !py-1 text-xs">Resume</button>
+            <button onClick={onResume} className="btn-secondary !py-1 text-xs">
+              Resume
+            </button>
           ) : (
-            <button onClick={onPause} className="btn-secondary !py-1 text-xs">Pause</button>
+            <button onClick={onPause} className="btn-secondary !py-1 text-xs">
+              Pause
+            </button>
           )
         ) : null}
-        <Link href={`/campaigns/${current.id}`} className="btn-secondary !py-1 text-xs">Full report</Link>
-        <Link href="/inbox" className="btn-secondary !py-1 text-xs">Replies in Inbox</Link>
-        <button onClick={onNew} className="ml-auto text-xs text-primary hover:underline">New Quick Send</button>
+        <Link href={`/campaigns/${current.id}`} className="btn-secondary !py-1 text-xs">
+          Full report
+        </Link>
+        <Link href="/inbox" className="btn-secondary !py-1 text-xs">
+          Replies in Inbox
+        </Link>
+        <button onClick={onNew} className="ml-auto text-xs text-primary hover:underline">
+          New Quick Send
+        </button>
       </div>
     </section>
   );

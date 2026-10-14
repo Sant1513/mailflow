@@ -9,6 +9,8 @@ import { audit } from '@/lib/audit/log';
 import { dryRun } from '@/lib/campaigns/evaluate';
 import { renderTemplate, extractVariables, htmlToPlainText } from '@/lib/templates/variables';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
+import { GmailProvider } from '@/lib/email/gmail';
+import { snapshotFromTemplate } from '@/lib/documents/campaign';
 import { linkContactsForDataset } from '@/lib/records/contactLink';
 import { loadCampaignForSession, senderAccountFor } from '@/lib/campaigns/context';
 import { startCampaignSend } from '@/lib/campaigns/startSend';
@@ -22,6 +24,7 @@ import { QUICK_SEND_DESCRIPTION, QUICK_SEND_ON_APPROVAL, campaignStats } from '@
 export const maxDuration = 60;
 
 const MAX_ROWS = 5000;
+const MAX_ATTACHMENT_BYTES_TOTAL = 10 * 1024 * 1024;
 
 const emailList = z
   .union([z.string(), z.array(z.string())])
@@ -41,7 +44,12 @@ const recipientsSchema = z.discriminatedUnion('kind', [
 ]);
 
 const bodySchema = z.object({
-  mode: z.enum(['check', 'send']),
+  /** check = dry run + preview · test = one real email to yourself · send = the real thing. */
+  mode: z.enum(['check', 'test', 'send']),
+  /** PDF Library documents attached unchanged to every email (Quick Send attaches PDFs only). */
+  attachmentDocumentIds: z.array(z.string().min(1)).max(5).default([]),
+  /** Append the sender's saved email signature (Settings → Email signature). */
+  includeSignature: z.boolean().default(false),
   recipients: recipientsSchema,
   subject: z.string().trim().min(1, 'Add a subject.').max(500),
   body: z.string().min(1, 'Write the message.').max(200_000),
@@ -136,7 +144,26 @@ export const POST = withErrorHandling(async (req) => {
   }
 
   const subject = normalizeVariables(body.subject, resolved.columns);
-  const html = body.format === 'html' ? normalizeVariables(body.body, resolved.columns) : textToHtml(normalizeVariables(body.body, resolved.columns));
+  const me = await prisma.user.findUnique({ where: { id: session.userId }, select: { emailSignature: true } });
+  const signature = body.includeSignature && me?.emailSignature?.trim() ? me.emailSignature : null;
+  const messageHtml = body.format === 'html' ? normalizeVariables(body.body, resolved.columns) : textToHtml(normalizeVariables(body.body, resolved.columns));
+  const html = signature ? `${messageHtml}\n<br>\n<div class="signature">${signature}</div>` : messageHtml;
+
+  // Attachments: PDFs from the PDF Library in this workspace, sent unchanged.
+  const attachmentDocs = body.attachmentDocumentIds.length
+    ? await prisma.documentTemplate.findMany({
+        where: { id: { in: body.attachmentDocumentIds }, workspaceId: session.workspaceId, archived: false },
+        include: { file: { select: { size: true, fileName: true } } },
+      })
+    : [];
+  if (attachmentDocs.length !== new Set(body.attachmentDocumentIds).size) {
+    return NextResponse.json({ error: 'An attachment is no longer available. Remove it and attach it again.' }, { status: 400 });
+  }
+  const orderedDocs = [...new Set(body.attachmentDocumentIds)].map((id) => attachmentDocs.find((d) => d.id === id)!);
+  const attachmentBytes = orderedDocs.reduce((n, d) => n + d.file.size, 0);
+  if (attachmentBytes > MAX_ATTACHMENT_BYTES_TOTAL) {
+    return NextResponse.json({ error: `Attachments add up to ${(attachmentBytes / 1048576).toFixed(1)} MB; keep them under 10 MB per email.` }, { status: 400 });
+  }
   const plainText = htmlToPlainText(html);
   const keys = new Set(resolved.columns.map((c) => c.key));
   const unknownVariables = extractVariables(subject, html).filter((v) => !keys.has(v));
@@ -176,16 +203,49 @@ export const POST = withErrorHandling(async (req) => {
       backups: await availableFallbackMailboxes(session.organizationId, sender?.id),
       estimatedMinutes: Math.ceil((Math.min(wouldSend, capacity || wouldSend) * 3.6) / 60),
       approval: session.role === Role.ADMIN || session.role === Role.SUPER_ADMIN ? 'none' : 'required',
+      hasSignature: !!me?.emailSignature?.trim(),
+      attachments: orderedDocs.map((d) => ({ id: d.id, name: d.file.fileName, size: d.file.size })),
     });
   }
 
-  // ── send ──
   if (!sender || sender.status !== 'CONNECTED') {
     return NextResponse.json({ error: 'Connect your Gmail first: Settings → Gmail → Connect Gmail.' }, { status: 400 });
   }
   if (unknownVariables.length) {
     return NextResponse.json({ error: `These fields aren't in your list: ${unknownVariables.map((v) => `{{${v}}}`).join(', ')}. Fix or remove them.` }, { status: 400 });
   }
+
+  // ── test: one real email to yourself, filled in with the first recipient's details ──
+  if (body.mode === 'test') {
+    const first = simulation.evaluations.find((e) => e.willSend);
+    const firstRow = first ? resolved.rows.find((r) => r.id === first.recordId) : null;
+    if (!firstRow) return NextResponse.json({ error: 'Nobody in the list can receive this email yet.' }, { status: 400 });
+    const rendered = renderTemplate({ subject, html, plainText }, firstRow.data);
+    const files = orderedDocs.length
+      ? await prisma.documentFile.findMany({ where: { id: { in: orderedDocs.map((d) => d.fileId) } }, select: { id: true, data: true } })
+      : [];
+    try {
+      await new GmailProvider(sender).sendEmail({
+        to: session.email,
+        fromName: body.fromName?.trim() || sender.displayName || session.name,
+        fromEmail: sender.emailAddress,
+        subject: `[Test] ${rendered.subject}`,
+        html: `<p style="font-size:12px;color:#888;border:1px dashed #ccc;padding:6px 8px">Test of a Quick Send, filled in as ${first!.email}. Recipients won't see this note.</p>${rendered.html}`,
+        plainText: rendered.plainText,
+        attachments: orderedDocs.map((d) => ({
+          filename: d.fileNamePattern.toLowerCase().endsWith('.pdf') ? d.fileNamePattern : `${d.fileNamePattern}.pdf`,
+          mimeType: 'application/pdf',
+          content: Buffer.from(files.find((f) => f.id === d.fileId)!.data),
+        })),
+      });
+    } catch (err) {
+      return NextResponse.json({ error: `The test email could not be sent: ${(err as Error).message}` }, { status: 502 });
+    }
+    await audit(session, 'QUICK_SEND_TEST', { metadata: { to: session.email, subject: rendered.subject } });
+    return NextResponse.json({ sentTo: session.email, filledAs: first!.email });
+  }
+
+  // ── send ──
   if (wouldSend <= 0) return NextResponse.json({ error: 'Nobody to send to: every row was skipped. Check the reasons above.' }, { status: 400 });
   const fallback = await validateFallbackList(session.organizationId, sender.id, body.fallbackAccountIds ?? []);
   if (!fallback.ok) return NextResponse.json({ error: fallback.error }, { status: 400 });
@@ -244,6 +304,8 @@ export const POST = withErrorHandling(async (req) => {
       ccEmails: body.cc ?? [],
       bccEmails: body.bcc ?? [],
       fallbackAccountIds: fallback.ids,
+      // Attached PDFs go out unchanged: a plain copy, no reference stamp.
+      documents: { create: orderedDocs.map((d, i) => ({ documentTemplateId: d.id, order: i, ...snapshotFromTemplate(d), stampReference: false })) },
     },
   });
   await audit(session, 'QUICK_SEND', {
