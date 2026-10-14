@@ -38,6 +38,20 @@ describe('columns from a pasted / uploaded table', () => {
     expect(cols.filter((c) => c.type === ColumnType.EMAIL).map((c) => c.header)).toEqual(['Mail ID']);
   });
 
+  it('one bad address does not hide the email column', () => {
+    const t = {
+      headers: ['Student', 'Mail ID'],
+      rows: [
+        { Student: 'Asha', 'Mail ID': 'asha@example.com' },
+        { Student: 'Bo', 'Mail ID': 'bo@example.com' },
+        { Student: 'Cy', 'Mail ID': 'cy@example.com' },
+        { Student: 'Dud', 'Mail ID': 'not-an-email' },
+        { Student: 'Ed', 'Mail ID': 'ed@example.com' },
+      ],
+    };
+    expect(columnsFromTable(t).find((c) => c.type === ColumnType.EMAIL)?.header).toBe('Mail ID');
+  });
+
   it('a chosen email column wins, and only one column is the email column', () => {
     const t = { headers: ['Personal', 'Work'], rows: [{ Personal: 'a@x.com', Work: 'b@y.com' }] };
     const cols = columnsFromTable(t, 'Work');

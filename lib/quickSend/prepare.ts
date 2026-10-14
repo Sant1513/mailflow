@@ -28,8 +28,9 @@ export function headerToKey(header: string, index: number): string {
 /** Columns for a pasted / uploaded table: unique keys, inferred types, the email column typed EMAIL. */
 export function columnsFromTable(table: { headers: string[]; rows: Record<string, string>[] }, emailHeader?: string | null): QuickColumn[] {
   const types = inferColumnTypes(table);
-  // The email column: as chosen, else by name ("Email"), else the first column holding only addresses ("Mail ID").
-  const email = emailHeader ?? guessEmailColumn(table.headers) ?? table.headers.find((h) => types[h] === ColumnType.EMAIL) ?? null;
+  // The email column: as chosen, else by name ("Email"), else the column whose values are mostly
+  // addresses ("Mail ID"); a few bad addresses must not hide it (they're skipped at send time).
+  const email = emailHeader ?? guessEmailColumn(table.headers) ?? mostlyEmailColumn(table) ?? null;
   const used = new Set<string>();
   return table.headers.map((header, i) => {
     let key = headerToKey(header, i);
@@ -37,6 +38,18 @@ export function columnsFromTable(table: { headers: string[]; rows: Record<string
     used.add(key.toLowerCase());
     return { header, key, label: header.trim() || key, type: header === email ? ColumnType.EMAIL : types[header] === ColumnType.EMAIL ? ColumnType.TEXT : types[header] ?? ColumnType.TEXT };
   });
+}
+
+/** The column where at least 80% of the filled-in values (in the first 200 rows) are email addresses. */
+export function mostlyEmailColumn(table: { headers: string[]; rows: Record<string, string>[] }): string | null {
+  let best: { header: string; share: number } | null = null;
+  for (const header of table.headers) {
+    const values = table.rows.slice(0, 200).map((r) => String(r[header] ?? '').trim()).filter(Boolean);
+    if (!values.length) continue;
+    const share = values.filter((v) => EMAIL_RE.test(v)).length / values.length;
+    if (share >= 0.8 && (!best || share > best.share)) best = { header, share };
+  }
+  return best?.header ?? null;
 }
 
 export { normalizePastedList } from './paste';
