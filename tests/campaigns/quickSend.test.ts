@@ -50,6 +50,10 @@ describe('columns from a pasted / uploaded table', () => {
       ],
     };
     expect(columnsFromTable(t).find((c) => c.type === ColumnType.EMAIL)?.header).toBe('Mail ID');
+    // Small lists too: 3 good of 4.
+    expect(columnsFromTable({ headers: t.headers, rows: t.rows.slice(1) }).find((c) => c.type === ColumnType.EMAIL)?.header).toBe('Mail ID');
+    // A column that is mostly not addresses is never picked.
+    expect(columnsFromTable({ headers: ['Notes'], rows: [{ Notes: 'a@b.co' }, { Notes: 'call back' }, { Notes: 'n/a' }] }).some((c) => c.type === ColumnType.EMAIL)).toBe(false);
   });
 
   it('a chosen email column wins, and only one column is the email column', () => {

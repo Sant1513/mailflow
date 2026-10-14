@@ -40,14 +40,14 @@ export function columnsFromTable(table: { headers: string[]; rows: Record<string
   });
 }
 
-/** The column where at least 80% of the filled-in values (in the first 200 rows) are email addresses. */
+/** The column with the highest share of email addresses (in the first 200 rows), if more than half of its filled-in values are addresses. */
 export function mostlyEmailColumn(table: { headers: string[]; rows: Record<string, string>[] }): string | null {
   let best: { header: string; share: number } | null = null;
   for (const header of table.headers) {
     const values = table.rows.slice(0, 200).map((r) => String(r[header] ?? '').trim()).filter(Boolean);
     if (!values.length) continue;
     const share = values.filter((v) => EMAIL_RE.test(v)).length / values.length;
-    if (share >= 0.8 && (!best || share > best.share)) best = { header, share };
+    if (share > 0.5 && (!best || share > best.share)) best = { header, share };
   }
   return best?.header ?? null;
 }
