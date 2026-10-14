@@ -82,6 +82,9 @@ const mb = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1
  * unsubscribe and the Inbox all apply.
  */
 export default function QuickSendPage() {
+  // 0. Campaign name (blank = the subject + date)
+  const [campaignName, setCampaignName] = useState('');
+
   // 1. Recipients
   const [source, setSource] = useState<Source>('paste');
   const [pasted, setPasted] = useState('');
@@ -145,6 +148,7 @@ export default function QuickSendPage() {
       const raw = localStorage.getItem(DRAFT_KEY);
       if (raw) {
         const d = JSON.parse(raw);
+        setCampaignName(d.campaignName ?? '');
         setSubject(d.subject ?? '');
         setBody(d.body ?? '');
         setFormat(d.format === 'html' ? 'html' : 'text');
@@ -165,13 +169,13 @@ export default function QuickSendPage() {
     if (!restored.current || current) return;
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(DRAFT_KEY, JSON.stringify({ subject, body, format, fromName, replyTo, cc, bcc, pasted: pasted.length < 200_000 ? pasted : '', attachments, includeSignature }));
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ campaignName, subject, body, format, fromName, replyTo, cc, bcc, pasted: pasted.length < 200_000 ? pasted : '', attachments, includeSignature }));
       } catch {
         /* ignore */
       }
     }, 600);
     return () => clearTimeout(t);
-  }, [subject, body, format, fromName, replyTo, cc, bcc, pasted, attachments, includeSignature, current]);
+  }, [campaignName, subject, body, format, fromName, replyTo, cc, bcc, pasted, attachments, includeSignature, current]);
 
   const loadRecent = useCallback(async () => {
     const res = await fetch('/api/quick-send');
@@ -229,6 +233,7 @@ export default function QuickSendPage() {
     (mode: 'check' | 'test' | 'send') => ({
       mode,
       recipients,
+      name: campaignName.trim() || undefined,
       subject,
       body,
       format,
@@ -241,7 +246,7 @@ export default function QuickSendPage() {
       fallbackAccountIds: backups,
       scheduledAt: scheduleAt ? new Date(scheduleAt).toISOString() : undefined,
     }),
-    [recipients, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt],
+    [recipients, campaignName, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt],
   );
 
   // ── live check: dry run + preview as you type ──
@@ -390,6 +395,7 @@ export default function QuickSendPage() {
   function startOver() {
     setCurrent(null);
     setStats(null);
+    setCampaignName('');
     setPasted('');
     setTable(null);
     setSubject('');
@@ -416,6 +422,21 @@ export default function QuickSendPage() {
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_440px]">
         {/* ── Left: who + message + options ── */}
         <div className="space-y-5">
+          <section className="rounded-lg border bg-card p-4">
+            <label htmlFor="qs-name" className="mb-1 block text-sm font-semibold">
+              Campaign name
+            </label>
+            <input
+              id="qs-name"
+              value={campaignName}
+              onChange={(e) => setCampaignName(e.target.value)}
+              maxLength={150}
+              placeholder={subject.trim() ? `${subject.trim().slice(0, 60)} · ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}` : 'e.g. October drive: interview confirmations'}
+              className={FIELD}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">How this send appears in Campaigns, reports and Approvals. Leave it blank to use the subject and date.</p>
+          </section>
+
           <section className="rounded-lg border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">1. Who gets it</h2>
             <div className="mb-3 flex flex-wrap gap-1 rounded-full border border-border bg-muted/30 p-1 text-xs">

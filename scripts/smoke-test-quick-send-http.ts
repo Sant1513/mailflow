@@ -159,11 +159,12 @@ async function main() {
     check('a test send goes through the real mailbox (fails safely for a fixture)', test.status === 502 && /could not be sent/.test(test.json?.error ?? ''), test.json);
 
     console.log('\nOperator sends → approval → sends on approval');
-    const sent = await call('POST', '/api/quick-send', op.cookie, { mode: 'send', recipients, ...message, cc: 'placements@example.com', scheduledAt: YEAR_AHEAD, attachmentDocumentIds: docId ? [docId] : [] });
+    const sent = await call('POST', '/api/quick-send', op.cookie, { mode: 'send', recipients, ...message, name: 'October drive: interview confirmations', cc: 'placements@example.com', scheduledAt: YEAR_AHEAD, attachmentDocumentIds: docId ? [docId] : [] });
     check('goes to approval', sent.status === 201 && sent.json?.state === 'awaiting_approval', sent.json);
     const id = sent.json?.campaignId as string;
     const camp = await prisma.campaign.findUnique({ where: { id }, include: { dataset: { include: { columns: true } }, templateVersion: true } });
     check('a normal campaign was created (pending approval, marked Quick Send)', camp?.status === CampaignStatus.PENDING_APPROVAL && camp?.description === 'Quick Send', camp?.status);
+    check('it carries the campaign name you typed', camp?.name === 'October drive: interview confirmations', camp?.name);
     check('its list holds the 4 rows with an Email column', (await prisma.record.count({ where: { datasetId: camp!.datasetId } })) === 4 && camp!.dataset.columns.some((c) => c.key === 'Mail_ID' && c.type === 'EMAIL'));
     check('the message was stored with column keys', camp?.templateVersion.subject === 'Hi {{First_Name}}' && camp.templateVersion.html.includes('{{First_Name}}') && camp.templateVersion.html.includes('{{Company}}'), camp?.templateVersion.subject);
     check('contacts linked for reply threading', (await prisma.record.count({ where: { datasetId: camp!.datasetId, contactId: { not: null } } })) === 3);

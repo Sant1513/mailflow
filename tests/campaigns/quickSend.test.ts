@@ -83,7 +83,8 @@ describe('personalisation', () => {
 
   it('plain text becomes paragraphs and line breaks, with HTML escaped and fields kept', () => {
     const html = textToHtml('Hi {{First_Name}},\n\nYour offer <b>is</b> ready.\nSee you soon\n\nRegards');
-    expect(html).toBe('<p>Hi {{First_Name}},</p>\n<p>Your offer &lt;b&gt;is&lt;/b&gt; ready.<br>See you soon</p>\n<p>Regards</p>');
-    expect(renderTemplate({ subject: 's', html }, { First_Name: 'Rahul' }).html).toContain('<p>Hi Rahul,</p>');
+    expect(html).toContain('<p style="margin:0 0 12px">Hi {{First_Name}},</p>\n<p style="margin:0 0 12px">Your offer &lt;b&gt;is&lt;/b&gt; ready.<br>See you soon</p>\n<p style="margin:0 0 12px">Regards</p>');
+    expect(html.startsWith('<div style="font-family:Arial')).toBe(true);
+    expect(renderTemplate({ subject: 's', html }, { First_Name: 'Rahul' }).html).toContain('>Hi Rahul,</p>');
   });
 });

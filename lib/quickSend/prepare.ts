@@ -71,14 +71,18 @@ export function normalizeVariables(text: string, columns: { key: string; label: 
   });
 }
 
+/** The look of a Simple-mode email: the same clean sans-serif in every inbox (and in the preview). */
+export const SIMPLE_EMAIL_STYLE = 'font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222222';
+
 /** Plain text as typed in the message box → simple email HTML (paragraphs, line breaks). */
 export function textToHtml(text: string): string {
-  return text
+  const paragraphs = text
     .replace(/\r\n/g, '\n')
     .trim()
     .split(/\n{2,}/)
-    .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+    .map((p) => `<p style="margin:0 0 12px">${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
     .join('\n');
+  return `<div style="${SIMPLE_EMAIL_STYLE}">\n${paragraphs}\n</div>`;
 }
 
 export function isValidEmail(value: string): boolean {

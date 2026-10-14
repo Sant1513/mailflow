@@ -10,6 +10,7 @@ import { dryRun } from '@/lib/campaigns/evaluate';
 import { renderTemplate, extractVariables, htmlToPlainText } from '@/lib/templates/variables';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 import { GmailProvider } from '@/lib/email/gmail';
+import { normalizeEmailLinks } from '@/lib/email/links';
 import { snapshotFromTemplate } from '@/lib/documents/campaign';
 import { linkContactsForDataset } from '@/lib/records/contactLink';
 import { loadCampaignForSession, senderAccountFor } from '@/lib/campaigns/context';
@@ -51,6 +52,8 @@ const bodySchema = z.object({
   /** Append the sender's saved email signature (Settings → Email signature). */
   includeSignature: z.boolean().default(false),
   recipients: recipientsSchema,
+  /** The campaign's name in Campaigns, reports and Approvals; blank = the subject + date. */
+  name: z.string().trim().max(150).optional(),
   subject: z.string().trim().min(1, 'Add a subject.').max(500),
   body: z.string().min(1, 'Write the message.').max(200_000),
   format: z.enum(['text', 'html']).default('text'),
@@ -198,7 +201,7 @@ export const POST = withErrorHandling(async (req) => {
         ...suppressed.slice(0, 3).map((s) => ({ email: s.email, reason: s.reason === 'BOUNCED' ? 'Bounced before' : 'Unsubscribed' })),
       ],
       unknownVariables,
-      preview: preview && first ? { to: first.email, subject: preview.subject, html: sanitizeEmailHtml(preview.html), missingVariables: preview.missingVariables } : null,
+      preview: preview && first ? { to: first.email, subject: preview.subject, html: sanitizeEmailHtml(normalizeEmailLinks(preview.html)), missingVariables: preview.missingVariables } : null,
       sender: sender ? { emailAddress: sender.emailAddress, status: sender.status, sentToday: usage?.messages ?? 0, capacityToday: capacity } : null,
       backups: await availableFallbackMailboxes(session.organizationId, sender?.id),
       estimatedMinutes: Math.ceil((Math.min(wouldSend, capacity || wouldSend) * 3.6) / 60),
@@ -253,7 +256,7 @@ export const POST = withErrorHandling(async (req) => {
   if (scheduledAt && scheduledAt.getTime() < Date.now() - 60_000) return NextResponse.json({ error: 'The scheduled time is in the past.' }, { status: 400 });
 
   const stamp = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
-  const name = `${body.subject.slice(0, 80)} · ${stamp}`;
+  const name = body.name?.trim() || `${body.subject.slice(0, 80)} · ${stamp}`;
 
   // 1. The list (a new dataset unless an existing one was picked).
   let datasetId = resolved.datasetId;
