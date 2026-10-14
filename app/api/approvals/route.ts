@@ -1,3 +1,4 @@
+import { QUICK_SEND_DESCRIPTION, QUICK_SEND_ON_APPROVAL } from '@/lib/quickSend/stats';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { requireRole } from '@/lib/auth/session';
@@ -59,7 +60,8 @@ export const GET = withErrorHandling(async (req) => {
       reviewedById: true,
       updatedAt: true,
       workspace: { select: { id: true, name: true } },
-      dataset: { select: { name: true } },
+      dataset: { select: { name: true, _count: { select: { records: true } } } },
+      description: true,
       template: { select: { name: true } },
       templateVersion: { select: { version: true, subject: true } },
       createdBy: { select: { id: true, name: true, email: true } },
@@ -72,6 +74,15 @@ export const GET = withErrorHandling(async (req) => {
     ? await prisma.user.findMany({ where: { id: { in: reviewerIds } }, select: { id: true, name: true } })
     : [];
   const reviewerName = new Map(reviewers.map((r) => [r.id, r.name]));
+
+  // Quick Sends that go out by themselves the moment they are approved.
+  const onApproval = campaigns.length
+    ? await prisma.auditLog.findMany({
+        where: { action: QUICK_SEND_ON_APPROVAL, targetType: 'Campaign', targetId: { in: campaigns.map((c) => c.id) } },
+        select: { targetId: true },
+      })
+    : [];
+  const sendsOnApproval = new Set(onApproval.map((a) => a.targetId));
 
   const counts = await prisma.campaign.groupBy({
     by: ['status'],
@@ -90,7 +101,9 @@ export const GET = withErrorHandling(async (req) => {
       workspace: c.workspace,
       requester: c.createdBy,
       dataset: c.dataset.name,
-      recipients: c._count.campaignRecords,
+      recipients: c._count.campaignRecords || c.dataset._count.records,
+      quickSend: c.description === QUICK_SEND_DESCRIPTION,
+      sendsOnApproval: sendsOnApproval.has(c.id),
       template: `${c.template.name} v${c.templateVersion.version}`,
       subjectLine: c.templateVersion.subject,
       submittedAt: c.submittedAt,

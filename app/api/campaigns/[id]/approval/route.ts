@@ -8,6 +8,8 @@ import { audit } from '@/lib/audit/log';
 import { loadCampaignForSession } from '@/lib/campaigns/context';
 import { sendApprovalDecisionEmail, sendApprovalRequestEmail } from '@/lib/campaigns/approvalEmails';
 import { CampaignStatus, Role } from '@prisma/client';
+import { startCampaignSend } from '@/lib/campaigns/startSend';
+import { QUICK_SEND_ON_APPROVAL } from '@/lib/quickSend/stats';
 
 /**
  * §36 Approval workflow: Draft → Pending Approval → Approved → Send.
@@ -22,6 +24,9 @@ const actionSchema = z.object({
   /** Internal reviewer notes; never emailed. */
   remarks: z.string().max(2000).optional(),
 });
+
+// Approving a Quick Send also starts it, which snapshots every recipient.
+export const maxDuration = 60;
 
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
@@ -89,8 +94,26 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       metadata: { createdBy: campaign.createdById, remarks: remarks?.trim() || undefined },
     });
     const emailStatus = await sendApprovalDecisionEmail(campaign.id, 'APPROVED', session);
+
+    // A Quick Send asked to go out as soon as it is approved: start it now (same send path as the
+    // Send button; the emails still go from the requester's own mailbox).
+    let send: Record<string, unknown> | null = null;
+    const onApproval = await prisma.auditLog.findFirst({
+      where: { action: QUICK_SEND_ON_APPROVAL, targetType: 'Campaign', targetId: campaign.id },
+      orderBy: { createdAt: 'desc' },
+      select: { metadata: true },
+    });
+    if (onApproval) {
+      const approvedCampaign = await loadCampaignForSession(session, campaign.id);
+      const at = (onApproval.metadata as { scheduledAt?: string | null } | null)?.scheduledAt;
+      const result = approvedCampaign
+        ? await startCampaignSend({ campaign: approvedCampaign, actor: session, scheduledAt: at ? new Date(at) : null, via: 'approval' })
+        : { ok: false as const, status: 404, body: { error: 'Campaign not found' } };
+      send = { ok: result.ok, ...result.body };
+    }
+
     const updated = await prisma.campaign.findUnique({ where: { id: campaign.id } });
-    return NextResponse.json({ campaign: updated, emailStatus });
+    return NextResponse.json({ campaign: updated, emailStatus, send });
   }
 
   if (action === 'REJECT' && !reason?.trim()) {

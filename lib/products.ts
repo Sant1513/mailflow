@@ -26,6 +26,7 @@ export interface NavItem {
 }
 
 export const MAIL_NAV: NavItem[] = [
+  { href: '/quick-send', label: 'Quick Send' },
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/inbox', label: 'Inbox' },
   { href: '/data', label: 'Data' },
@@ -52,7 +53,7 @@ export const SIGN_NAV: NavItem[] = [
 export const PRODUCT_NAV: Record<Product, NavItem[]> = { mail: MAIL_NAV, sign: SIGN_NAV };
 
 const MAIL_PREFIXES = [
-  '/dashboard', '/inbox', '/data', '/contacts', '/campaigns', '/templates',
+  '/quick-send', '/dashboard', '/inbox', '/data', '/contacts', '/campaigns', '/templates',
   '/automations', '/batches', '/suppressions', '/performance', '/reports', '/history',
 ];
 

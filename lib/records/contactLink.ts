@@ -39,36 +39,34 @@ export async function linkContactsForDataset(opts: {
     if (email && EMAIL_RE.test(email)) emailByRecord.set(record.id, email);
   }
 
+  // Bulk, in a fixed number of round trips (a 1,000-row list used to cost
+  // 1,000+ queries): create the missing contacts in one insert, read every
+  // contact back in one query, then link all records in one UPDATE.
+  const emails = [...new Set(emailByRecord.values())];
   const contactIdByEmail = new Map<string, string>();
-  for (const email of new Set(emailByRecord.values())) {
-    const contact = await prisma.contact.upsert({
-      where: { workspaceId_primaryEmail: { workspaceId: opts.workspaceId, primaryEmail: email } },
-      update: {},
-      create: {
-        organizationId: opts.organizationId,
-        workspaceId: opts.workspaceId,
-        primaryEmail: email,
-      },
+  for (let i = 0; i < emails.length; i += 5000) {
+    const chunk = emails.slice(i, i + 5000);
+    await prisma.contact.createMany({
+      data: chunk.map((primaryEmail) => ({ organizationId: opts.organizationId, workspaceId: opts.workspaceId, primaryEmail })),
+      skipDuplicates: true,
     });
-    contactIdByEmail.set(email, contact.id);
+    const found = await prisma.contact.findMany({
+      where: { workspaceId: opts.workspaceId, primaryEmail: { in: chunk } },
+      select: { id: true, primaryEmail: true },
+    });
+    for (const c of found) contactIdByEmail.set(c.primaryEmail, c.id);
   }
 
-  // Group records by contact so this is one UPDATE per contact, not per row.
-  const recordIdsByContact = new Map<string, string[]>();
-  for (const [recordId, email] of emailByRecord) {
-    const contactId = contactIdByEmail.get(email)!;
-    const list = recordIdsByContact.get(contactId) ?? [];
-    list.push(recordId);
-    recordIdsByContact.set(contactId, list);
-  }
-
+  const pairs = [...emailByRecord].map(([recordId, email]) => [recordId, contactIdByEmail.get(email)] as const).filter((p): p is readonly [string, string] => !!p[1]);
   let linked = 0;
-  for (const [contactId, recordIds] of recordIdsByContact) {
-    const { count } = await prisma.record.updateMany({
-      where: { id: { in: recordIds } },
-      data: { contactId },
-    });
-    linked += count;
+  for (let i = 0; i < pairs.length; i += 5000) {
+    const chunk = pairs.slice(i, i + 5000);
+    const recordIds = chunk.map((p) => p[0]);
+    const contactIds = chunk.map((p) => p[1]);
+    linked += await prisma.$executeRaw`
+      UPDATE "Record" AS r SET "contactId" = v.cid
+      FROM unnest(${recordIds}::text[], ${contactIds}::text[]) AS v(rid, cid)
+      WHERE r."id" = v.rid AND r."contactId" IS NULL`;
   }
 
   return linked;

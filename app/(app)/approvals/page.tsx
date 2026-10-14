@@ -13,6 +13,8 @@ interface RequestRow {
   requester: { id: string; name: string; email: string };
   dataset: string;
   recipients: number;
+  quickSend?: boolean;
+  sendsOnApproval?: boolean;
   template: string;
   subjectLine: string;
   submittedAt: string | null;
@@ -163,7 +165,9 @@ function ApprovalsPageInner() {
       return;
     }
     const emailNote = json.emailStatus ? ` · email ${String(json.emailStatus).toLowerCase().startsWith('sent') ? 'sent in the request thread' : json.emailStatus}` : '';
-    toast.success(`${decision.action === 'APPROVE' ? 'Approved' : 'Rejected'} "${decision.row.name}"${emailNote}`, { duration: 8000 });
+    const sendNote = json.send ? (json.send.ok ? ' · sending started' : ` · could not start sending: ${json.send.error ?? 'unknown error'}`) : '';
+    if (json.send && !json.send.ok) toast.error(`Approved, but sending did not start: ${json.send.error ?? 'unknown error'}`, { duration: 10000 });
+    toast.success(`${decision.action === 'APPROVE' ? 'Approved' : 'Rejected'} "${decision.row.name}"${emailNote}${sendNote}`, { duration: 8000 });
     setDecision(null);
     setReason('');
     setRemarks('');
@@ -330,6 +334,7 @@ function ApprovalsPageInner() {
                         <Link href={`/campaigns/${r.id}`} className="font-medium hover:text-primary">{r.name}</Link>
                         <div className="text-xs text-faint">
                           <span className={`badge ${STATUS_BADGE[r.status] ?? 'badge-neutral'} mr-2`}>{r.status.replace(/_/g, ' ').toLowerCase()}</span>
+                          {r.sendsOnApproval && <span className="badge badge-neutral mr-2" title="Quick Send: approving it sends it straight away">sends when approved</span>}
                           {r.workspace.name} · {r.dataset}
                         </div>
                         <button onClick={() => setExpanded(expanded === r.id ? null : r.id)} className="mt-1 text-[11px] text-muted-foreground hover:text-foreground">
@@ -359,7 +364,7 @@ function ApprovalsPageInner() {
                         {r.status === 'PENDING_APPROVAL' ? (
                           r.canDecide ? (
                             <div className="flex justify-end gap-1.5">
-                              <button onClick={() => setDecision({ row: r, action: 'APPROVE' })} className="btn-primary !py-1 text-[11px]">Approve</button>
+                              <button onClick={() => setDecision({ row: r, action: 'APPROVE' })} className="btn-primary !py-1 text-[11px]">{r.sendsOnApproval ? 'Approve & send' : 'Approve'}</button>
                               <button onClick={() => setDecision({ row: r, action: 'REJECT' })} className="btn-secondary !py-1 text-[11px]">Reject</button>
                             </div>
                           ) : (
@@ -414,7 +419,7 @@ function ApprovalsPageInner() {
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setDecision(null)} disabled={busy} className="btn-secondary">Cancel</button>
               <button onClick={decide} disabled={busy} className="btn-primary">
-                {busy ? 'Saving…' : decision.action === 'APPROVE' ? 'Approve campaign' : 'Reject campaign'}
+                {busy ? 'Saving…' : decision.action === 'APPROVE' ? (decision.row.sendsOnApproval ? 'Approve & send now' : 'Approve campaign') : 'Reject campaign'}
               </button>
             </div>
           </div>
