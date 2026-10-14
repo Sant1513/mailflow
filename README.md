@@ -55,6 +55,11 @@ Deeper docs: [ARCHITECTURE.md](ARCHITECTURE.md) (system design) · [PHASE_STATUS
   - closes plain "thank you" replies when the AI is at least 85% sure and the team has already replied, leaving an internal note;
   - drafts an answer to questions and requests. The conversation shows **AI draft ready** with **Approve & send**, **Edit** and **Discard**, and the inbox shows a badge.
 
+### Quick Send (one screen)
+- **Mail → Quick Send** does a whole campaign on one page: a campaign name; recipients pasted (one email per line, "Name, email", or rows from Sheets/Excel), uploaded (CSV/XLSX), or picked from saved data or a segment; a subject and message with `{{fields}}` (or a saved template) and your signature; PDF attachments (up to 5, 10 MB per email); a live dry run and preview; **Send a test to me**; send now or later.
+- Progress, opens, clicks, replies, failures and unsubscribes update live on the same page, with Pause/Resume and a list of recent Quick Sends.
+- It creates a normal campaign underneath, so pacing, Google limits, backup mailboxes, tracking, unsubscribe and the Inbox all apply. Admins send at once; anyone else's goes to Approvals and sends automatically when approved (**Approve & send**).
+
 ### Campaigns
 - Dataset-backed campaigns sent from the operator's own Gmail, with From name, Reply-To, CC and BCC. The sending address is always the connected mailbox.
 - **Pre-send review** and a **dry run** that use the same evaluator as the real send, so "who gets what and why" is known before anything goes out.
