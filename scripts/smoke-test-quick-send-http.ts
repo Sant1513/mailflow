@@ -135,6 +135,20 @@ async function main() {
     const asViewer = await call('POST', '/api/quick-send', viewer.cookie, { mode: 'check', recipients, ...message });
     check('a viewer cannot use it', asViewer.status === 403, asViewer.status);
 
+    const designed = await call('POST', '/api/quick-send', op.cookie, {
+      mode: 'check',
+      recipients,
+      subject: 'Hi',
+      format: 'text',
+      body: '<!DOCTYPE html><html><head><style>.copy{color:#444444;font-size:14px}</style></head><body><p class="copy">Dear {{First Name}}</p></body></html>',
+    });
+    const designedHtml: string = designed.json?.preview?.html ?? '';
+    check(
+      'a pasted HTML email renders as designed, even in Simple mode (CSS inlined)',
+      designed.json?.treatedAsHtml === true && /Dear Asha/.test(designedHtml) && /color: ?#444444/.test(designedHtml) && !designedHtml.includes('&lt;html'),
+      designedHtml.slice(0, 300),
+    );
+
     console.log('\nSignature, attachment, test send');
     await prisma.user.update({ where: { id: op.user.id }, data: { emailSignature: '<p>Regards,<br>QS Signature Line</p>' } });
     const withSig = await call('POST', '/api/quick-send', op.cookie, { mode: 'check', recipients, ...message, includeSignature: true });

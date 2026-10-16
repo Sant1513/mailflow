@@ -20,6 +20,7 @@ import { sendApprovalRequestEmail } from '@/lib/campaigns/approvalEmails';
 import { dailyLimit, usageLast24h } from '@/lib/queue/drain';
 import { buildContactWhere } from '@/app/api/segments/_filterContacts';
 import { columnsFromTable, normalizeVariables, textToHtml } from '@/lib/quickSend/prepare';
+import { inlineEmailCss, looksLikeHtml } from '@/lib/quickSend/html';
 import { QUICK_SEND_DESCRIPTION, QUICK_SEND_ON_APPROVAL, campaignStats } from '@/lib/quickSend/stats';
 
 export const maxDuration = 60;
@@ -149,8 +150,11 @@ export const POST = withErrorHandling(async (req) => {
   const subject = normalizeVariables(body.subject, resolved.columns);
   const me = await prisma.user.findUnique({ where: { id: session.userId }, select: { emailSignature: true } });
   const signature = body.includeSignature && me?.emailSignature?.trim() ? me.emailSignature : null;
-  const messageHtml = body.format === 'html' ? normalizeVariables(body.body, resolved.columns) : textToHtml(normalizeVariables(body.body, resolved.columns));
-  const html = signature ? `${messageHtml}\n<br>\n<div class="signature">${signature}</div>` : messageHtml;
+  // Pasted HTML is HTML even if "Simple" was left on; its CSS is inlined so every inbox shows the design.
+  const isHtml = body.format === 'html' || looksLikeHtml(body.body);
+  const messageHtml = isHtml ? inlineEmailCss(normalizeVariables(body.body, resolved.columns)) : textToHtml(normalizeVariables(body.body, resolved.columns));
+  const signatureBlock = signature ? `\n<br>\n<div class="signature">${signature}</div>` : '';
+  const html = signatureBlock && /<\/body>/i.test(messageHtml) ? messageHtml.replace(/<\/body>/i, `${signatureBlock}</body>`) : messageHtml + signatureBlock;
 
   // Attachments: PDFs from the PDF Library in this workspace, sent unchanged.
   const attachmentDocs = body.attachmentDocumentIds.length
@@ -207,6 +211,7 @@ export const POST = withErrorHandling(async (req) => {
       estimatedMinutes: Math.ceil((Math.min(wouldSend, capacity || wouldSend) * 3.6) / 60),
       approval: session.role === Role.ADMIN || session.role === Role.SUPER_ADMIN ? 'none' : 'required',
       hasSignature: !!me?.emailSignature?.trim(),
+      treatedAsHtml: isHtml,
       attachments: orderedDocs.map((d) => ({ id: d.id, name: d.file.fileName, size: d.file.size })),
     });
   }

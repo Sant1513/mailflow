@@ -88,3 +88,21 @@ describe('personalisation', () => {
     expect(renderTemplate({ subject: 's', html }, { First_Name: 'Rahul' }).html).toContain('>Hi Rahul,</p>');
   });
 });
+
+describe('pasted HTML emails', () => {
+  it('recognises an HTML email, not plain text', async () => {
+    const { looksLikeHtml } = await import('@/lib/quickSend/paste');
+    expect(looksLikeHtml('<!DOCTYPE html><html><body><p>Hi</p></body></html>')).toBe(true);
+    expect(looksLikeHtml('<table><tr><td>Hi</td></tr></table>')).toBe(true);
+    expect(looksLikeHtml('Hi {{Name}},\n\nSee you at 5 <3\n\nRegards')).toBe(false);
+  });
+
+  it('copies <style> rules onto the elements, keeps @media rules, keeps fields and symbols', async () => {
+    const { inlineEmailCss } = await import('@/lib/quickSend/html');
+    const out = inlineEmailCss(
+      '<html><head><style>.copy{color:#444;font-size:14px}@media (max-width:600px){.copy{font-size:12px !important}}</style></head><body><p class="copy">Dear {{Name}}, pay ₹999 📍</p></body></html>',
+    );
+    expect(out).toMatch(/<p class="copy" style="color: ?#444; ?font-size: ?14px;?">Dear \{\{Name\}\}, pay ₹999 📍<\/p>/);
+    expect(out).toMatch(/@media \(max-width:600px\)/);
+  });
+});

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { EmailPreview } from '@/components/email-preview/EmailPreview';
-import { normalizePastedList } from '@/lib/quickSend/paste';
+import { looksLikeHtml, normalizePastedList } from '@/lib/quickSend/paste';
 
 type Source = 'paste' | 'file' | 'dataset' | 'segment';
 
@@ -585,7 +585,15 @@ export default function QuickSendPage() {
               ref={bodyRef}
               value={body}
               onFocus={() => setLastFocus('body')}
-              onChange={(e) => setBody(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                // Pasting a designed HTML email into Simple mode: switch to HTML so it renders, not shows as code.
+                if (format === 'text' && looksLikeHtml(next) && next.length - body.length > 200) {
+                  setFormat('html');
+                  toast.success('That looks like an HTML email, so the message is now in HTML mode and will show as designed.');
+                }
+                setBody(next);
+              }}
               rows={12}
               placeholder={format === 'text' ? 'Hi {{Name}},\n\nWrite your message here. Links become clickable automatically.\n\nRegards,\nPlacement Team' : '<p>Hi {{Name}},</p>\n<p>…</p>'}
               className={`${FIELD} ${format === 'html' ? 'font-mono' : ''}`}

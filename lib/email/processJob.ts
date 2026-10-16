@@ -139,7 +139,8 @@ export async function processEmailJob(
   <a href="${unsubscribeUrl}" style="color:#999;">Unsubscribe</a>
 </p>`;
 
-    const htmlWithFooter = job.html + unsubscribeFooter;
+    // A full HTML document gets the footer inside <body>, not after </html>.
+    const htmlWithFooter = /<\/body>/i.test(job.html) ? job.html.replace(/<\/body>/i, `${unsubscribeFooter}</body>`) : job.html + unsubscribeFooter;
 
     const trackedHtml = injectTracking(
       htmlWithFooter,
