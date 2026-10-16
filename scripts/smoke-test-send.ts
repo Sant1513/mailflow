@@ -257,6 +257,7 @@ async function main() {
   });
   check('Conversation created from the outbound send (§45)', !!conversation, conversation?.id);
   check('Outbound message recorded in the conversation', conversation?.messages.length === 1);
+  check('A just-sent conversation waits for the student (not Open)', conversation?.status === 'WAITING_FOR_STUDENT', conversation?.status);
   check('Outbound message stores an immutable body snapshot (§89)', conversation?.messages[0]?.htmlBody?.includes('A1') ?? false);
 
   const history = await prisma.recipientHistory.findMany({ where: { contactId: contacts[0]!.id } });

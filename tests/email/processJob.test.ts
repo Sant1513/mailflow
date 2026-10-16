@@ -150,6 +150,19 @@ describe('processEmailJob — sending', () => {
     );
   });
 
+  it('a new conversation from a send waits for the student instead of sitting in Open', async () => {
+    db.emailJob.findUnique.mockResolvedValue(jobFixture({ record: { id: 'rec1', contactId: 'contact1' } }));
+    db.conversation.upsert.mockResolvedValue({ id: 'conv1' });
+    db.conversationMessage.create.mockResolvedValue({ id: 'msg1' });
+    await processEmailJob('job1', {
+      providerFactory: fakeProvider(async () => ({ providerMessageId: 'm', threadId: 't', messageIdHeader: '<m@x>' })),
+    });
+    const call = db.conversation.upsert.mock.calls.at(-1)?.[0];
+    expect(call?.create.status).toBe('WAITING_FOR_STUDENT');
+    // A later send on an existing thread leaves its status alone.
+    expect(call?.update).not.toHaveProperty('status');
+  });
+
   it('passes the stored threadId through so replies stay in the thread (§46)', async () => {
     db.emailJob.findUnique.mockResolvedValue(jobFixture({ gmailThreadId: 'existing-thread' }));
     let received: any = null;

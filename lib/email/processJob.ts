@@ -3,7 +3,7 @@ import { GmailProvider } from '@/lib/email/gmail';
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
 import { SendEmailError, type EmailProvider } from '@/lib/email/provider';
 import { buildReferences } from '@/lib/email/mime';
-import { EmailJobStatus, BatchStatus, CampaignStatus, MessageDirection } from '@prisma/client';
+import { EmailJobStatus, BatchStatus, CampaignStatus, ConversationStatus, MessageDirection } from '@prisma/client';
 import { generateJobDocuments, type GeneratedAttachment } from '@/lib/documents/campaign';
 import { DocumentRenderError } from '@/lib/documents/render';
 import { DocumentFileError } from '@/lib/documents/inspect';
@@ -226,6 +226,10 @@ export async function processEmailJob(
             firstMessageAt: new Date(),
             lastMessageAt: new Date(),
             messageCount: 1,
+            // Nothing to act on yet: the email was just sent. It waits for the student and moves to
+            // Open (unread) the moment a real reply arrives (lib/gmail/ingest.ts). Starting it as
+            // OPEN filled the inbox with one "open" conversation per recipient.
+            status: ConversationStatus.WAITING_FOR_STUDENT,
           },
         });
 
