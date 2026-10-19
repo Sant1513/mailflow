@@ -230,7 +230,7 @@ function lastDue(job, now) {
 
 function isDue(job, last, now) {
   if (job.everyMin) return !last || now - last >= job.everyMin * 60_000 - 5_000;
-  const due = lastDue(job, now);
+  const due = lastDue(job, new Date(now));
   if (last && last >= due.getTime()) return false;
   return now - due.getTime() <= DAILY_CATCH_UP_MS;
 }
