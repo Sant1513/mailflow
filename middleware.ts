@@ -15,11 +15,15 @@ const UPSTREAM = process.env.LAPTOP_UPSTREAM?.replace(/\/+$/, '');
 // Remember the last health check for a few seconds so a page load (HTML + assets) checks once.
 let lastCheck = { at: 0, up: false };
 
-async function upstreamIsUp(): Promise<boolean> {
-  if (Date.now() - lastCheck.at < 15_000) return lastCheck.up;
-  const up = await fetch(`${UPSTREAM}/api/ping`, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
+const ping = () =>
+  fetch(`${UPSTREAM}/api/ping`, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
     .then((r) => r.ok)
     .catch(() => false);
+
+async function upstreamIsUp(): Promise<boolean> {
+  // "Up" is trusted for 15 s; "down" only for 5 s, so one blip doesn't show the offline page for long.
+  if (Date.now() - lastCheck.at < (lastCheck.up ? 15_000 : 5_000)) return lastCheck.up;
+  const up = (await ping()) || (await ping()); // one retry before calling it offline
   lastCheck = { at: Date.now(), up };
   return up;
 }
