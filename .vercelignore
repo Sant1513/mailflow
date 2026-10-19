@@ -13,3 +13,6 @@ coverage
 *.log
 .env
 .env.local
+
+# Laptop server runtime (its own node_modules with Postgres binaries); never part of the Vercel build.
+laptop-server

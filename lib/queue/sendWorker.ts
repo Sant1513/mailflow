@@ -243,7 +243,10 @@ export function kickSendWorker(reason: string, opts: { continuation?: boolean } 
   if (!secret) return;
   const controller = new AbortController();
   const chain = opts.continuation ? '&chain=1' : '';
-  const call = fetch(`${appBaseUrl()}/api/cron/send-queue?reason=${encodeURIComponent(reason)}${chain}`, {
+  // On the laptop server INTERNAL_APP_URL points at the app itself, so the hand-over
+  // doesn't travel out through the public address and back.
+  const base = process.env.INTERNAL_APP_URL?.replace(/\/+$/, '') || appBaseUrl();
+  const call = fetch(`${base}/api/cron/send-queue?reason=${encodeURIComponent(reason)}${chain}`, {
     headers: { Authorization: `Bearer ${secret}` },
     signal: controller.signal,
   }).catch(() => undefined);

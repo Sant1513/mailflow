@@ -1,0 +1,14 @@
+{
+  "name": "mailflow-laptop-server",
+  "private": true,
+  "type": "module",
+  "description": "Runs MailFlow (database + app + background jobs) on this laptop. See README.md.",
+  "scripts": {
+    "start": "node start.mjs"
+  },
+  "dependencies": {
+    "embedded-postgres": "17.10.0-beta.17",
+    "pg": "^8.13.1",
+    "pg-copy-streams": "^6.0.6"
+  }
+}
