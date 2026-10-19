@@ -119,8 +119,23 @@ function runStep(label, args) {
 }
 
 // ---------- database ----------
+// Postgres for Windows needs the Microsoft Visual C++ runtime. If Windows doesn't have it
+// installed, copies kept in MAILFLOW_DATA\runtime are placed next to the Postgres programs
+// (Microsoft's "app-local" deployment); reinstalling packages removes them, so check every start.
+const PG_BIN = path.join(HERE, 'node_modules', '@embedded-postgres', 'windows-x64', 'native', 'bin');
+const VC_DLLS = ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll'];
+function ensureVcRuntime() {
+  const system32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+  for (const dll of VC_DLLS) {
+    if (fs.existsSync(path.join(system32, dll)) || fs.existsSync(path.join(PG_BIN, dll))) continue;
+    const local = path.join(DATA, 'runtime', dll);
+    if (fs.existsSync(local)) fs.copyFileSync(local, path.join(PG_BIN, dll));
+  }
+}
+
 let pgServer;
 async function startDatabase() {
+  ensureVcRuntime();
   pgServer = new EmbeddedPostgres({
     databaseDir: PG_DIR,
     port: PG_PORT,
@@ -142,7 +157,7 @@ async function startDatabase() {
   } catch (err) {
     // A database left running by an earlier copy of this script (e.g. after a crash): stop it and retry.
     log('Database did not start, stopping any leftover copy and retrying:', String(err?.message ?? err));
-    const pgCtl = path.join(HERE, 'node_modules', '@embedded-postgres', 'windows-x64', 'native', 'bin', 'pg_ctl.exe');
+    const pgCtl = path.join(PG_BIN, 'pg_ctl.exe');
     spawnSync(pgCtl, ['stop', '-D', PG_DIR, '-m', 'fast'], { stdio: 'ignore', windowsHide: true });
     await sleep(2000);
     await pgServer.start();
@@ -309,11 +324,43 @@ process.on('uncaughtException', (e) => log('Unexpected error:', e));
 process.on('unhandledRejection', (e) => log('Unexpected error:', e));
 
 // ---------- go ----------
+function fail(message) {
+  log(`Could not start: ${message}`);
+  try { fs.rmSync(LOCK_FILE, { force: true }); } catch {}
+  process.exit(1);
+}
+
 log(`MailFlow laptop server starting (app ${APP_DIR}, data ${DATA}).`);
-await startDatabase();
-if (!runStep('Applying database migrations', [PRISMA_BIN, 'migrate', 'deploy'])) process.exit(1);
+try {
+  await startDatabase();
+} catch (err) {
+  // 0xC0000135: a DLL is missing, almost always the Microsoft Visual C++ runtime.
+  const hint = /3221225781/.test(String(err?.message)) ? ' (missing Microsoft Visual C++ runtime: see README.md)' : '';
+  fail(`database: ${String(err?.message ?? err).trim()}${hint}`);
+}
+// A brand-new database is created straight from prisma/schema.prisma and the migration
+// history is marked as applied: replaying every old migration from scratch fails (two of them
+// create the SlaRule table). From then on new migrations apply normally.
+async function isFreshDatabase() {
+  const client = new pg.Client({ connectionString: DATABASE_URL.replace(/\?.*$/, '') });
+  await client.connect();
+  try {
+    const { rows } = await client.query(`select to_regclass('public._prisma_migrations') is null as fresh`);
+    return rows[0].fresh;
+  } finally {
+    await client.end();
+  }
+}
+if (await isFreshDatabase()) {
+  if (!runStep('Creating the tables', [PRISMA_BIN, 'db', 'push', '--skip-generate'])) fail('creating tables');
+  const migrations = fs.readdirSync(path.join(APP_DIR, 'prisma', 'migrations')).filter((n) => fs.existsSync(path.join(APP_DIR, 'prisma', 'migrations', n, 'migration.sql'))).sort();
+  for (const name of migrations) {
+    if (!runStep(`Marking migration ${name} as applied`, [PRISMA_BIN, 'migrate', 'resolve', '--applied', name])) fail('marking migrations');
+  }
+}
+if (!runStep('Applying database migrations', [PRISMA_BIN, 'migrate', 'deploy'])) fail('migrations');
 if (!fs.existsSync(path.join(APP_DIR, '.next', 'BUILD_ID'))) {
-  if (!runStep('Building the app (first run, takes a few minutes)', [NEXT_BIN, 'build'])) process.exit(1);
+  if (!runStep('Building the app (first run, takes a few minutes)', [NEXT_BIN, 'build'])) fail('build');
 }
 startApp();
 if (!(await waitForApp())) log('App did not answer within 2 minutes; jobs will start once it does.');
