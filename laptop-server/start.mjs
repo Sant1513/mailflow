@@ -176,7 +176,23 @@ const PRISMA_BIN = path.join(APP_DIR, 'node_modules', 'prisma', 'build', 'index.
 let app;
 let stopping = false;
 
+// An app left running by an earlier copy of this script (killed without a clean stop) still
+// holds the port, so the new one could never start. Stop whatever is listening there first.
+function freeAppPort() {
+  const r = spawnSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf8', windowsHide: true });
+  const pids = new Set();
+  for (const line of (r.stdout ?? '').split(/\r?\n/)) {
+    const m = line.trim().split(/\s+/);
+    if (m[1] === `127.0.0.1:${APP_PORT}` && m[3] === 'LISTENING' && Number(m[4]) !== process.pid) pids.add(m[4]);
+  }
+  for (const pid of pids) {
+    log(`Stopping a leftover app (pid ${pid}) on port ${APP_PORT}.`);
+    spawnSync('taskkill', ['/PID', pid, '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  }
+}
+
 function startApp() {
+  freeAppPort();
   log(`Starting the app on ${APP_LOCAL}…`);
   const out = fs.openSync(path.join(LOG_DIR, 'app.log'), 'a');
   app = spawn(node, [NEXT_BIN, 'start', '-p', String(APP_PORT), '-H', '127.0.0.1'], { cwd: APP_DIR, env: APP_ENV, stdio: ['ignore', out, out], windowsHide: true });
@@ -308,6 +324,48 @@ function tickBackup() {
   backup().catch((e) => log('Backup failed:', e)).finally(() => { backingUp = false; });
 }
 
+// ---------- public address watchdog ----------
+// Every minute, load /api/ping through the public address (Vercel → Tailscale Funnel → here),
+// the same way the team reaches the app. Testing the Funnel address directly from this laptop
+// proves nothing: Tailscale short-cuts it locally. When the route has been down for 3 minutes,
+// the Funnel setting for the app is switched off and on again (at most every 10 minutes).
+// Only the app's own port (443 → 3100) is touched; other Funnel entries are left alone.
+const PUBLIC_URL = (APP_ENV.NEXTAUTH_URL || '').replace(/\/+$/, '');
+const TAILSCALE = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe');
+let publicUp = null;
+let publicFails = 0;
+let lastRepair = 0;
+
+async function checkPublicRoute() {
+  if (!PUBLIC_URL.startsWith('https://')) return;
+  let ok = false;
+  let detail = '';
+  try {
+    const res = await fetch(`${PUBLIC_URL}/api/ping?watchdog=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+    ok = res.ok;
+    detail = res.headers.get('x-vercel-error') || String(res.status);
+  } catch (err) {
+    detail = String(err?.cause?.code || err?.message || err);
+  }
+  if (ok !== publicUp) log(ok ? 'Public address is reachable.' : `Public address is NOT reachable (${detail}).`);
+  publicUp = ok;
+  publicFails = ok ? 0 : publicFails + 1;
+  if (publicFails < 3 || Date.now() - lastRepair < 10 * 60_000 || !fs.existsSync(TAILSCALE)) return;
+  lastRepair = Date.now();
+  log('Switching the Tailscale Funnel for the app off and on again…');
+  const ts = (args) => {
+    const r = spawnSync(TAILSCALE, args, { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+    return `${r.status} ${`${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split(/\r?\n/).slice(-2).join(' | ')}`;
+  };
+  log('  off:', ts(['funnel', '--yes', '--https=443', 'off']));
+  log('  on: ', ts(['funnel', '--yes', '--bg', '--https=443', `http://127.0.0.1:${APP_PORT}`]));
+}
+
+// ---------- restart on request ----------
+// Creating MAILFLOW_DATA\restart.request makes this copy stop cleanly (app and database included);
+// the Startup script starts a fresh one within a minute. Used after shipping new code.
+const RESTART_FILE = path.join(DATA, 'restart.request');
+
 // ---------- shutdown ----------
 async function shutdown(signal) {
   if (stopping) return;
@@ -369,3 +427,13 @@ tickJobs();
 setInterval(tickJobs, 20_000);
 tickBackup();
 setInterval(tickBackup, 10 * 60_000);
+fs.rmSync(RESTART_FILE, { force: true });
+setInterval(() => {
+  if (!fs.existsSync(RESTART_FILE)) return;
+  fs.rmSync(RESTART_FILE, { force: true });
+  shutdown('restart requested');
+}, 5000);
+setTimeout(() => {
+  checkPublicRoute();
+  setInterval(checkPublicRoute, 60_000);
+}, 30_000);
