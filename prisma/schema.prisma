@@ -92,6 +92,8 @@ model User {
   slaRules               SlaRule[]
   signingRequestsSent    SigningRequest[]        @relation("SigningRequestsSentBy")
   signingTemplatesCreated SigningTemplate[]      @relation("SigningTemplateCreatedBy")
+  inboxSharesGiven       InboxShare[]           @relation("InboxShareOwner")
+  inboxSharesReceived    InboxShare[]           @relation("InboxShareGrantee")
 
   @@index([organizationId])
 }
@@ -1367,4 +1369,26 @@ model SystemState {
   /// Plain-language note about the last switch or problem, shown on the Server page.
   note              String?
   updatedAt         DateTime  @updatedAt
+}
+
+/// Inbox sharing (Settings → Inbox sharing). A user lets teammates see the conversations in
+/// their MailFlow inbox, and optionally reply to them from the user's own mailbox, in the same
+/// thread. granteeId null means everyone in the organization. Read by
+/// lib/conversations/access.ts; nothing is shared unless the owner turns it on.
+model InboxShare {
+  id             String   @id @default(cuid())
+  organizationId String
+  ownerId        String
+  granteeId      String?
+  /// VIEW (read only) | REPLY (also reply from the owner's mailbox, add notes, change status)
+  level          String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  owner   User  @relation("InboxShareOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  grantee User? @relation("InboxShareGrantee", fields: [granteeId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, granteeId])
+  @@index([granteeId])
+  @@index([organizationId])
 }

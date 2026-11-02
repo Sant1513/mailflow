@@ -105,7 +105,8 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 60_000);
+    // Paused while the tab is hidden (saves the database's monthly data allowance).
+    const t = setInterval(() => { if (!document.hidden) load(); }, 60_000);
     return () => clearInterval(t);
   }, [load]);
 

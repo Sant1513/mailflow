@@ -217,13 +217,24 @@ Being explicit about what is *not* live yet:
 | --- | --- |
 | App | Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS |
 | Auth | NextAuth (Google OAuth, database sessions) |
-| Database | PostgreSQL on Neon, Prisma ORM with versioned migrations |
+| Database | PostgreSQL on Supabase (free plan, Mumbai), Prisma ORM with versioned migrations. A full standby copy lives on the laptop server (see [Where MailFlow runs](#where-mailflow-runs)) |
 | Email | Gmail API from each user's own mailbox (OAuth tokens AES-256-GCM encrypted at rest) |
 | Queue | BullMQ + Redis when available, otherwise bounded drain endpoints and crons |
 | PDFs | Headless Chromium (`puppeteer-core` + `@sparticuz/chromium`) for signing PDFs, `pdf-lib` for overlays, certificates and personalised campaign PDFs, `pdfjs-dist` for page previews |
 | Files | Vercel Blob (signing attachments) |
 | AI | Google Gemini via a provider abstraction |
-| Hosting | Vercel (Hobby), GitHub Actions for 15-minute schedules |
+| Hosting | Vercel (Hobby, functions in Mumbai `bom1`), GitHub Actions for 15-minute schedules; optional laptop server as standby |
+
+## Where MailFlow runs
+
+MailFlow runs on **one server at a time**, chosen on **Settings → Server** (super admins):
+
+- **Cloud** (normal): Vercel + Supabase. Fast and reachable from anywhere.
+- **Laptop**: the laptop server in `laptop-server/` (Postgres + the app + every scheduled job), published through Tailscale Funnel; Vercel forwards the public address to it (`middleware.ts`).
+
+The other one is a standby copy. Switching shows everyone a short "switching servers" page while the laptop copies the active database across in one checked transaction (`laptop-server/copy-db.mjs`), then flips the switch — sessions are copied too, so nobody is signed out. Only one side ever writes. The switch itself is one row (`SystemState`) in the cloud database that copies never touch; the rules are in `lib/system/serverState.ts`. Safety moves: a switch the laptop doesn't finish within 5 minutes is cancelled; an active laptop that is silent for 10 minutes hands over to the cloud; the laptop hands back by itself if its public address is unreachable for 10 minutes. On standby the laptop pulls a full copy of the cloud every night; while active it pushes one every 30 minutes. Setup and operation: [laptop-server/README.md](laptop-server/README.md).
+
+Background: Neon's free plan ran out of compute in October 2026 (it was shared with two other apps), so MailFlow moved to Supabase, whose free plan has no compute-hour limit. Keep it within the free plan: 500 MB database, 1 GB file storage, 5 GB/month data transfer — count in SQL rather than loading rows, and don't poll from hidden tabs.
 
 ## Local setup
 
@@ -233,7 +244,7 @@ cp .env.example .env    # fill in the values below
 npm run dev             # http://localhost:3000 (pinned: the OAuth redirect URIs are port-specific)
 ```
 
-> ⚠️ **Check which database `.env` points at before running any Prisma command.** If `DATABASE_URL` is the production Neon database, `npm run db:migrate` (`prisma migrate dev`) would change production. New migrations should be written as SQL files in `prisma/migrations/` and are applied by the production build (`prisma migrate deploy`).
+> ⚠️ **Check which database `.env` points at before running any Prisma command.** If `DATABASE_URL` is the production database (Supabase) or the laptop server's, `npm run db:migrate` (`prisma migrate dev`) would change it. New migrations should be written as SQL files in `prisma/migrations/` and are applied by the production build (`prisma migrate deploy`).
 
 Generate the two required secrets:
 
@@ -297,7 +308,7 @@ Set production variables at the project level (`vercel env add NAME production`)
 ## Testing
 
 ```bash
-npm test                 # 585 unit tests across 48 files (no database needed)
+npm test                 # unit tests (no database needed)
 npm run verify           # typecheck + lint + unit tests + a real production build (into .next-verify)
 BASE_URL=https://<deployed-url> npx tsx scripts/verify-deployment.ts   # run after every deploy
 ```
@@ -320,7 +331,8 @@ BASE_URL=https://<deployed-url> npx tsx scripts/verify-deployment.ts   # run aft
 ## Deployment
 
 - Every push to `master` deploys to production on Vercel.
-- The build runs `prisma migrate deploy && prisma generate && next build`, so **pending migrations are applied to the production database on deploy**. Review migration SQL before pushing.
+- The build (`scripts/build.mjs`) runs `prisma migrate deploy && prisma generate && next build`, so **pending migrations are applied to the production database (Supabase) on deploy**; the laptop server applies them to its own database when it starts. Review migration SQL before pushing.
+- The laptop server runs its own copy of the code (`C:Usersabhismailflow-live`, a git worktree): after pushing, `git checkout --detach master` there and create `mailflow-dataestart.request` — it rebuilds itself on the next start.
 - Vercel builds with Node 24. Signing-PDF routes bundle the Chromium binary (`next.config.mjs` → `outputFileTracingIncludes`) and allow up to 60 s for a cold start.
 - After deploying, run `scripts/verify-deployment.ts`.
 

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
+import { accessFor, atLeast } from '@/lib/conversations/access';
 
 /** DELETE — cancel a PENDING scheduled reply. */
 export const DELETE = withErrorHandling(async (_req, { params }: { params: { id: string; replyId: string } }) => {
@@ -11,10 +12,10 @@ export const DELETE = withErrorHandling(async (_req, { params }: { params: { id:
 
   const reply = await prisma.scheduledReply.findUnique({
     where: { id: params.replyId },
-    include: { conversation: { select: { workspaceId: true } } },
+    include: { conversation: { select: { workspaceId: true, ownerId: true, assigneeId: true } } },
   });
 
-  if (!reply || reply.conversation.workspaceId !== session.workspaceId) {
+  if (!reply || !atLeast(await accessFor(session, reply.conversation), 'REPLY')) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 

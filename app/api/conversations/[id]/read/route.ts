@@ -18,6 +18,9 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const { read } = schema.parse(await req.json().catch(() => ({})));
+  // Read/unread is the owner's inbox state: a teammate only viewing (or working an assigned
+  // conversation from another inbox) doesn't clear the owner's unread badge.
+  if (conversation.access === 'VIEW' || conversation.access === 'WORK') return NextResponse.json({ ok: true, unchanged: true });
 
   await prisma.$transaction([
     prisma.conversation.update({ where: { id: conversation.id }, data: { unread: !read } }),

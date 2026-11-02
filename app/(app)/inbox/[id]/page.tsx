@@ -451,24 +451,46 @@ export default function ConversationPage() {
             {timeline.length === 0 && <div className="text-sm text-muted-foreground">No messages yet.</div>}
           </div>
 
-          {/* Reply composer (§53/§54): rich text / HTML / preview, attachments, snippets */}
-          <AiDraftCard
-            conversationId={c.id}
-            refreshKey={data}
-            canWrite
-            onSent={load}
-            onEdit={(text) => setInject({ text, key: Date.now() })}
-          />
-          <ReplyComposer
-            inject={inject}
-            conversationId={c.id}
-            recipientEmail={c.recipientEmail}
-            fromEmail={c.account.emailAddress}
-            fromName={c.account.displayName ?? ''}
-            subject={c.subject}
-            busy={busy === 'reply'}
-            onSend={sendReply}
-          />
+          {/* Reply composer (§53/§54): rich text / HTML / preview, attachments, snippets.
+              What the viewer may do depends on their access (lib/conversations/access.ts). */}
+          {c.access === 'VIEW' ? (
+            <div className="border-t bg-muted/40 p-3 text-sm text-muted-foreground">
+              {c.account.displayName ?? c.account.emailAddress} shared this inbox with you as <b>view only</b>. Ask them for
+              &ldquo;Can view and reply&rdquo; in Settings → Inbox sharing if you need to answer.
+            </div>
+          ) : (
+            <>
+              {c.access === 'REPLY' && (
+                <div className="border-t bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                  Shared inbox: your reply goes from <b>{c.account.emailAddress}</b>, in this thread, as {c.account.displayName ?? 'its owner'} allowed.
+                  It is recorded under your name.
+                </div>
+              )}
+              {c.access === 'WORK' && (
+                <div className="border-t bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  Assigned to you from {c.account.emailAddress}. Replies go from your own mailbox as a new email; ask the owner to
+                  share their inbox with &ldquo;Can view and reply&rdquo; to answer in this thread.
+                </div>
+              )}
+              <AiDraftCard
+                conversationId={c.id}
+                refreshKey={data}
+                canWrite={c.access !== 'WORK'}
+                onSent={load}
+                onEdit={(text) => setInject({ text, key: Date.now() })}
+              />
+              <ReplyComposer
+                inject={inject}
+                conversationId={c.id}
+                recipientEmail={c.recipientEmail}
+                fromEmail={c.access === 'WORK' ? 'your mailbox' : c.account.emailAddress}
+                fromName={c.account.displayName ?? ''}
+                subject={c.subject}
+                busy={busy === 'reply'}
+                onSend={sendReply}
+              />
+            </>
+          )}
         </div>
 
         {/* RIGHT: notes + follow-ups */}

@@ -17,7 +17,7 @@ const noteSchema = z.object({ body: z.string().min(1).max(10_000) });
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
   requireCanWrite(session);
-  const conversation = await loadConversationForSession(session, params.id);
+  const conversation = await loadConversationForSession(session, params.id, 'WORK');
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const { body } = noteSchema.parse(await req.json());

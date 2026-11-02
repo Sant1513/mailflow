@@ -47,7 +47,8 @@ export default function ServerPage() {
 
   useEffect(() => {
     load();
-    const id = setInterval(load, 10_000);
+    // Paused while the tab is hidden (saves the database's monthly data allowance).
+    const id = setInterval(() => { if (!document.hidden) load(); }, 10_000);
     return () => clearInterval(id);
   }, [load]);
 

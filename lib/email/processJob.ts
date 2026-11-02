@@ -336,8 +336,9 @@ async function failJob(
     /* record may have been deleted mid-flight */
   });
 
-  // Auto-suppress permanent delivery failures so the address is never retried.
-  if (!retryable && (code === 'DELIVERY_FAILED' || code === 'INVALID_EMAIL' || code === 'QUOTA_EXCEEDED')) {
+  // Auto-suppress an address Gmail rejected outright, so it is never retried. (QUOTA is our own
+  // mailbox's daily limit, not the recipient's fault, so it never suppresses.)
+  if (!retryable && code === 'INVALID_RECIPIENT') {
     const jobWithWorkspace = await prisma.emailJob.findUnique({
       where: { id: emailJobId },
       select: { toEmail: true, campaignId: true, campaign: { select: { workspaceId: true } } },

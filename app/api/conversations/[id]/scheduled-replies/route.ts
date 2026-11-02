@@ -43,7 +43,7 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
   requireCanWrite(session);
-  const conversation = await loadConversationForSession(session, params.id);
+  const conversation = await loadConversationForSession(session, params.id, 'REPLY');
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = createSchema.parse(await req.json());
@@ -55,14 +55,12 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     return NextResponse.json({ error: 'scheduledFor must be in the future' }, { status: 400 });
   }
 
-  if (!session.workspaceId) {
-    return NextResponse.json({ error: 'No workspace on session' }, { status: 403 });
-  }
-
   const reply = await prisma.scheduledReply.create({
     data: {
       conversationId: conversation.id,
-      workspaceId: session.workspaceId,
+      // Scheduled replies go out from the conversation's own mailbox (cron/scheduled-replies),
+      // so they belong to its workspace, whoever scheduled them.
+      workspaceId: conversation.workspaceId,
       createdById: session.userId,
       scheduledFor,
       html: body.html,

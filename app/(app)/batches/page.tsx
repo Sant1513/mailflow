@@ -62,7 +62,8 @@ export default function BatchesPage() {
   // Live refresh while anything is in flight.
   useEffect(() => {
     if (meta.activeCount === 0) return;
-    const t = setInterval(load, 5000);
+    // Paused while the tab is hidden (saves the database's monthly data allowance).
+    const t = setInterval(() => { if (!document.hidden) load(); }, 5000);
     return () => clearInterval(t);
   }, [meta.activeCount, load]);
 

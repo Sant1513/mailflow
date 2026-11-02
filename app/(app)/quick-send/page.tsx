@@ -281,7 +281,8 @@ export default function QuickSendPage() {
       if (res.ok && !stop) setStats((await res.json()).stats);
     };
     tick();
-    const t = setInterval(tick, 5000);
+    // Paused while the tab is hidden (saves the database's monthly data allowance).
+    const t = setInterval(() => { if (!document.hidden) tick(); }, 5000);
     return () => {
       stop = true;
       clearInterval(t);

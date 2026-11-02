@@ -16,7 +16,9 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
   const conversation = await loadConversationForSession(session, params.id);
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  if (conversation.workspaceId !== session.workspaceId) {
+  // A super admin looking into someone else's workspace is audited; teammates reading a
+  // conversation that was shared with or assigned to them are not "admin views".
+  if (conversation.workspaceId !== session.workspaceId && session.role === 'SUPER_ADMIN') {
     await audit(session, 'ADMIN_VIEW', { targetType: 'Conversation', targetId: conversation.id });
   }
 
@@ -47,7 +49,7 @@ const patchSchema = z.object({
 export const PATCH = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
   requireCanWrite(session);
-  const conversation = await loadConversationForSession(session, params.id);
+  const conversation = await loadConversationForSession(session, params.id, 'WORK');
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = patchSchema.parse(await req.json());

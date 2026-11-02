@@ -60,23 +60,38 @@ export const GET = withErrorHandling(async (req) => {
   if (tagFilter) where.tags = { some: { tag: { name: tagFilter } } };
 
   // ── Load conversations ────────────────────────────────────────────────────
-  const conversations = await prisma.conversation.findMany({
-    where,
-    select: {
-      id: true,
-      status: true,
-      assigneeId: true,
-      assignee: { select: { id: true, name: true, email: true } },
-      createdAt: true,
-      updatedAt: true,
-      unread: true,
-      messages: {
-        where: { classification: { notIn: NOISE } },
-        orderBy: { sentAt: 'asc' },
-        select: { direction: true, sentAt: true, receivedAt: true },
+  // Two light queries instead of every conversation with all its messages: the totals need
+  // only a few columns per conversation, and response times only exist where a student
+  // actually wrote back — usually a small share. Keeps the database's monthly data allowance.
+  const [rows, threadMessages] = await Promise.all([
+    prisma.conversation.findMany({
+      where,
+      select: { id: true, status: true, assigneeId: true, createdAt: true, updatedAt: true, unread: true },
+    }),
+    prisma.conversationMessage.findMany({
+      where: {
+        classification: { notIn: NOISE },
+        conversation: { AND: [where, { messages: { some: { direction: MessageDirection.INBOUND, classification: { notIn: NOISE } } } }] },
       },
-    },
-  });
+      orderBy: { sentAt: 'asc' },
+      select: { conversationId: true, direction: true, sentAt: true, receivedAt: true },
+    }),
+  ]);
+  const messagesByConv = new Map<string, { direction: MessageDirection; sentAt: Date | null; receivedAt: Date | null }[]>();
+  for (const m of threadMessages) {
+    const list = messagesByConv.get(m.conversationId) ?? [];
+    list.push(m);
+    messagesByConv.set(m.conversationId, list);
+  }
+  const assigneeIds = [...new Set(rows.map((r) => r.assigneeId).filter((id): id is string => !!id))];
+  const assignees = new Map(
+    (assigneeIds.length ? await prisma.user.findMany({ where: { id: { in: assigneeIds } }, select: { id: true, name: true, email: true } }) : []).map((u) => [u.id, u]),
+  );
+  const conversations = rows.map((r) => ({
+    ...r,
+    assignee: r.assigneeId ? assignees.get(r.assigneeId) ?? null : null,
+    messages: messagesByConv.get(r.id) ?? [],
+  }));
 
   // ── Compute per-conversation FRT / resolution time ────────────────────────
   const resolved = new Set<ConversationStatus>([ConversationStatus.RESOLVED, ConversationStatus.CLOSED]);

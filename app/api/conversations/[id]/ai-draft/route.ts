@@ -31,7 +31,7 @@ const patchSchema = z.object({
 export const PATCH = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
   requireCanWrite(session);
-  const conversation = await loadConversationForSession(session, params.id);
+  const conversation = await loadConversationForSession(session, params.id, 'WORK');
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const body = patchSchema.parse(await req.json());
 

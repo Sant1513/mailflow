@@ -41,7 +41,7 @@ const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
   requireCanWrite(session);
-  const conversation = await loadConversationForSession(session, params.id);
+  const conversation = await loadConversationForSession(session, params.id, 'WORK');
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = replySchema.parse(await req.json());
@@ -52,20 +52,29 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     return NextResponse.json({ error: `Attachments total ${(totalBytes / 1048576).toFixed(1)} MB; the limit is 4 MB per reply.` }, { status: 400 });
   }
 
-  // Reply from the caller's OWN mailbox, not the conversation's original
-  // account — a SUPER_ADMIN viewing another workspace cannot send as them.
-  if (!session.workspaceId) throw new ForbiddenError('No workspace on session');
-  const sender = await prisma.emailProviderAccount.findUnique({
-    where: {
-      workspaceId_userId_provider: {
-        workspaceId: session.workspaceId,
-        userId: session.userId,
-        provider: EmailProviderEnum.GMAIL,
-      },
-    },
-  });
+  // Which mailbox the reply goes from:
+  //  - shared with "can reply" (Settings → Inbox sharing): the owner's mailbox, in the same
+  //    thread — that is what the owner allowed;
+  //  - otherwise the caller's OWN mailbox. A SUPER_ADMIN viewing another workspace, or an
+  //    assignee from another inbox, cannot send as the owner; they send a new email instead.
+  const sharedReply = conversation.access === 'REPLY';
+  if (!sharedReply && !session.workspaceId) throw new ForbiddenError('No workspace on session');
+  const sender = sharedReply
+    ? await prisma.emailProviderAccount.findUnique({ where: { id: conversation.emailProviderAccountId } })
+    : await prisma.emailProviderAccount.findUnique({
+        where: {
+          workspaceId_userId_provider: {
+            workspaceId: session.workspaceId!,
+            userId: session.userId,
+            provider: EmailProviderEnum.GMAIL,
+          },
+        },
+      });
   if (!sender || sender.status !== 'CONNECTED') {
-    return NextResponse.json({ error: 'Connect your Gmail account in Settings before replying.' }, { status: 400 });
+    return NextResponse.json(
+      { error: sharedReply ? "The owner's Gmail mailbox is disconnected, so replies can't be sent from it right now." : 'Connect your Gmail account in Settings before replying.' },
+      { status: 400 },
+    );
   }
   if (sender.id !== conversation.emailProviderAccountId) {
     // The thread lives in a different mailbox; Gmail will not let this
@@ -86,7 +95,8 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
 
   const baseSubject = conversation.subject.replace(/^\s*(re|fwd?)\s*:\s*/i, '');
   const subject = body.subject?.trim() || (body.newThread ? baseSubject : `Re: ${baseSubject}`);
-  const fromName = sender.displayName ?? session.name;
+  // A shared reply goes out under the mailbox owner's name: it is their address and thread.
+  const fromName = sender.displayName ?? (sharedReply ? sender.emailAddress : session.name);
 
   // §116: append the previous thread as a Gmail-style quoted block so the
   // recipient sees the full conversation history. We quote only the last
@@ -133,8 +143,9 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
         ? await tx.conversation.create({
             data: {
               organizationId: conversation.organizationId,
-              workspaceId: conversation.workspaceId,
-              ownerId: session.userId,
+              // The new thread lives in the mailbox it was sent from, so its replies sync to it.
+              workspaceId: sender.workspaceId,
+              ownerId: sender.userId,
               contactId: conversation.contactId,
               recipientEmail: conversation.recipientEmail,
               subject,
@@ -217,7 +228,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   await audit(session, body.newThread ? 'CONVERSATION_NEW_EMAIL' : 'CONVERSATION_REPLY', {
     targetType: 'Conversation',
     targetId: stored.conversationId,
-    metadata: { gmailMessageId: result.providerMessageId, threadId: result.threadId },
+    metadata: { gmailMessageId: result.providerMessageId, threadId: result.threadId, ...(sharedReply ? { sentFromSharedInbox: sender.emailAddress } : {}) },
   });
 
   return NextResponse.json({

@@ -86,7 +86,9 @@ export default function CampaignDetailPage() {
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     if (!isLive) return;
+    // Paused while the tab is hidden (saves the database's monthly data allowance).
     pollRef.current = setInterval(() => {
+      if (document.hidden) return;
       load();
       loadBatch();
     }, 5000);
@@ -99,7 +101,9 @@ export default function CampaignDetailPage() {
     if (!isLive || campaign?.status === 'PAUSED' || !latestBatch) return;
     let stopped = false;
     const pass = async () => {
-      if (stopped || autoSendRef.current) return;
+      // The server sends on its own (cron/send-queue); this only speeds it up while someone is
+      // watching, so a hidden tab doesn't keep driving it.
+      if (stopped || autoSendRef.current || document.hidden) return;
       autoSendRef.current = true;
       try {
         const res = await fetch(`/api/batches/${latestBatch.id}/drain`, {

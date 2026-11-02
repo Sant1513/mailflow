@@ -6,6 +6,7 @@ import { GmailPanel } from './GmailPanel';
 import { ProfileSlack } from '@/components/settings/ProfileSlack';
 import { SnippetsManager } from '@/components/settings/SnippetsManager';
 import { SignatureEditor } from '@/components/settings/SignatureEditor';
+import { InboxSharing } from '@/components/settings/InboxSharing';
 
 export default async function SettingsPage() {
   const session = await getServerSession(authOptions);
@@ -36,6 +37,11 @@ export default async function SettingsPage() {
         <h2 className="mb-1 text-sm font-semibold">Saved replies</h2>
         <p className="mb-3 text-xs text-muted-foreground">Reusable replies for the inbox composer, shared with everyone in this workspace.</p>
         <SnippetsManager />
+      </section>
+
+      <section className="mb-8 max-w-lg rounded-lg border bg-card p-4">
+        <h2 className="mb-1 text-sm font-semibold">Inbox sharing</h2>
+        <InboxSharing />
       </section>
 
       <section className="mb-8 max-w-lg rounded-lg border bg-card p-4">

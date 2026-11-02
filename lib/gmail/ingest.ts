@@ -5,6 +5,7 @@ import { triageReply } from '@/lib/ai/triage';
 import { normalizeSubject, type ParsedMessage } from '@/lib/gmail/parseMessage';
 import { MessageDirection, MessageClassification, type EmailProviderAccount } from '@prisma/client';
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
+import { suppressBounced } from '@/lib/email/bounces';
 
 /**
  * §47-§50 inbound ingestion. Given an already-parsed Gmail message and the
@@ -261,6 +262,16 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   // default interactive-transaction timeout (P2028), which would drop
   // every inbound reply. The work is bounded, so a generous ceiling is safe.
   { timeout: 30_000, maxWait: 10_000 });
+
+  // A bounce notice: suppress the dead address so it is never mailed again (lib/email/bounces.ts).
+  if (cls.classification === 'BOUNCE' || cls.classification === 'DELIVERY_FAILURE') {
+    await suppressBounced({
+      workspaceId: account.workspaceId,
+      conversationRecipient: knownThread?.recipientEmail ?? null,
+      message,
+      ownAddresses: [account.emailAddress],
+    }).catch((err) => console.error('[ingest] bounce suppression failed', err));
+  }
 
   if (isReply) {
     // §80 AI intent, stored beside the header-first result. Best effort:

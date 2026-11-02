@@ -16,7 +16,7 @@ const tagSchema = z.object({
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
   requireCanWrite(session);
-  const conversation = await loadConversationForSession(session, params.id);
+  const conversation = await loadConversationForSession(session, params.id, 'WORK');
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = tagSchema.parse(await req.json());
@@ -48,7 +48,7 @@ const untagSchema = z.object({ name: z.string().trim().min(1) });
 export const DELETE = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
   requireCanWrite(session);
-  const conversation = await loadConversationForSession(session, params.id);
+  const conversation = await loadConversationForSession(session, params.id, 'WORK');
   if (!conversation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const { name } = untagSchema.parse(await req.json());

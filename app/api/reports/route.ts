@@ -53,28 +53,24 @@ export const GET = withErrorHandling(async (req) => {
       where: { workspaceId, createdAt: { gte: from, lte: to } },
     }),
 
-    prisma.emailJob.findMany({
-      where: {
-        campaign: { workspaceId },
-        sentAt: { gte: from, lte: to },
-      },
-      select: { status: true },
+    // Counted in the database (groupBy), not by loading every row: the report only needs
+    // totals, and every row read costs the free plan's monthly data allowance.
+    prisma.emailJob.groupBy({
+      by: ['status'],
+      where: { campaign: { workspaceId }, sentAt: { gte: from, lte: to } },
+      _count: { _all: true },
     }),
 
-    prisma.emailTrackingEvent.findMany({
-      where: {
-        campaign: { workspaceId },
-        createdAt: { gte: from, lte: to },
-      },
-      select: { type: true },
+    prisma.emailTrackingEvent.groupBy({
+      by: ['type'],
+      where: { campaign: { workspaceId }, createdAt: { gte: from, lte: to } },
+      _count: { _all: true },
     }),
 
-    prisma.conversation.findMany({
-      where: {
-        workspaceId,
-        createdAt: { gte: from, lte: to },
-      },
-      select: { status: true },
+    prisma.conversation.groupBy({
+      by: ['status'],
+      where: { workspaceId, createdAt: { gte: from, lte: to } },
+      _count: { _all: true },
     }),
   ]);
 
@@ -122,23 +118,21 @@ export const GET = withErrorHandling(async (req) => {
   });
 
   // --- Campaign metrics ---
-  const emailsSent = emailJobs.filter((j) => j.status === 'SENT').length;
-  const emailsFailed = emailJobs.filter((j) => j.status === 'FAILED').length;
-  const totalEmails = emailJobs.length;
-  const opens = trackingEvents.filter((e) => e.type === 'OPEN').length;
-  const clicks = trackingEvents.filter((e) => e.type === 'CLICK').length;
+  const countOf = <K extends string>(rows: { _count: { _all: number } }[], key: K, values: string[]) =>
+    rows.filter((r) => values.includes((r as unknown as Record<K, string>)[key])).reduce((n, r) => n + r._count._all, 0);
+  const emailsSent = countOf(emailJobs, 'status', ['SENT']);
+  const emailsFailed = countOf(emailJobs, 'status', ['FAILED']);
+  const totalEmails = emailJobs.reduce((n, r) => n + r._count._all, 0);
+  const opens = countOf(trackingEvents, 'type', ['OPEN']);
+  const clicks = countOf(trackingEvents, 'type', ['CLICK']);
   const openRate = emailsSent > 0 ? Math.round((opens / emailsSent) * 100) : 0;
   const clickRate = emailsSent > 0 ? Math.round((clicks / emailsSent) * 100) : 0;
   const failureRate = totalEmails > 0 ? Math.round((emailsFailed / totalEmails) * 100) : 0;
 
   // --- Inbox metrics ---
-  const totalConversations = conversations.length;
-  const openCount = conversations.filter(
-    (c) => c.status === 'OPEN' || c.status === 'IN_PROGRESS' || c.status === 'WAITING_FOR_STUDENT',
-  ).length;
-  const resolvedCount = conversations.filter(
-    (c) => c.status === 'RESOLVED' || c.status === 'CLOSED',
-  ).length;
+  const totalConversations = conversations.reduce((n, r) => n + r._count._all, 0);
+  const openCount = countOf(conversations, 'status', ['OPEN', 'IN_PROGRESS', 'WAITING_FOR_STUDENT']);
+  const resolvedCount = countOf(conversations, 'status', ['RESOLVED', 'CLOSED']);
   const resolutionRate =
     totalConversations > 0 ? Math.round((resolvedCount / totalConversations) * 100) : 0;
 

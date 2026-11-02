@@ -21,6 +21,8 @@ interface InboxRow {
   slaBreached?: boolean;
   slaMinutesOverdue?: number;
   aiDraft?: boolean;
+  /** Whose inbox it comes from, when it isn't mine (shared with me, or assigned from another inbox). */
+  mailbox?: { emailAddress: string; displayName: string | null } | null;
 }
 
 const FILTERS: { key: string; label: string; countKey?: 'unread' | 'mine' | 'open' | 'waiting' }[] = [
@@ -50,6 +52,9 @@ function timeAgo(iso: string | null): string {
 /** §51/§109 Inbox: filter rail + conversation list with bulk actions. */
 export default function InboxPage() {
   const [filter, setFilter] = useState('open');
+  // "Shared with me" shows the inboxes teammates shared in Settings → Inbox sharing.
+  const [scope, setScope] = useState<'mine' | 'shared'>('mine');
+  const [hasShared, setHasShared] = useState(false);
   const [q, setQ] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
   const [tag, setTag] = useState('');
@@ -71,7 +76,7 @@ export default function InboxPage() {
 
   const load = useCallback(async (p = page) => {
     setLoading(true);
-    const params = new URLSearchParams({ filter, page: String(p), pageSize: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ filter, scope, page: String(p), pageSize: String(PAGE_SIZE) });
     if (q.trim()) params.set('q', q.trim());
     if (assigneeId) params.set('assigneeId', assigneeId);
     if (tag.trim()) params.set('tag', tag.trim());
@@ -80,9 +85,10 @@ export default function InboxPage() {
     setRows(json.conversations ?? []);
     setCounts(json.counts ?? {});
     setTotal(json.total ?? 0);
+    setHasShared(!!json.hasSharedInboxes);
     setLoading(false);
     setSelected(new Set()); // clear selection on reload
-  }, [filter, q, page, assigneeId, tag]);
+  }, [filter, scope, q, page, assigneeId, tag]);
 
   useEffect(() => {
     fetch('/api/members')
@@ -96,7 +102,7 @@ export default function InboxPage() {
     const t = setTimeout(() => load(1), q ? 250 : 0);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, q, assigneeId, tag]);
+  }, [filter, scope, q, assigneeId, tag]);
 
   useEffect(() => { load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
   useAutoSync(() => load(page));
@@ -176,6 +182,22 @@ export default function InboxPage() {
             {syncing ? 'Syncing…' : 'Sync now'}
           </button>
         </div>
+
+        {(hasShared || scope === 'shared') && (
+          <div className="mb-3 grid grid-cols-2 gap-1 rounded-md bg-muted p-0.5 text-xs" role="tablist" aria-label="Which inboxes">
+            {(['mine', 'shared'] as const).map((s) => (
+              <button
+                key={s}
+                role="tab"
+                aria-selected={scope === s}
+                onClick={() => setScope(s)}
+                className={`rounded px-2 py-1 ${scope === s ? 'bg-card font-medium shadow-sm' : 'text-muted-foreground'}`}
+              >
+                {s === 'mine' ? 'My inbox' : 'Shared with me'}
+              </button>
+            ))}
+          </div>
+        )}
 
         <nav className="space-y-0.5">
           {FILTERS.map((f) => {
@@ -356,8 +378,13 @@ export default function InboxPage() {
                                 )}
                                 {c.lastMessage?.snippet ?? ''}
                               </div>
-                              {(c.tags.length > 0 || c.aiDraft) && (
+                              {(c.tags.length > 0 || c.aiDraft || c.mailbox) && (
                                 <div className="mt-1 flex flex-wrap gap-1">
+                                  {c.mailbox && (
+                                    <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground" title={c.mailbox.emailAddress}>
+                                      {c.mailbox.displayName ?? c.mailbox.emailAddress}&apos;s inbox
+                                    </span>
+                                  )}
                                   {c.aiDraft && (
                                     <span className="rounded bg-primary/10 px-1.5 text-[10px] font-medium text-primary">AI draft ready</span>
                                   )}

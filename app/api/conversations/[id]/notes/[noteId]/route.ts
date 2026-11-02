@@ -3,15 +3,16 @@ import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
+import { accessFor, atLeast } from '@/lib/conversations/access';
 
 export const DELETE = withErrorHandling(async (_req, { params }: { params: { id: string; noteId: string } }) => {
   const session = await requireSession();
 
   const note = await prisma.internalNote.findUnique({
     where: { id: params.noteId },
-    include: { conversation: { select: { workspaceId: true } } },
+    include: { conversation: { select: { workspaceId: true, ownerId: true, assigneeId: true } } },
   });
-  if (!note || note.conversation.workspaceId !== session.workspaceId) {
+  if (!note || !atLeast(await accessFor(session, note.conversation), 'WORK')) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
   if (note.authorId !== session.userId && session.role !== 'ADMIN' && session.role !== 'SUPER_ADMIN') {

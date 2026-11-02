@@ -5,10 +5,14 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { resolveWorkspaceId } from '@/lib/permissions/workspace';
 import { ConversationStatus, Prisma } from '@prisma/client';
 import { checkSlaBreach } from '@/lib/sla';
+import { ownersSharingWith } from '@/lib/conversations/access';
 
 /**
  * §51 Inbox list. Filters: unread | mine | open | waiting | resolved | all,
  * plus tag, campaign and free-text search (§64).
+ *
+ * scope=mine (default): this workspace's conversations, plus any assigned to me from another
+ * inbox. scope=shared: the inboxes teammates shared with me (Settings → Inbox sharing).
  */
 export const GET = withErrorHandling(async (req) => {
   const session = await requireSession();
@@ -22,7 +26,15 @@ export const GET = withErrorHandling(async (req) => {
   const page = Math.max(1, Number(url.searchParams.get('page') ?? '1'));
   const pageSize = Math.min(100, Number(url.searchParams.get('pageSize') ?? '40'));
 
-  const where: Prisma.ConversationWhereInput = { workspaceId };
+  const scope = url.searchParams.get('scope') === 'shared' ? 'shared' : 'mine';
+  const sharingOwners = await ownersSharingWith(session);
+  const scopeWhere: Prisma.ConversationWhereInput =
+    scope === 'shared'
+      ? { ownerId: { in: sharingOwners }, workspaceId: { not: workspaceId } }
+      : workspaceId === session.workspaceId
+        ? { OR: [{ workspaceId }, { assigneeId: session.userId }] }
+        : { workspaceId };
+  const where: Prisma.ConversationWhereInput = {};
 
   switch (filter) {
     case 'unread':
@@ -61,13 +73,14 @@ export const GET = withErrorHandling(async (req) => {
 
   const [conversations, total, counts, slaRules] = await Promise.all([
     prisma.conversation.findMany({
-      where,
+      where: { AND: [scopeWhere, where] },
       orderBy: [{ unread: 'desc' }, { lastMessageAt: 'desc' }],
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: {
         contact: { select: { id: true, name: true, primaryEmail: true } },
         assignee: { select: { id: true, name: true } },
+        account: { select: { emailAddress: true, displayName: true } },
         tags: { include: { tag: { select: { name: true, color: true } } } },
         messages: {
           orderBy: { sentAt: 'desc' },
@@ -76,18 +89,18 @@ export const GET = withErrorHandling(async (req) => {
         },
       },
     }),
-    prisma.conversation.count({ where }),
+    prisma.conversation.count({ where: { AND: [scopeWhere, where] } }),
     // Badge counts for the filter rail, independent of the active filter.
     Promise.all([
-      prisma.conversation.count({ where: { workspaceId, unread: true } }),
-      prisma.conversation.count({ where: { workspaceId, assigneeId: session.userId, status: { notIn: ['RESOLVED', 'CLOSED'] } } }),
-      prisma.conversation.count({ where: { workspaceId, status: { in: ['OPEN', 'IN_PROGRESS'] } } }),
-      prisma.conversation.count({ where: { workspaceId, status: 'WAITING_FOR_STUDENT' } }),
+      prisma.conversation.count({ where: { AND: [scopeWhere, { unread: true }] } }),
+      prisma.conversation.count({ where: { AND: [scopeWhere, { assigneeId: session.userId, status: { notIn: ['RESOLVED', 'CLOSED'] } }] } }),
+      prisma.conversation.count({ where: { AND: [scopeWhere, { status: { in: ['OPEN', 'IN_PROGRESS'] } }] } }),
+      prisma.conversation.count({ where: { AND: [scopeWhere, { status: 'WAITING_FOR_STUDENT' }] } }),
     ]),
     // Active SLA rules for breach detection.
     prisma.slaRule.findMany({
-      where: { workspaceId, active: true },
-      select: { firstResponseMinutes: true, appliesTo: true, tagName: true, assigneeId: true },
+      where: scope === 'shared' ? { workspace: { ownerId: { in: sharingOwners } }, active: true } : { workspaceId, active: true },
+      select: { workspaceId: true, firstResponseMinutes: true, appliesTo: true, tagName: true, assigneeId: true },
     }),
   ]);
 
@@ -122,7 +135,7 @@ export const GET = withErrorHandling(async (req) => {
           assigneeId: c.assigneeId,
           tags: c.tags,
         },
-        slaRules
+        slaRules.filter((r) => r.workspaceId === c.workspaceId),
       );
       return {
         id: c.id,
@@ -134,6 +147,8 @@ export const GET = withErrorHandling(async (req) => {
         contact: c.contact,
         recipientEmail: c.recipientEmail,
         assignee: c.assignee,
+        // Whose inbox it is, for conversations from a shared inbox or assigned from another one.
+        mailbox: c.workspaceId === session.workspaceId ? null : c.account,
         tags: c.tags.map((t) => t.tag),
         lastMessage: c.messages[0] ?? null,
         // INBOUND = thread started by a direct email, not a MailFlow campaign.
@@ -147,5 +162,7 @@ export const GET = withErrorHandling(async (req) => {
     page,
     pageSize,
     counts: { unread: counts[0], mine: counts[1], open: counts[2], waiting: counts[3] },
+    scope,
+    hasSharedInboxes: sharingOwners.length > 0,
   });
 });
