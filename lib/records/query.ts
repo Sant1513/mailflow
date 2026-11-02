@@ -70,7 +70,7 @@ export const viewQuerySchema = z.object({
   search: z.string().max(200).optional(),
   groupBy: z.string().max(100).optional(),
   page: z.number().int().min(1).default(1),
-  pageSize: z.number().int().min(1).max(200).default(100),
+  pageSize: z.number().int().min(1).max(1000).default(100),
 });
 
 export type ViewQuery = z.infer<typeof viewQuerySchema>;

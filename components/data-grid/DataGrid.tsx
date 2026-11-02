@@ -78,6 +78,25 @@ export function DataGrid({
   const [draft, setDraft] = useState('');
   const [widths, setWidths] = useState<Record<string, number>>({});
   const resizing = useRef<{ id: string; startX: number; startW: number } | null>(null);
+
+  // Draw only the rows in view (plus a margin), so pages of 500–1,000 rows stay smooth.
+  // Grouped pages render fully: their group headers make row heights uneven.
+  const scroller = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(800);
+  const [rowHeight, setRowHeight] = useState(34);
+  const measureRow = useRef<HTMLTableRowElement | null>(null);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setViewportHeight(el.clientHeight || 800));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    const h = measureRow.current?.offsetHeight;
+    if (h && Math.abs(h - rowHeight) > 1) setRowHeight(h);
+  });
   const visible = columns.filter((c) => !c.hidden);
 
   useEffect(() => {
@@ -130,8 +149,19 @@ export function DataGrid({
   const sortOf = (key: string) => sort?.find((s) => s.key === key);
   const frozenClass = (i: number) => (freezeFirst && i === 0 ? 'sticky left-10 z-[5] bg-card shadow-[inset_-1px_0_0_hsl(var(--border))]' : '');
 
+  const windowed = !groupOf && records.length > 80;
+  const OVERSCAN = 15;
+  const first = windowed ? Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN) : 0;
+  const last = windowed ? Math.min(records.length, Math.ceil((scrollTop + viewportHeight) / rowHeight) + OVERSCAN) : records.length;
+  const spacer = (rows: number, key: string) =>
+    rows > 0 ? (
+      <tr key={key} aria-hidden style={{ height: rows * rowHeight }}>
+        <td colSpan={visible.length + 4} />
+      </tr>
+    ) : null;
+
   return (
-    <div className="h-full overflow-auto rounded-lg border bg-card">
+    <div ref={scroller} onScroll={windowed ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined} className="h-full overflow-auto rounded-lg border bg-card">
       <table className="border-collapse text-sm" style={{ minWidth: '100%' }}>
         <thead className="sticky top-0 z-10 bg-muted">
           <tr>
@@ -187,7 +217,9 @@ export function DataGrid({
           </tr>
         </thead>
         <tbody>
-          {records.map((record, i) => {
+          {spacer(first, 'space-top')}
+          {records.slice(first, last).map((record, j) => {
+            const i = first + j;
             const groupValue = groupOf?.[i];
             const newGroup = groupOf && (i === 0 || groupOf[i - 1] !== groupValue);
             const isSelected = selected.has(record.id);
@@ -200,7 +232,7 @@ export function DataGrid({
                   </td>
                 </tr>
               ) : null,
-              <tr key={record.id} className={`${isSelected ? 'bg-primary/10' : 'hover:bg-elevated/60'}`}>
+              <tr key={record.id} ref={j === 0 ? measureRow : undefined} className={`${isSelected ? 'bg-primary/10' : 'hover:bg-elevated/60'}`}>
                 <td className={`grid-cell sticky left-0 z-[5] w-10 text-center ${isSelected ? 'bg-primary/10' : 'bg-card'}`}>
                   <label className="flex items-center justify-center gap-1 text-[10px] text-muted-foreground">
                     <input type="checkbox" checked={isSelected} onChange={() => toggle(record.id)} aria-label={`Select row ${rowOffset + i + 1}`} />
@@ -265,6 +297,7 @@ export function DataGrid({
               </tr>,
             ];
           })}
+          {spacer(records.length - last, 'space-bottom')}
           {records.length === 0 && (
             <tr>
               <td colSpan={visible.length + 4} className="grid-cell py-8 text-center text-sm text-muted-foreground">

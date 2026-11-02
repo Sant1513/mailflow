@@ -7,7 +7,8 @@ import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { Role } from '@prisma/client';
 import { loadDatasetForSession as loadDatasetShared } from '@/lib/records/datasetAccess';
-import { applyView, parseViewQuery, type ViewQuery } from '@/lib/records/query';
+import { parseViewQuery, type ViewQuery } from '@/lib/records/query';
+import { queryGrid } from '@/lib/records/gridQuery';
 
 async function loadDatasetForSession(session: Awaited<ReturnType<typeof requireSession>>, id: string) {
   const dataset = await prisma.dataset.findUnique({ where: { id } });
@@ -20,11 +21,10 @@ async function loadDatasetForSession(session: Awaited<ReturnType<typeof requireS
 
 /**
  * §12 grid read. Filter / search / sort / group / paginate run server-side
- * (lib/records/query.ts); the browser only receives one page (§135).
- * `?viewId=` applies a saved view; any explicit filter/sort/groupBy in the
+ * (lib/records/gridQuery.ts, rules from lib/records/query.ts); the browser only receives one
+ * page (§135). `?viewId=` applies a saved view; any explicit filter/sort/groupBy in the
  * query overrides that view's setting for this request.
  */
-const RECORD_CAP = 5000;
 
 export const GET = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
@@ -43,21 +43,18 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
     groupBy: requested.groupBy ?? view?.groupBy ?? undefined,
   };
 
-  const [columns, savedViews, all, total] = await Promise.all([
+  const [columns, savedViews, result] = await Promise.all([
     prisma.datasetColumn.findMany({ where: { datasetId: dataset.id }, orderBy: { order: 'asc' } }),
     prisma.savedView.findMany({ where: { datasetId: dataset.id }, orderBy: { createdAt: 'asc' } }),
-    prisma.record.findMany({ where: { datasetId: dataset.id }, orderBy: { createdAt: 'asc' }, take: RECORD_CAP }),
-    prisma.record.count({ where: { datasetId: dataset.id } }),
+    queryGrid(dataset.id, query),
   ]);
-
-  const result = applyView(all as any, query);
 
   return NextResponse.json({
     dataset,
     columns,
     savedViews,
     records: result.records,
-    total,
+    total: result.total,
     matched: result.matched,
     page: result.page,
     pageSize: result.pageSize,
@@ -66,7 +63,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
     groupOf: result.groupOf,
     query,
     viewId: view?.id ?? null,
-    truncated: total > RECORD_CAP,
+    truncated: result.truncated,
   });
 });
 

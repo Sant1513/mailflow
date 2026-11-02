@@ -323,7 +323,7 @@ export default function DatasetDetailPage() {
           <h1 className="font-heading text-xl font-bold tracking-tight">{detail.dataset.name}</h1>
           <p className="text-sm text-muted-foreground">
             {detail.matched === detail.total ? `${detail.total} records` : `${detail.matched} of ${detail.total} records`} · {detail.columns.length} columns
-            {detail.truncated && <span className="ml-2 text-warning">Showing the first 5,000 records for filtering.</span>}
+            {detail.truncated && <span className="ml-2 text-warning">Filtering covers the first 100,000 records.</span>}
           </p>
         </div>
         <div className="flex gap-2">
@@ -505,7 +505,7 @@ export default function DatasetDetailPage() {
         <span>Double-click a cell to edit · click a header to sort · drag a header edge to resize.</span>
         <span className="flex items-center gap-2">
           <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} className="!w-auto !py-1 text-xs">
-            {[25, 50, 100, 200].map((n) => (
+            {[25, 50, 100, 200, 500, 1000].map((n) => (
               <option key={n} value={n}>{n} / page</option>
             ))}
           </select>
