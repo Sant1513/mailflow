@@ -68,6 +68,8 @@ const REASONS: Record<string, string> = {
   MISSING_VARIABLE: 'a field used in the message is empty',
   ALREADY_SENT: 'already emailed',
   UNSUBSCRIBED_OR_BOUNCED: 'unsubscribed or bounced before',
+  SUPPRESSED: 'unsubscribed or bounced before',
+  BAD_ADDRESS: 'address would bounce (dead domain, typo, no-reply or throwaway)',
 };
 
 const DRAFT_KEY = 'mf.quickSend.draft';

@@ -37,6 +37,7 @@ export const MAIL_NAV: NavItem[] = [
   { href: '/automations', label: 'Automations' },
   { href: '/batches', label: 'Batches' },
   { href: '/suppressions', label: 'Suppressions' },
+  { href: '/deliverability', label: 'Deliverability' },
   { href: '/performance', label: 'Performance' },
   { href: '/reports', label: 'Reports' },
   { href: '/history', label: 'History' },
@@ -54,7 +55,7 @@ export const PRODUCT_NAV: Record<Product, NavItem[]> = { mail: MAIL_NAV, sign: S
 
 const MAIL_PREFIXES = [
   '/quick-send', '/dashboard', '/inbox', '/data', '/contacts', '/campaigns', '/templates',
-  '/automations', '/batches', '/suppressions', '/performance', '/reports', '/history',
+  '/automations', '/batches', '/suppressions', '/deliverability', '/performance', '/reports', '/history',
 ];
 
 const SIGN_DOCUMENT_SECTIONS = new Set(['new', 'bulk', 'templates', 'analytics']);

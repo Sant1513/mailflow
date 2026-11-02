@@ -63,7 +63,7 @@ export const GET = withErrorHandling(async (req) => {
 
     prisma.emailTrackingEvent.groupBy({
       by: ['type'],
-      where: { campaign: { workspaceId }, createdAt: { gte: from, lte: to } },
+      where: { automated: false, campaign: { workspaceId }, createdAt: { gte: from, lte: to } },
       _count: { _all: true },
     }),
 

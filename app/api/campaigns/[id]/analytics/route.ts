@@ -40,12 +40,12 @@ export const GET = withErrorHandling(async (req, { params }) => {
     }),
     prisma.emailSuppression.count({ where: { campaignId: id, source: 'BOUNCE' } }),
     prisma.emailTrackingEvent.findMany({
-      where: { campaignId: id, type: 'OPEN' },
+      where: { automated: false, campaignId: id, type: 'OPEN' },
       distinct: ['email'],
       select: { email: true },
     }).then((r) => r.length),
     prisma.emailTrackingEvent.findMany({
-      where: { campaignId: id, type: 'CLICK' },
+      where: { automated: false, campaignId: id, type: 'CLICK' },
       distinct: ['email'],
       select: { email: true },
     }).then((r) => r.length),
@@ -96,11 +96,11 @@ export const GET = withErrorHandling(async (req, { params }) => {
       select: { lastAttemptAt: true },
     }),
     prisma.emailTrackingEvent.findMany({
-      where: { campaignId: id, type: 'OPEN' },
+      where: { automated: false, campaignId: id, type: 'OPEN' },
       select: { createdAt: true },
     }),
     prisma.emailTrackingEvent.findMany({
-      where: { campaignId: id, type: 'CLICK' },
+      where: { automated: false, campaignId: id, type: 'CLICK' },
       select: { createdAt: true },
     }),
   ]);
@@ -136,7 +136,7 @@ export const GET = withErrorHandling(async (req, { params }) => {
     tabData = { rows, total, page };
   } else if (tab === 'read') {
     const events = await prisma.emailTrackingEvent.findMany({
-      where: { campaignId: id, type: 'OPEN' },
+      where: { automated: false, campaignId: id, type: 'OPEN' },
       orderBy: { createdAt: 'asc' },
       select: { email: true, createdAt: true },
     });
@@ -151,7 +151,7 @@ export const GET = withErrorHandling(async (req, { params }) => {
     tabData = { rows, total: all.length, page };
   } else if (tab === 'clicked') {
     const events = await prisma.emailTrackingEvent.findMany({
-      where: { campaignId: id, type: 'CLICK' },
+      where: { automated: false, campaignId: id, type: 'CLICK' },
       orderBy: { createdAt: 'asc' },
       select: { email: true, url: true, createdAt: true },
     });

@@ -24,7 +24,7 @@ async function main() {
   console.log(`${notices.length} stored bounce notice(s).`);
   let suppressed = 0;
   for (const n of notices) {
-    const message = { subject: n.subject, plainTextBody: n.plainTextBody, htmlBody: n.htmlBody };
+    const message = { subject: n.subject ?? undefined, plainTextBody: n.plainTextBody, htmlBody: n.htmlBody };
     const own = [n.conversation.account.emailAddress];
     if (dryRun) {
       const info = parseBounce(message, own);

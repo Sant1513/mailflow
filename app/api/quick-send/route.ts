@@ -21,6 +21,7 @@ import { dailyLimit, usageLast24h } from '@/lib/queue/drain';
 import { buildContactWhere } from '@/app/api/segments/_filterContacts';
 import { columnsFromTable, normalizeVariables, textToHtml } from '@/lib/quickSend/prepare';
 import { inlineEmailCss, looksLikeHtml } from '@/lib/quickSend/html';
+import { checkAddresses } from '@/lib/email/addressCheck';
 import { QUICK_SEND_DESCRIPTION, QUICK_SEND_ON_APPROVAL, campaignStats } from '@/lib/quickSend/stats';
 
 export const maxDuration = 60;
@@ -175,17 +176,17 @@ export const POST = withErrorHandling(async (req) => {
   const keys = new Set(resolved.columns.map((c) => c.key));
   const unknownVariables = extractVariables(subject, html).filter((v) => !keys.has(v));
 
-  const simulation = dryRun(resolved.rows, { emailColumnKey: resolved.emailKey, template: { subject, html, plainText }, origin: { campaignName: body.subject } });
-
-  // Unsubscribed / bounced people are never emailed (checked again at send time).
-  const sendableEmails = simulation.evaluations.filter((e) => e.willSend).map((e) => e.email!.toLowerCase());
-  const suppressed = sendableEmails.length
-    ? await prisma.emailSuppression.findMany({ where: { workspaceId: session.workspaceId, email: { in: sendableEmails } }, select: { email: true, reason: true } })
-    : [];
+  // Pre-send address check: unsubscribed/bounced (also re-checked at send time), dead domains,
+  // typos, no-reply and throwaway addresses (lib/email/addressCheck.ts).
+  const addressProblems = await checkAddresses(
+    resolved.rows.map((r) => (resolved.emailKey ? r.data[resolved.emailKey] : null)).filter((e): e is string => typeof e === 'string'),
+    session.workspaceId,
+  );
+  const simulation = dryRun(resolved.rows, { emailColumnKey: resolved.emailKey, template: { subject, html, plainText }, origin: { campaignName: body.subject }, addressProblems });
 
   const sender = await senderAccountFor({ workspaceId: session.workspaceId, createdById: session.userId });
   const usage = sender ? await usageLast24h(sender.id) : null;
-  const wouldSend = simulation.wouldSend - suppressed.length;
+  const wouldSend = simulation.wouldSend;
   const capacity = usage ? Math.max(0, dailyLimit() - usage.messages) : 0;
 
   if (body.mode === 'check') {
@@ -198,12 +199,9 @@ export const POST = withErrorHandling(async (req) => {
       emailColumn: resolved.emailKey,
       total: simulation.total,
       wouldSend,
-      skipped: simulation.skipped + suppressed.length,
-      byReason: { ...simulation.byReason, ...(suppressed.length ? { UNSUBSCRIBED_OR_BOUNCED: suppressed.length } : {}) },
-      skippedExamples: [
-        ...simulation.evaluations.filter((e) => !e.willSend).slice(0, 8).map((e) => ({ email: e.email ?? '(no email)', reason: e.reasonDetail ?? e.skipReason })),
-        ...suppressed.slice(0, 3).map((s) => ({ email: s.email, reason: s.reason === 'BOUNCED' ? 'Bounced before' : 'Unsubscribed' })),
-      ],
+      skipped: simulation.skipped,
+      byReason: simulation.byReason,
+      skippedExamples: simulation.evaluations.filter((e) => !e.willSend).slice(0, 10).map((e) => ({ email: e.email ?? '(no email)', reason: e.reasonDetail ?? e.skipReason })),
       unknownVariables,
       preview: preview && first ? { to: first.email, subject: preview.subject, html: sanitizeEmailHtml(normalizeEmailLinks(preview.html)), missingVariables: preview.missingVariables } : null,
       sender: sender ? { emailAddress: sender.emailAddress, status: sender.status, sentToday: usage?.messages ?? 0, capacityToday: capacity } : null,

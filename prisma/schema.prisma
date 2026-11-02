@@ -1124,11 +1124,16 @@ model EmailTrackingEvent {
   url        String?  // destination URL for clicks
   ip         String?
   userAgent  String?
+  /// A link scanner, preview bot or prefetch rather than a person (lib/email/botDetect.ts).
+  /// Kept for the record, left out of open/click numbers.
+  automated       Boolean  @default(false)
+  automatedReason String?
   createdAt  DateTime @default(now())
 
   campaign Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   emailJob EmailJob  @relation(fields: [emailJobId], references: [id], onDelete: Cascade)
 
+  @@index([campaignId, type, automated])
   @@index([campaignId])
   @@index([emailJobId])
   @@index([email])

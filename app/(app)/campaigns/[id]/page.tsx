@@ -35,6 +35,8 @@ const REASON_LABELS: Record<string, string> = {
   MISSING_VARIABLE: 'Missing variable value',
   MISSING_DOCUMENT_FIELD: 'Missing document value',
   DUPLICATE_IN_BATCH: 'Duplicate address',
+  SUPPRESSED: 'Unsubscribed or bounced before',
+  BAD_ADDRESS: 'Address would bounce',
   CONDITION_NOT_MET: 'Automation condition not met',
   FREQUENCY_LIMIT: 'Send-frequency limit',
   MANUALLY_SKIPPED: 'Manually excluded',

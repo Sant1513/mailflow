@@ -52,10 +52,10 @@ async function weekNumbers(organizationId: string, from: Date, to: Date): Promis
     prisma.emailJob.count({ where: { campaign: { organizationId }, status: EmailJobStatus.SENT, sentAt: range } }),
     prisma.emailJob.count({ where: { campaign: { organizationId }, status: EmailJobStatus.FAILED, lastAttemptAt: range } }),
     campaignIds.length
-      ? prisma.emailTrackingEvent.findMany({ where: { campaignId: { in: campaignIds }, type: 'OPEN', createdAt: range }, distinct: ['email'], select: { email: true } })
+      ? prisma.emailTrackingEvent.findMany({ where: { automated: false, campaignId: { in: campaignIds }, type: 'OPEN', createdAt: range }, distinct: ['email'], select: { email: true } })
       : [],
     campaignIds.length
-      ? prisma.emailTrackingEvent.findMany({ where: { campaignId: { in: campaignIds }, type: 'CLICK', createdAt: range }, distinct: ['email'], select: { email: true } })
+      ? prisma.emailTrackingEvent.findMany({ where: { automated: false, campaignId: { in: campaignIds }, type: 'CLICK', createdAt: range }, distinct: ['email'], select: { email: true } })
       : [],
     prisma.conversationMessage.count({
       where: { conversation: { organizationId }, direction: MessageDirection.INBOUND, classification: MessageClassification.HUMAN_REPLY, receivedAt: range },
@@ -108,8 +108,8 @@ export async function buildWeeklyReport(organizationId: string, now: Date = new 
     campaigns.map(async (c) => {
       const [sent, opens, clicks, replies] = await Promise.all([
         prisma.emailJob.count({ where: { campaignId: c.id, status: EmailJobStatus.SENT, sentAt: { gte: from, lt: to } } }),
-        prisma.emailTrackingEvent.findMany({ where: { campaignId: c.id, type: 'OPEN', createdAt: { gte: from, lt: to } }, distinct: ['email'], select: { email: true } }),
-        prisma.emailTrackingEvent.findMany({ where: { campaignId: c.id, type: 'CLICK', createdAt: { gte: from, lt: to } }, distinct: ['email'], select: { email: true } }),
+        prisma.emailTrackingEvent.findMany({ where: { automated: false, campaignId: c.id, type: 'OPEN', createdAt: { gte: from, lt: to } }, distinct: ['email'], select: { email: true } }),
+        prisma.emailTrackingEvent.findMany({ where: { automated: false, campaignId: c.id, type: 'CLICK', createdAt: { gte: from, lt: to } }, distinct: ['email'], select: { email: true } }),
         prisma.emailJob.count({ where: { campaignId: c.id, sentAt: { gte: from, lt: to }, record: { replyReceived: true } } }),
       ]);
       return { name: c.name, sent, opens: opens.length, clicks: clicks.length, replies };

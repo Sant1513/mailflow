@@ -178,7 +178,7 @@ export async function campaignPerformance(scope: Scope, limit = 10): Promise<Cam
     }),
     prisma.emailTrackingEvent.groupBy({
       by: ['campaignId', 'type'],
-      where: { campaignId: { in: ids } },
+      where: { automated: false, campaignId: { in: ids } },
       _count: { _all: true },
     }),
   ]);
@@ -242,12 +242,12 @@ export async function trackingStats(scope: Scope, since?: Date): Promise<Trackin
 
   const [openRows, clickRows, unsubscribes, sent] = await Promise.all([
     prisma.emailTrackingEvent.findMany({
-      where: { campaignId: { in: campaignIds }, type: 'OPEN', ...dateFilter },
+      where: { automated: false, campaignId: { in: campaignIds }, type: 'OPEN', ...dateFilter },
       distinct: ['email'],
       select: { email: true },
     }),
     prisma.emailTrackingEvent.findMany({
-      where: { campaignId: { in: campaignIds }, type: 'CLICK', ...dateFilter },
+      where: { automated: false, campaignId: { in: campaignIds }, type: 'CLICK', ...dateFilter },
       distinct: ['email'],
       select: { email: true },
     }),

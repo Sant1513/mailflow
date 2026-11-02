@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { prisma } from '@/lib/db/client';
+import { recordTrackingEvent } from '@/lib/email/trackingEvents';
 import { decodeTrackingToken, isValidClickDestination } from '@/lib/email/tracking';
 import { escapeHtml } from '@/lib/signing/fields';
 
@@ -22,19 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
   if (payload && verified) {
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null;
     const userAgent = req.headers.get('user-agent') ?? null;
-    await prisma.emailTrackingEvent
-      .create({
-        data: {
-          campaignId: payload.campaignId,
-          emailJobId: payload.emailJobId,
-          email: payload.email,
-          type: 'CLICK',
-          url: target.toString(),
-          ip,
-          userAgent,
-        },
-      })
-      .catch(() => {});
+    await recordTrackingEvent({ type: 'CLICK', campaignId: payload.campaignId, emailJobId: payload.emailJobId, email: payload.email, url: target.toString(), ip, userAgent });
     return NextResponse.redirect(target, { status: 302 });
   }
 

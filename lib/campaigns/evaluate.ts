@@ -20,6 +20,10 @@ export const SKIP_REASONS = {
   CONDITION_NOT_MET: 'CONDITION_NOT_MET',
   FREQUENCY_LIMIT: 'FREQUENCY_LIMIT',
   MANUALLY_SKIPPED: 'MANUALLY_SKIPPED',
+  /** Unsubscribed, bounced before, or reported spam (the suppression list). */
+  SUPPRESSED: 'SUPPRESSED',
+  /** Would not arrive or nobody reads it: no mail server, a typo domain, no-reply, throwaway. */
+  BAD_ADDRESS: 'BAD_ADDRESS',
 } as const;
 
 export type SkipReason = (typeof SKIP_REASONS)[keyof typeof SKIP_REASONS];
@@ -41,6 +45,11 @@ export interface EvaluationContext {
    * text so the UI can explain exactly why (§35).
    */
   conditionResults?: Map<string, { met: boolean; description: string }>;
+  /**
+   * Pre-send address check results, keyed by lower-cased address (lib/email/addressCheck.ts).
+   * Computed before evaluation so this module stays pure.
+   */
+  addressProblems?: Map<string, { kind: string; detail: string }>;
   /** Record ids blocked by a send-frequency policy (§37). */
   frequencyBlockedRecordIds?: Map<string, string>;
   /**
@@ -162,8 +171,19 @@ export function evaluateRecord(
     return { ...base, willSend: false, skipReason: SKIP_REASONS.INVALID_EMAIL, reasonDetail: `"${email}" is not a valid email address.` };
   }
 
-  // Same address twice in one batch — send once, skip the rest.
+  // Pre-send address check: suppressed, or an address that would bounce / nobody reads.
   const normalized = email.toLowerCase();
+  const problem = ctx.addressProblems?.get(normalized);
+  if (problem) {
+    return {
+      ...base,
+      willSend: false,
+      skipReason: problem.kind === 'SUPPRESSED' ? SKIP_REASONS.SUPPRESSED : SKIP_REASONS.BAD_ADDRESS,
+      reasonDetail: problem.detail,
+    };
+  }
+
+  // Same address twice in one batch — send once, skip the rest.
   if (seenEmails.has(normalized)) {
     return {
       ...base,
@@ -229,7 +249,8 @@ export function dryRun(records: EvaluableRecord[], ctx: EvaluationContext): DryR
     (byReason[SKIP_REASONS.INVALID_EMAIL] ?? 0) +
     (byReason[SKIP_REASONS.MISSING_EMAIL] ?? 0) +
     (byReason[SKIP_REASONS.MISSING_VARIABLE] ?? 0) +
-    (byReason[SKIP_REASONS.MISSING_DOCUMENT_FIELD] ?? 0);
+    (byReason[SKIP_REASONS.MISSING_DOCUMENT_FIELD] ?? 0) +
+    (byReason[SKIP_REASONS.BAD_ADDRESS] ?? 0);
 
   return {
     total: records.length,

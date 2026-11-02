@@ -4,6 +4,7 @@ import { ForbiddenError, type AppSession } from '@/lib/auth/session';
 import { ColumnType, Role, EmailJobStatus, EmailProvider as EmailProviderEnum } from '@prisma/client';
 import type { EvaluableRecord, EvaluationContext } from './evaluate';
 import { documentRequirements, loadCampaignDocuments, type LoadedCampaignDocument } from '@/lib/documents/campaign';
+import { checkAddresses } from '@/lib/email/addressCheck';
 
 /**
  * Assembles everything the dry run and the real send need, from one place,
@@ -82,6 +83,13 @@ export async function buildEvaluationContext(
   // review, validation and the send, so they can never disagree.
   const documents = await loadCampaignDocuments(campaign.id);
 
+  // Pre-send address check (suppressions, dead domains, typos, no-reply): the review, the
+  // simulation and the send all see the same result.
+  const addressProblems = await checkAddresses(
+    records.map((r) => (r.data as Record<string, unknown> | null)?.[emailColumnKey]).filter((e): e is string => typeof e === 'string'),
+    campaign.workspaceId,
+  );
+
   return {
     records: records.map((r) => ({ id: r.id, data: (r.data ?? {}) as Record<string, unknown> })),
     documents,
@@ -94,6 +102,7 @@ export async function buildEvaluationContext(
         plainText: campaign.templateVersion.plainText,
       },
       alreadySentRecordIds: new Set(alreadySent.map((j) => j.recordId)),
+      addressProblems,
       origin: {
         campaignName: campaign.name,
         automationName: campaign.automation?.name,

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { prisma } from '@/lib/db/client';
+import { recordTrackingEvent } from '@/lib/email/trackingEvents';
 import { decodeTrackingToken } from '@/lib/email/tracking';
 
 // 1×1 transparent GIF — minimal response size.
@@ -16,19 +16,8 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
     const userAgent = req.headers.get('user-agent') ?? null;
 
     // Awaited: on serverless hosts work left running after the response can be
-    // frozen and lost. Failures are still swallowed — tracking is best-effort.
-    await prisma.emailTrackingEvent
-      .create({
-        data: {
-          campaignId: payload.campaignId,
-          emailJobId: payload.emailJobId,
-          email: payload.email,
-          type: 'OPEN',
-          ip,
-          userAgent,
-        },
-      })
-      .catch(() => {/* non-critical — tracking events are best-effort */});
+    // frozen and lost. Failures are swallowed inside — tracking is best-effort.
+    await recordTrackingEvent({ type: 'OPEN', campaignId: payload.campaignId, emailJobId: payload.emailJobId, email: payload.email, ip, userAgent });
   }
 
   return new NextResponse(PIXEL, {

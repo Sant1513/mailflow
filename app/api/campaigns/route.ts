@@ -32,7 +32,7 @@ export const GET = withErrorHandling(async (req) => {
   const trackingGroups = ids.length
     ? await prisma.emailTrackingEvent.groupBy({
         by: ['campaignId', 'type'],
-        where: { campaignId: { in: ids } },
+        where: { automated: false, campaignId: { in: ids } },
         _count: { _all: true },
       })
     : [];

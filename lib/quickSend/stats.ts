@@ -36,8 +36,8 @@ export async function campaignStats(campaignId: string): Promise<QuickSendStats 
   if (!c) return null;
   const [groups, opens, clicks, last, bounced, threads] = await Promise.all([
     prisma.emailJob.groupBy({ by: ['status'], where: { campaignId }, _count: { _all: true } }),
-    prisma.emailTrackingEvent.findMany({ where: { campaignId, type: 'OPEN' }, distinct: ['email'], select: { email: true } }),
-    prisma.emailTrackingEvent.findMany({ where: { campaignId, type: 'CLICK' }, distinct: ['email'], select: { email: true } }),
+    prisma.emailTrackingEvent.findMany({ where: { automated: false, campaignId, type: 'OPEN' }, distinct: ['email'], select: { email: true } }),
+    prisma.emailTrackingEvent.findMany({ where: { automated: false, campaignId, type: 'CLICK' }, distinct: ['email'], select: { email: true } }),
     prisma.emailJob.findFirst({ where: { campaignId, status: EmailJobStatus.SENT }, orderBy: { sentAt: 'desc' }, select: { sentAt: true } }),
     prisma.emailSuppression.count({ where: { campaignId, source: 'BOUNCE' } }),
     prisma.emailJob.findMany({ where: { campaignId, gmailThreadId: { not: null } }, select: { gmailThreadId: true }, distinct: ['gmailThreadId'] }),
