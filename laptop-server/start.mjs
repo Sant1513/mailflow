@@ -672,8 +672,15 @@ if (await isFreshDatabase()) {
   }
 }
 if (!runStep('Applying database migrations', [PRISMA_BIN, 'migrate', 'deploy'])) fail('migrations');
-if (!fs.existsSync(path.join(APP_DIR, '.next', 'BUILD_ID'))) {
-  if (!runStep('Building the app (first run, takes a few minutes)', [NEXT_BIN, 'build'])) fail('build');
+// Rebuild whenever the code changed since the last build (git commit of the app folder), so a
+// switch to the laptop never runs an older MailFlow than the cloud.
+const BUILT_FILE = path.join(DATA, 'built-commit.txt');
+const commit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: APP_DIR, encoding: 'utf8', windowsHide: true }).stdout?.trim() || 'unknown';
+const builtCommit = fs.existsSync(BUILT_FILE) ? fs.readFileSync(BUILT_FILE, 'utf8').trim() : '';
+if (!fs.existsSync(path.join(APP_DIR, '.next', 'BUILD_ID')) || builtCommit !== commit) {
+  if (!runStep(`Building the app for ${commit.slice(0, 7)} (takes a few minutes)`, [PRISMA_BIN, 'generate'])) fail('prisma generate');
+  if (!runStep('Building the app', [NEXT_BIN, 'build'])) fail('build');
+  fs.writeFileSync(BUILT_FILE, commit);
 }
 if (control) {
   log(`Server switch: following the cloud database${LAPTOP_PUBLIC_URL ? `; public address ${LAPTOP_PUBLIC_URL}` : ' (LAPTOP_PUBLIC_URL not set in app.env!)'}.`);

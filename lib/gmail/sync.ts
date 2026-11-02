@@ -53,8 +53,13 @@ export interface MessageMetadata {
 }
 
 export interface GmailSource {
-  /** Returns messages added since historyId (in history order), plus the new historyId. Throws GmailHistoryGone on 404. */
-  listHistory(startHistoryId: string): Promise<{ entries: HistoryEntry[]; historyId: string | null }>;
+  /**
+   * Returns messages added since historyId (in history order), plus the history id to resume
+   * from. With `maxEntries`, stops after about that many messages and returns the id of the
+   * last history record it read, so a long backlog is worked through window by window.
+   * Throws GmailHistoryGone on 404.
+   */
+  listHistory(startHistoryId: string, maxEntries?: number): Promise<{ entries: HistoryEntry[]; historyId: string | null }>;
   /** Bounded recent INBOX + SENT scan for the fallback path. */
   listRecentInbox(maxResults: number): Promise<{ entries: HistoryEntry[]; historyId: string | null }>;
   /** Headers + labels only: ~1/5 the cost of a full fetch. Null when the message is gone. */
@@ -83,7 +88,7 @@ export function gmailSourceFor(account: EmailProviderAccount): GmailSource {
   };
 
   return {
-    async listHistory(startHistoryId) {
+    async listHistory(startHistoryId, maxEntries) {
       const gmail = await api();
       const seen = new Set<string>();
       const entries: HistoryEntry[] = [];
@@ -91,6 +96,12 @@ export function gmailSourceFor(account: EmailProviderAccount): GmailSource {
       let newest: string | null = null;
       try {
         do {
+          // A big backlog (e.g. weeks without a sync) takes longer to list than a whole run
+          // may take; stop at the window size and resume from the last record read.
+          if (maxEntries && entries.length >= maxEntries) {
+            newest = entries[entries.length - 1]?.historyRecordId ?? newest;
+            break;
+          }
           const res = await gmail.users.history.list({
             userId: 'me',
             startHistoryId,
@@ -217,6 +228,8 @@ export interface SyncOptions {
 }
 
 const SCAN_LIMIT = 100;
+/** Messages listed per run on the history path; the rest are picked up by the next run. */
+const HISTORY_WINDOW = 1000;
 const DEFAULT_BUDGET_MS = 40_000;
 const DEFAULT_MAX_MESSAGES = 600;
 const DEFAULT_CONCURRENCY = 6;
@@ -287,7 +300,7 @@ export async function syncAccount(
   try {
     if (account.gmailHistoryId) {
       try {
-        const h = await source.listHistory(account.gmailHistoryId);
+        const h = await source.listHistory(account.gmailHistoryId, HISTORY_WINDOW);
         entries = h.entries;
         historyId = h.historyId;
         result.path = 'history';
@@ -352,7 +365,9 @@ export async function syncAccount(
   // ── Triage 2 + ingest, in batches so a run can stop cleanly on budget ──
   const batches = chunk(entries, BATCH);
   for (let b = 0; b < batches.length; b += 1) {
-    if (outOfBudget() || processed >= maxMessages) {
+    // Always finish at least one batch: when listing alone used the budget, stopping here
+    // would leave the cursor where it was and every run would stall on the same window.
+    if (b > 0 && (outOfBudget() || processed >= maxMessages)) {
       result.remaining = entries.length - processed;
       break;
     }
