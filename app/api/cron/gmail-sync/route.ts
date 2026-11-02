@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { syncAccountToCompletion } from '@/lib/gmail/sync';
+import { ensureWatch, pushEnabled, watchDue } from '@/lib/gmail/watch';
 
 export const maxDuration = 60;
 
@@ -37,5 +38,19 @@ export async function GET(req: Request) {
       results.push({ accountId: account.id, email: account.emailAddress, errors: 1, error: ((err as Error).message ?? 'unknown').slice(0, 200) });
     }
   }
-  return NextResponse.json({ startedAt, finishedAt: new Date(), accounts: accounts.length, results });
+  // Gmail push (lib/gmail/watch.ts): start or renew each mailbox's watch when it is due. Cheap
+  // when nothing is due (no Gmail call); does nothing until GMAIL_PUBSUB_TOPIC is set.
+  const watches: { email: string; until?: string; error?: string }[] = [];
+  if (pushEnabled()) {
+    for (const account of accounts) {
+      if (!watchDue(account) || Date.now() > deadline + 5_000) continue;
+      try {
+        const until = await ensureWatch(account);
+        if (until) watches.push({ email: account.emailAddress, until: until.toISOString() });
+      } catch (err) {
+        watches.push({ email: account.emailAddress, error: ((err as Error).message ?? 'unknown').slice(0, 200) });
+      }
+    }
+  }
+  return NextResponse.json({ startedAt, finishedAt: new Date(), accounts: accounts.length, results, push: pushEnabled() ? { renewed: watches } : 'off' });
 }

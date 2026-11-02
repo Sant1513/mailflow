@@ -7,6 +7,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { createOAuthClient, GMAIL_SCOPES, OAUTH_RETURN_COOKIE, OAUTH_STATE_COOKIE, safeReturnPath } from '@/lib/gmail/oauth';
 import { encryptSecret } from '@/lib/crypto/secretBox';
 import { audit } from '@/lib/audit/log';
+import { ensureWatch } from '@/lib/gmail/watch';
 import { EmailProvider as EmailProviderEnum } from '@prisma/client';
 
 function settingsRedirect(message: string, ok: boolean) {
@@ -101,7 +102,7 @@ export const GET = withErrorHandling(async (req) => {
 
   if (!session.workspaceId) throw new ForbiddenError('No workspace on session');
 
-  await prisma.emailProviderAccount.upsert({
+  const account = await prisma.emailProviderAccount.upsert({
     where: {
       workspaceId_userId_provider: {
         workspaceId: session.workspaceId,
@@ -136,6 +137,10 @@ export const GET = withErrorHandling(async (req) => {
   });
 
   await audit(session, 'GMAIL_CONNECTED', { targetType: 'EmailProviderAccount', metadata: { emailAddress } });
+
+  // Instant replies (Gmail push): start the watch right away when push is set up. A failure
+  // here never blocks connecting; the scheduled sync retries it.
+  await ensureWatch({ ...account, watchExpiresAt: null }).catch(() => undefined);
 
   return settingsRedirect(`connected:${emailAddress}`, true);
 });
