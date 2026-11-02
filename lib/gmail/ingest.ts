@@ -6,6 +6,7 @@ import { normalizeSubject, type ParsedMessage } from '@/lib/gmail/parseMessage';
 import { MessageDirection, MessageClassification, type EmailProviderAccount } from '@prisma/client';
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
 import { suppressBounced } from '@/lib/email/bounces';
+import { applyReplyRules } from '@/lib/replyRules/apply';
 
 /**
  * §47-§50 inbound ingestion. Given an already-parsed Gmail message and the
@@ -288,6 +289,9 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
         ai: aiCtx,
         mailboxEmail: account.emailAddress,
       });
+      // The campaign's "When someone replies" rules (lib/replyRules), after triage so a rule's
+      // own choices (status, assignee, template reply) win over the generic ones.
+      await applyReplyRules({ conversationId: result.conversationId, intent: intent.intent, confidence: intent.confidence });
     }
 
     dispatchWebhook(account.workspaceId, 'conversation.message.received', {

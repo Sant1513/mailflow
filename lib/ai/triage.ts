@@ -73,7 +73,7 @@ export function draftToHtml(text: string): string {
     .join('');
 }
 
-async function tagConversation(conversationId: string, workspaceId: string, name: string) {
+export async function tagConversation(conversationId: string, workspaceId: string, name: string) {
   const tag = await prisma.tag.upsert({
     where: { workspaceId_name: { workspaceId, name } },
     create: { workspaceId, name },

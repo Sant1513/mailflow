@@ -143,6 +143,8 @@ export type ReplyIntent =
   | 'COMPLAINT'
   | 'ACKNOWLEDGEMENT'
   | 'NEEDS_ACTION'
+  | 'INTERESTED'
+  | 'NOT_INTERESTED'
   | 'OUT_OF_OFFICE'
   | 'AUTO_REPLY'
   | 'UNKNOWN';
@@ -154,6 +156,8 @@ export const REPLY_INTENTS: ReplyIntent[] = [
   'COMPLAINT',
   'ACKNOWLEDGEMENT',
   'NEEDS_ACTION',
+  'INTERESTED',
+  'NOT_INTERESTED',
   'OUT_OF_OFFICE',
   'AUTO_REPLY',
   'UNKNOWN',

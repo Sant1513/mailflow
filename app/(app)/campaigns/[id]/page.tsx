@@ -8,6 +8,7 @@ import { ExplainButton } from '@/components/ai/ExplainButton';
 import { SenderSettings } from '@/components/campaign/SenderSettings';
 import { FallbackSenders } from '@/components/campaign/FallbackSenders';
 import { CampaignRsvp } from '@/components/rsvp/CampaignRsvp';
+import { CampaignReplyRules } from '@/components/replyRules/CampaignReplyRules';
 import { CampaignReview, type CampaignPreview } from '@/components/campaign/CampaignReview';
 import { CampaignDocuments } from '@/components/campaign/CampaignDocuments';
 import { useDocumentPreview } from '@/components/documents/PdfPreviewDialog';
@@ -593,6 +594,12 @@ export default function CampaignDetailPage() {
       <section id="rsvp" className="mb-6 rounded-lg border bg-card p-4">
         <h2 className="mb-3 text-sm font-semibold">RSVP buttons</h2>
         <CampaignRsvp campaignId={campaign.id} canEdit={!['CANCELLED'].includes(campaign.status)} />
+      </section>
+
+      {/* Follow-up branches by the type of reply */}
+      <section id="reply-rules" className="mb-6 rounded-lg border bg-card p-4">
+        <h2 className="mb-3 text-sm font-semibold">When someone replies</h2>
+        <CampaignReplyRules campaignId={campaign.id} canEdit={!['CANCELLED'].includes(campaign.status)} />
       </section>
 
       {/* Personalised PDFs attached to every email */}

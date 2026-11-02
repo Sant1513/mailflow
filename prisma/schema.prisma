@@ -501,6 +501,9 @@ model Campaign {
   /// RSVP buttons in the email (lib/rsvp/config.ts): question, options, colours, deadline,
   /// seat limits, where answers are saved. Null = no RSVP.
   rsvp                     Json?
+  /// "When someone replies" rules (lib/replyRules/config.ts): by reply type (interested, not
+  /// interested, question…) send a template, set a column, assign, tag, close, stop follow-ups.
+  replyRules               Json?
   createdAt                DateTime       @default(now())
   updatedAt                DateTime       @updatedAt
 

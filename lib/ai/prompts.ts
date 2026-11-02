@@ -197,7 +197,9 @@ export function classifyPrompt(ctx: ConversationContext): string {
   return [
     "Classify the student's LATEST message in this conversation with exactly one intent:",
     'COMPLETED (they did the thing asked), QUESTION, REQUEST (asking for something), COMPLAINT, ACKNOWLEDGEMENT (simple thanks/ok),',
-    'NEEDS_ACTION (the team must do something), OUT_OF_OFFICE, AUTO_REPLY (machine-generated), UNKNOWN.',
+    'NEEDS_ACTION (the team must do something), INTERESTED (wants to take part / go ahead / says yes to the offer or invitation),',
+    'NOT_INTERESTED (declines, says no, or asks to be left out), OUT_OF_OFFICE, AUTO_REPLY (machine-generated), UNKNOWN.',
+    'Prefer INTERESTED / NOT_INTERESTED when the message is mainly a yes or no to what was offered, even if it also says thanks.',
     'Give a confidence from 0 to 1 and a one-line reason.',
     '',
     transcript(ctx),

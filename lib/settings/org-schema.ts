@@ -16,6 +16,8 @@ export const INTENT_TAGS = {
   NEEDS_ACTION: 'Needs action',
   COMPLETED: 'Completed',
   ACKNOWLEDGEMENT: 'Thanks',
+  INTERESTED: 'Interested',
+  NOT_INTERESTED: 'Not interested',
 } as const;
 
 export type TriageIntent = keyof typeof INTENT_TAGS;
