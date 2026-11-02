@@ -1,20 +1,29 @@
 /**
- * MailFlow laptop server: database + app + background jobs, kept running on this laptop.
+ * MailFlow laptop server: the laptop side of the server switch (lib/system/serverState.ts).
  *
- *   node start.mjs            start everything (Windows runs this at sign-in, see install.mjs)
+ *   node start.mjs            start (Windows runs this at sign-in, see install.mjs)
  *
- * What it does, in order:
- *   1. Starts Postgres from ../laptop-server/node_modules (no installer), data in MAILFLOW_DATA\pg.
- *      Listens on 127.0.0.1 only: the database is never reachable from outside the laptop.
- *   2. Applies any new database migrations.
- *   3. Builds the app if needed and runs it on 127.0.0.1:3100 (Tailscale Funnel publishes it,
- *      Vercel forwards the public address to it: middleware.ts).
- *   4. Runs the background jobs on the same schedule Vercel/GitHub did. Anything that came due
- *      while the laptop was off runs as soon as it is back, so sending carries on where it
- *      stopped (emails already sent are never sent again: each job is claimed before sending
- *      and half-finished ones are checked against Gmail's Sent folder first).
- *   5. Backs the database up every night (7 days kept) in MAILFLOW_DATA\backups.
- * If the app or the database stops unexpectedly, it is restarted.
+ * MailFlow runs on one server at a time: the cloud (Vercel + Supabase, normally) or this
+ * laptop. The switch lives in the cloud database (SystemState); this script reads it every
+ * 15 seconds and reports a heartbeat. Its role follows the switch:
+ *
+ *   Standby (MailFlow on the cloud) — only the database runs here. It pulls a full copy of the
+ *     cloud database every night (03:00 IST) and on start-up if the last copy is over a day
+ *     old, so the laptop always holds a recent backup. No app, no jobs: nothing is written.
+ *   Active (MailFlow on the laptop) — runs the app on 127.0.0.1:3100 (published through
+ *     Tailscale Funnel; Vercel forwards the public address to it, middleware.ts) and every
+ *     scheduled job. Pushes a full copy to the cloud every 30 minutes, so the cloud is at most
+ *     30 minutes behind if the laptop disappears. If the public address stays unreachable for
+ *     10 minutes, it hands MailFlow back to the cloud by itself.
+ *   Handover — when someone switches on Settings → Server, everyone sees "switching servers";
+ *     after a 30-second grace (so requests already on their way finish), this script copies
+ *     the active database to the other one (laptop-server/copy-db.mjs: one transaction, row
+ *     counts checked), then flips the switch. Before any copy *into* the laptop, the laptop's
+ *     own data is backed up first (backups\pre-pull-*), so nothing here is ever lost.
+ *
+ * Without MAILFLOW_DATA\supabase.env there is no switch and the laptop is simply always active.
+ * Postgres runs from ./node_modules (no installer), listens on 127.0.0.1 only, and is backed up
+ * every night (7 days kept). If the app stops unexpectedly while active, it is restarted.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -27,6 +36,7 @@ import { pipeline } from 'node:stream/promises';
 import EmbeddedPostgres from 'embedded-postgres';
 import pg from 'pg';
 import copyStreams from 'pg-copy-streams';
+import { copyDatabase } from './copy-db.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.resolve(HERE, '..');
@@ -101,6 +111,15 @@ const APP_ENV = {
 };
 delete APP_ENV.REDIS_URL; // no Redis here: the database-backed send worker is used
 delete APP_ENV.LAPTOP_UPSTREAM; // this IS the upstream
+
+// The cloud database (Supabase): where the switch lives, and the other end of every copy.
+// SUPABASE_DIRECT_URL (session pooler) is used here; the app reads the switch through the
+// transaction pooler (CONTROL_DATABASE_URL, see lib/system/serverState.ts).
+const SUPABASE = readEnvFile(path.join(DATA, 'supabase.env'));
+const CLOUD_URL = SUPABASE.SUPABASE_DIRECT_URL || '';
+const LOCAL_URL = DATABASE_URL.replace(/\?.*$/, '');
+const LAPTOP_PUBLIC_URL = (APP_ENV.LAPTOP_PUBLIC_URL || '').replace(/\/+$/, '');
+if (SUPABASE.SUPABASE_DATABASE_URL) APP_ENV.CONTROL_DATABASE_URL = SUPABASE.SUPABASE_DATABASE_URL;
 
 // ---------- helpers ----------
 const node = process.execPath;
@@ -191,16 +210,31 @@ function freeAppPort() {
   }
 }
 
+let wantApp = false;
 function startApp() {
+  wantApp = true;
+  if (app) return;
   freeAppPort();
   log(`Starting the app on ${APP_LOCAL}…`);
   const out = fs.openSync(path.join(LOG_DIR, 'app.log'), 'a');
-  app = spawn(node, [NEXT_BIN, 'start', '-p', String(APP_PORT), '-H', '127.0.0.1'], { cwd: APP_DIR, env: APP_ENV, stdio: ['ignore', out, out], windowsHide: true });
-  app.on('exit', (code) => {
-    if (stopping) return;
+  const child = spawn(node, [NEXT_BIN, 'start', '-p', String(APP_PORT), '-H', '127.0.0.1'], { cwd: APP_DIR, env: APP_ENV, stdio: ['ignore', out, out], windowsHide: true });
+  app = child;
+  child.on('exit', (code) => {
+    if (app === child) app = null;
+    if (stopping || !wantApp) return;
     log(`App stopped (exit ${code}); restarting in 5 s.`);
-    setTimeout(startApp, 5000);
+    setTimeout(() => wantApp && startApp(), 5000);
   });
+}
+
+async function stopApp() {
+  wantApp = false;
+  const child = app;
+  if (!child) return;
+  log('Stopping the app.');
+  child.kill();
+  for (let i = 0; i < 20 && app === child; i++) await sleep(250);
+  freeAppPort();
 }
 
 async function waitForApp() {
@@ -270,6 +304,7 @@ async function runJob(job) {
 }
 
 function tickJobs() {
+  if (role !== 'active' || handingOver) return; // only the active server runs jobs
   const state = readState();
   const now = Date.now();
   for (const job of JOBS) {
@@ -285,8 +320,23 @@ function tickJobs() {
 // Every table as gzipped CSV (restore.mjs reads these back). Runs at 21:30 UTC (03:00 IST),
 // or as soon as the laptop is on if the last one is more than a day old.
 async function backup() {
-  const stamp = new Date().toISOString().slice(0, 10);
-  const dir = path.join(BACKUP_DIR, stamp);
+  await backupTo(new Date().toISOString().slice(0, 10));
+  const all = fs.readdirSync(BACKUP_DIR).filter((n) => /^\d{4}-\d{2}-\d{2}$/.test(n)).sort();
+  for (const old of all.slice(0, -7)) fs.rmSync(path.join(BACKUP_DIR, old), { recursive: true, force: true });
+  const state = readState();
+  state.lastBackup = Date.now();
+  writeState(state);
+}
+
+/** Before anything is copied into the laptop database, keep what is there (last 5 kept). */
+async function backupBeforePull() {
+  await backupTo(`pre-pull-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+  const all = fs.readdirSync(BACKUP_DIR).filter((n) => n.startsWith('pre-pull-')).sort();
+  for (const old of all.slice(0, -5)) fs.rmSync(path.join(BACKUP_DIR, old), { recursive: true, force: true });
+}
+
+async function backupTo(name) {
+  const dir = path.join(BACKUP_DIR, name);
   const tmp = `${dir}.partial`;
   fs.rmSync(tmp, { recursive: true, force: true });
   fs.mkdirSync(tmp, { recursive: true });
@@ -304,11 +354,6 @@ async function backup() {
   }
   fs.rmSync(dir, { recursive: true, force: true });
   fs.renameSync(tmp, dir);
-  const all = fs.readdirSync(BACKUP_DIR).filter((n) => /^\d{4}-\d{2}-\d{2}$/.test(n)).sort();
-  for (const old of all.slice(0, -7)) fs.rmSync(path.join(BACKUP_DIR, old), { recursive: true, force: true });
-  const state = readState();
-  state.lastBackup = Date.now();
-  writeState(state);
   log(`Backup written to ${dir}.`);
 }
 
@@ -334,10 +379,18 @@ const PUBLIC_URL = (APP_ENV.NEXTAUTH_URL || '').replace(/\/+$/, '');
 const TAILSCALE = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe');
 let publicUp = null;
 let publicFails = 0;
+let publicDownSince = 0;
 let lastRepair = 0;
+const HAND_BACK_AFTER_MS = 10 * 60_000;
 
 async function checkPublicRoute() {
   if (!PUBLIC_URL.startsWith('https://')) return;
+  if (role !== 'active' || handingOver) {
+    publicUp = null;
+    publicFails = 0;
+    publicDownSince = 0;
+    return; // on standby the public address is served by the cloud: nothing to watch
+  }
   let ok = false;
   let detail = '';
   try {
@@ -350,6 +403,13 @@ async function checkPublicRoute() {
   if (ok !== publicUp) log(ok ? 'Public address is reachable.' : `Public address is NOT reachable (${detail}).`);
   publicUp = ok;
   publicFails = ok ? 0 : publicFails + 1;
+  publicDownSince = ok ? 0 : publicDownSince || Date.now();
+  // Unreachable for 10 minutes: the team can't use MailFlow, so hand it back to the cloud
+  // (a normal handover with a full copy — nothing is lost).
+  if (publicDownSince && Date.now() - publicDownSince >= HAND_BACK_AFTER_MS && CLOUD_URL) {
+    await requestSwitchToCloud('the laptop server (its public address was unreachable for 10 minutes)');
+    return;
+  }
   if (publicFails < 3 || Date.now() - lastRepair < 10 * 60_000 || !fs.existsSync(TAILSCALE)) return;
   lastRepair = Date.now();
   log('Switching the Tailscale Funnel for the app off and on again…');
@@ -359,6 +419,194 @@ async function checkPublicRoute() {
   };
   log('  off:', ts(['funnel', '--yes', '--https=443', 'off']));
   log('  on: ', ts(['funnel', '--yes', '--bg', '--https=443', `http://127.0.0.1:${APP_PORT}`]));
+}
+
+// ---------- server switch ----------
+// role: 'active' (MailFlow runs here) | 'standby' (MailFlow runs on the cloud) | null (not known yet)
+let role = null;
+let handingOver = false;
+let controlDownLogged = false;
+const GRACE_MS = 30_000; // requests already on their way finish before a copy starts
+const PUSH_EVERY_MS = 30 * 60_000;
+const control = CLOUD_URL ? new pg.Pool({ connectionString: CLOUD_URL, ssl: { rejectUnauthorized: false }, max: 2 }) : null;
+control?.on('error', () => {}); // a dropped idle connection is reopened on the next query
+
+const fmtIst = (d) => new Date(d).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+
+/** Heartbeat + read the switch in one round trip. updatedAt is left alone: it marks real changes. */
+async function heartbeat() {
+  const { rows } = await control.query(
+    `INSERT INTO "SystemState" (id, "updatedAt", "lastLaptopSeenAt", "laptopUrl") VALUES ('main', now(), now(), $1)
+     ON CONFLICT (id) DO UPDATE SET "lastLaptopSeenAt" = now(), "laptopUrl" = COALESCE($1, "SystemState"."laptopUrl")
+     RETURNING *`,
+    [LAPTOP_PUBLIC_URL || null],
+  );
+  return rows[0];
+}
+
+async function setState(where, fields) {
+  const keys = Object.keys(fields);
+  const sets = keys.map((k, i) => `"${k}" = $${i + 1}`).join(', ');
+  const res = await control.query(`UPDATE "SystemState" SET ${sets}, "updatedAt" = now() WHERE id = 'main' AND ${where}`, keys.map((k) => fields[k]));
+  return res.rowCount > 0;
+}
+
+async function requestSwitchToCloud(by) {
+  const ok = await setState(`"activeServer" = 'laptop' AND "switchTo" IS NULL`, { switchTo: 'cloud', switchStartedAt: new Date(), switchRequestedBy: by, note: null }).catch(() => false);
+  if (ok) log(`Asked to move MailFlow to the cloud (${by}).`);
+}
+
+async function becomeActive() {
+  if (role === 'active') return;
+  role = 'active';
+  log('Role: ACTIVE — MailFlow runs on this laptop.');
+  startApp();
+  if (await waitForApp()) tickJobs();
+}
+
+async function becomeStandby() {
+  if (role === 'standby') return;
+  role = 'standby';
+  log('Role: STANDBY — MailFlow runs on the cloud; this laptop keeps a copy.');
+  await stopApp();
+}
+
+async function waitForJobs(maxMs) {
+  for (let t = 0; running.size && t < maxMs; t += 500) await sleep(500);
+}
+
+async function handoverToLaptop(s) {
+  handingOver = true;
+  try {
+    const wait = new Date(s.switchStartedAt).getTime() + GRACE_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    if ((await heartbeat()).switchTo !== 'laptop') return; // cancelled meanwhile
+    log('Switching to the laptop: copying the cloud database here…');
+    await backupBeforePull();
+    const r = await copyDatabase(CLOUD_URL, LOCAL_URL);
+    log(`Copied ${r.rows} rows from the cloud.`);
+    startApp();
+    if (!(await waitForApp())) throw new Error('the app did not start');
+    const done = await setState(`"switchTo" = 'laptop'`, {
+      activeServer: 'laptop', switchTo: null, switchStartedAt: null, lastSyncAt: new Date(),
+      note: `Switched to the laptop on ${fmtIst(Date.now())}.`,
+    });
+    if (!done) {
+      log('The switch was cancelled while copying; staying on standby.');
+      await stopApp();
+      return;
+    }
+    role = 'active';
+    lastPush = Date.now();
+    log('Role: ACTIVE — switch to the laptop complete.');
+    tickJobs();
+  } catch (err) {
+    log('Switch to the laptop failed:', err);
+    await stopApp();
+    await setState(`"switchTo" = 'laptop'`, {
+      switchTo: null, switchStartedAt: null,
+      note: `The switch to the laptop failed (${String(err?.message ?? err).slice(0, 200)}). MailFlow stayed on the cloud; nothing was lost.`,
+    }).catch(() => {});
+  } finally {
+    handingOver = false;
+  }
+}
+
+async function handoverToCloud(s) {
+  handingOver = true; // jobs stop starting from now
+  try {
+    const wait = new Date(s.switchStartedAt).getTime() + GRACE_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    if ((await heartbeat()).switchTo !== 'cloud') return;
+    await waitForJobs(120_000);
+    await stopApp();
+    log('Switching to the cloud: copying this laptop\'s database there…');
+    const r = await copyDatabase(LOCAL_URL, CLOUD_URL);
+    log(`Copied ${r.rows} rows to the cloud.`);
+    await setState(`"switchTo" = 'cloud'`, {
+      activeServer: 'cloud', switchTo: null, switchStartedAt: null, lastSyncAt: new Date(),
+      note: `Switched to the cloud on ${fmtIst(Date.now())}${s.switchRequestedBy ? ` (requested by ${s.switchRequestedBy})` : ''}.`,
+    });
+    role = 'standby';
+    state_lastPull(Date.now());
+    log('Role: STANDBY — switch to the cloud complete.');
+  } catch (err) {
+    log('Switch to the cloud failed:', err);
+    await setState(`"switchTo" = 'cloud'`, {
+      switchTo: null, switchStartedAt: null,
+      note: `The switch to the cloud failed (${String(err?.message ?? err).slice(0, 200)}). MailFlow stayed on the laptop; nothing was lost.`,
+    }).catch(() => {});
+    role = null; // re-evaluated (and the app restarted) on the next tick
+  } finally {
+    handingOver = false;
+  }
+}
+
+// Active: keep the cloud at most 30 minutes behind, in case this laptop disappears.
+let lastPush = Date.now();
+let pushing = false;
+async function tickPush() {
+  if (role !== 'active' || handingOver || pushing || Date.now() - lastPush < PUSH_EVERY_MS) return;
+  pushing = true;
+  try {
+    const r = await copyDatabase(LOCAL_URL, CLOUD_URL);
+    lastPush = Date.now();
+    await setState('true', { lastSyncAt: new Date() });
+    log(`Copied ${r.rows} rows to the cloud (standby copy).`);
+  } catch (err) {
+    log('Copy to the cloud failed (will retry):', String(err?.message ?? err));
+  } finally {
+    pushing = false;
+  }
+}
+
+// Standby: pull the cloud database every night at 03:00 IST, and on start-up if the last
+// pull is more than a day old.
+function state_lastPull(t) {
+  const st = readState();
+  st.lastPull = t;
+  writeState(st);
+}
+let pulling = false;
+async function tickPull() {
+  if (role !== 'standby' || handingOver || pulling) return;
+  const last = readState().lastPull ?? 0;
+  const now = new Date();
+  const dueToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 21, 30));
+  const lastDueAt = dueToday <= now ? dueToday : new Date(dueToday.getTime() - 86_400_000);
+  if (last >= lastDueAt.getTime() && Date.now() - last < 86_400_000) return;
+  pulling = true;
+  try {
+    await backupBeforePull();
+    const r = await copyDatabase(CLOUD_URL, LOCAL_URL);
+    state_lastPull(Date.now());
+    await setState('true', { lastSyncAt: new Date() });
+    log(`Pulled ${r.rows} rows from the cloud (laptop backup copy).`);
+  } catch (err) {
+    log('Pulling the cloud copy failed (will retry):', String(err?.message ?? err));
+  } finally {
+    pulling = false;
+  }
+}
+
+async function controlTick() {
+  if (handingOver) return;
+  let s;
+  try {
+    s = await heartbeat();
+    if (controlDownLogged) log('Cloud database reachable again.');
+    controlDownLogged = false;
+  } catch (err) {
+    // Can't reach the cloud: keep doing what we're doing (an active laptop keeps serving).
+    if (!controlDownLogged) log('Cannot reach the cloud database:', String(err?.message ?? err));
+    controlDownLogged = true;
+    return;
+  }
+  if (s.switchTo === 'laptop' && s.activeServer === 'cloud') return handoverToLaptop(s);
+  if (s.switchTo === 'cloud' && s.activeServer === 'laptop') return handoverToCloud(s);
+  if (s.switchTo) return; // the other side's move; wait
+  if (s.activeServer === 'laptop') await becomeActive();
+  else await becomeStandby();
 }
 
 // ---------- restart on request ----------
@@ -420,10 +668,18 @@ if (!runStep('Applying database migrations', [PRISMA_BIN, 'migrate', 'deploy']))
 if (!fs.existsSync(path.join(APP_DIR, '.next', 'BUILD_ID'))) {
   if (!runStep('Building the app (first run, takes a few minutes)', [NEXT_BIN, 'build'])) fail('build');
 }
-startApp();
-if (!(await waitForApp())) log('App did not answer within 2 minutes; jobs will start once it does.');
+if (control) {
+  log(`Server switch: following the cloud database${LAPTOP_PUBLIC_URL ? `; public address ${LAPTOP_PUBLIC_URL}` : ' (LAPTOP_PUBLIC_URL not set in app.env!)'}.`);
+  await controlTick();
+  setInterval(controlTick, 15_000);
+  setInterval(tickPush, 60_000);
+  setInterval(tickPull, 5 * 60_000);
+  setTimeout(tickPull, 20_000);
+} else {
+  log('No supabase.env: no server switch, this laptop is always the active server.');
+  await becomeActive();
+}
 log('Ready.');
-tickJobs();
 setInterval(tickJobs, 20_000);
 tickBackup();
 setInterval(tickBackup, 10 * 60_000);

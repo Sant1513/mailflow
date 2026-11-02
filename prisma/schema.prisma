@@ -1345,3 +1345,26 @@ model SigningGroup {
   @@index([batchId])
 }
 
+
+/// Which server MailFlow runs on: "cloud" (Vercel + Supabase) or "laptop" (laptop-server/).
+/// A single row (id "main") that lives only in the cloud database: the handover copies
+/// between the two databases never include it (laptop-server/copy-db.mjs), so a copy can
+/// never overwrite the switch itself. See lib/system/serverState.ts.
+model SystemState {
+  id                String    @id @default("main")
+  activeServer      String    @default("cloud")
+  /// Set while a handover is in progress ("cloud" | "laptop"); the site shows a short
+  /// "switching servers" page until the laptop finishes the copy and clears it.
+  switchTo          String?
+  switchStartedAt   DateTime?
+  switchRequestedBy String?
+  /// Last full copy between the two databases (either direction).
+  lastSyncAt        DateTime?
+  /// Heartbeat from the laptop server, every 15 s while it is running.
+  lastLaptopSeenAt  DateTime?
+  /// The laptop's public (Tailscale Funnel) address, reported with the heartbeat.
+  laptopUrl         String?
+  /// Plain-language note about the last switch or problem, shown on the Server page.
+  note              String?
+  updatedAt         DateTime  @updatedAt
+}

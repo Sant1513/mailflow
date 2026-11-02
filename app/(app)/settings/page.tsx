@@ -55,6 +55,18 @@ export default async function SettingsPage() {
         </Link>
       </section>
 
+      {user.role === 'SUPER_ADMIN' && (
+        <section className="mb-8 max-w-lg rounded-lg border bg-card p-4">
+          <h2 className="mb-1 text-sm font-semibold">Server</h2>
+          <p className="mb-3 text-xs text-muted-foreground">
+            See whether MailFlow runs on the cloud or your laptop, and switch between them without losing data or sign-ins.
+          </p>
+          <Link href="/settings/server" className="rounded border px-3 py-1.5 text-sm hover:bg-elevated inline-block">
+            Manage server →
+          </Link>
+        </section>
+      )}
+
       <section className="max-w-lg rounded-lg border bg-card p-4">
         <h2 className="mb-1 text-sm font-semibold">Outbound Webhooks</h2>
         <p className="mb-3 text-xs text-muted-foreground">
