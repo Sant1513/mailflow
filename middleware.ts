@@ -33,15 +33,22 @@ async function forwardRead(req: NextRequest): Promise<Response | null> {
   headers.set('x-forwarded-proto', 'https');
   headers.set('accept-encoding', 'identity'); // Vercel compresses the reply to the browser itself
 
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+  // Vercel stops middleware at 25 s. Each try gets 7 s to *start* answering (the timer is
+  // cleared once headers arrive, so a large download is never cut off), and no new try
+  // starts after 18 s — a dead route shows the offline page in under 20 s, not a timeout error.
+  const started = Date.now();
+  for (let attempt = 1; attempt <= ATTEMPTS && Date.now() - started < 18_000; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(7_000, 22_000 - (Date.now() - started)));
     try {
       const res = await fetch(`${UPSTREAM}${req.nextUrl.pathname}${req.nextUrl.search}`, {
         method: req.method,
         headers,
         redirect: 'manual',
         cache: 'no-store',
-        signal: AbortSignal.timeout(20_000),
+        signal: controller.signal,
       });
+      clearTimeout(timer);
       // 502/504 here come from the tunnel, not the app: the laptop side didn't answer.
       if ((res.status === 502 || res.status === 504) && attempt < ATTEMPTS) continue;
       const out = new Headers(res.headers);
@@ -56,6 +63,7 @@ async function forwardRead(req: NextRequest): Promise<Response | null> {
       }
       return new Response(req.method === 'HEAD' ? null : res.body, { status: res.status, statusText: res.statusText, headers: out });
     } catch {
+      clearTimeout(timer);
       if (attempt < ATTEMPTS) await new Promise((r) => setTimeout(r, 300 * attempt));
     }
   }
