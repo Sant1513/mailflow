@@ -498,6 +498,9 @@ model Campaign {
   approvalRequestThreadId  String?
   approvalRequestEmail     String? // SENT | SKIPPED: <why> | FAILED: <why>
   approvalDecisionEmail    String?
+  /// RSVP buttons in the email (lib/rsvp/config.ts): question, options, colours, deadline,
+  /// seat limits, where answers are saved. Null = no RSVP.
+  rsvp                     Json?
   createdAt                DateTime       @default(now())
   updatedAt                DateTime       @updatedAt
 
@@ -514,6 +517,7 @@ model Campaign {
   documents        CampaignDocument[]
   trackingEvents   EmailTrackingEvent[]
   emailSuppressions EmailSuppression[]
+  rsvpResponses    RsvpResponse[]
 
   @@index([workspaceId])
   @@index([status])
@@ -1396,4 +1400,27 @@ model InboxShare {
   @@unique([ownerId, granteeId])
   @@index([granteeId])
   @@index([organizationId])
+}
+
+/// One person's answer to a campaign's RSVP buttons (app/rsvp/[token]). One row per address per
+/// campaign; changing the answer updates it (when the campaign allows changes).
+model RsvpResponse {
+  id          String   @id @default(cuid())
+  campaignId  String
+  emailJobId  String?
+  recordId    String?
+  email       String
+  /// The option key from the campaign's RSVP settings (e.g. "yes", "no", "maybe").
+  answer      String
+  note        String?  @db.Text
+  changes     Int      @default(0)
+  ip          String?
+  userAgent   String?
+  respondedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, email])
+  @@index([campaignId, answer])
 }

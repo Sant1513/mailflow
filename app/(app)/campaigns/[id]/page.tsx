@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { ExplainButton } from '@/components/ai/ExplainButton';
 import { SenderSettings } from '@/components/campaign/SenderSettings';
 import { FallbackSenders } from '@/components/campaign/FallbackSenders';
+import { CampaignRsvp } from '@/components/rsvp/CampaignRsvp';
 import { CampaignReview, type CampaignPreview } from '@/components/campaign/CampaignReview';
 import { CampaignDocuments } from '@/components/campaign/CampaignDocuments';
 import { useDocumentPreview } from '@/components/documents/PdfPreviewDialog';
@@ -587,6 +588,12 @@ export default function CampaignDetailPage() {
       <div className="mb-6">
         <FallbackSenders campaignId={campaign.id} refreshKey={campaign.status} />
       </div>
+
+      {/* RSVP buttons in the email, and who answered what */}
+      <section id="rsvp" className="mb-6 rounded-lg border bg-card p-4">
+        <h2 className="mb-3 text-sm font-semibold">RSVP buttons</h2>
+        <CampaignRsvp campaignId={campaign.id} canEdit={!['CANCELLED'].includes(campaign.status)} />
+      </section>
 
       {/* Personalised PDFs attached to every email */}
       <div className="mb-6">

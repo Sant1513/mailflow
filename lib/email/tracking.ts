@@ -80,9 +80,14 @@ export function buildUnsubscribeUrl(workspaceId: string, email: string): string 
   return `${appBaseUrl()}/unsubscribe/${encodeUnsubToken(workspaceId, email)}`;
 }
 
-/** Links that must reach us directly (unsubscribe), never through click tracking. */
+/** RSVP button link for one recipient and one answer (app/rsvp/[token]). */
+export function buildRsvpUrl(payload: TrackingPayload, optionKey: string): string {
+  return `${appBaseUrl()}/rsvp/${encodeTrackingToken(payload)}?a=${encodeURIComponent(optionKey)}`;
+}
+
+/** Links that must reach us directly (unsubscribe, RSVP buttons), never through click tracking. */
 function isOwnUnsubscribeLink(url: string): boolean {
-  return url.startsWith(`${appBaseUrl()}/`) && /\/(api\/)?unsubscribe\//.test(url);
+  return url.startsWith(`${appBaseUrl()}/`) && /\/(api\/)?(unsubscribe|rsvp)\//.test(url);
 }
 
 /** Inject a 1×1 tracking pixel + wrap all href links in the HTML body. */

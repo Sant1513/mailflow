@@ -16,6 +16,7 @@ import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 import { runHealthCheck } from '@/lib/templates/healthCheck';
 import { documentValidationIssues, resolveDocument, systemValuesFor } from '@/lib/documents/campaign';
 import { PREVIEW_REFERENCE } from '@/lib/documents/reference';
+import { placeRsvpBlock, readRsvpConfig, renderRsvpBlock, stripRsvpPlaceholder } from '@/lib/rsvp/config';
 
 /**
  * §113 campaign review: everything a human needs to cross-check BEFORE a
@@ -68,7 +69,10 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       { subject: version.subject, html: version.html, plainText: version.plainText },
       target.data
     );
-    const withCss = version.css ? `<style>${version.css}</style>${out.html}` : out.html;
+    // RSVP buttons as they will appear (links are per recipient at send time; '#' here).
+    const rsvp = readRsvpConfig(campaign.rsvp);
+    const bodyHtml = rsvp ? placeRsvpBlock(out.html, renderRsvpBlock(rsvp, () => '#')) : stripRsvpPlaceholder(out.html);
+    const withCss = version.css ? `<style>${version.css}</style>${bodyHtml}` : bodyHtml;
     rendered = {
       subject: out.subject,
       // Sanitized because the preview renders in the operator's browser.

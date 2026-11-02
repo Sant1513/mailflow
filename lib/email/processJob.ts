@@ -7,7 +7,8 @@ import { EmailJobStatus, BatchStatus, CampaignStatus, ConversationStatus, Messag
 import { generateJobDocuments, type GeneratedAttachment } from '@/lib/documents/campaign';
 import { DocumentRenderError } from '@/lib/documents/render';
 import { DocumentFileError } from '@/lib/documents/inspect';
-import { injectTracking } from '@/lib/email/tracking';
+import { buildRsvpUrl, injectTracking } from '@/lib/email/tracking';
+import { placeRsvpBlock, readRsvpConfig, renderRsvpBlock, renderRsvpText, stripRsvpPlaceholder } from '@/lib/rsvp/config';
 import { appBaseUrl } from '@/lib/app-url';
 import crypto from 'crypto';
 
@@ -139,12 +140,24 @@ export async function processEmailJob(
   <a href="${unsubscribeUrl}" style="color:#999;">Unsubscribe</a>
 </p>`;
 
+    // RSVP buttons (lib/rsvp/config.ts): this recipient's own signed links, at [[rsvp]] or before
+    // the footer. They go to /rsvp/… directly, never through click tracking.
+    const trackingPayload = { campaignId: job.campaignId, emailJobId: job.id, email: job.toEmail };
+    const rsvpConfig = readRsvpConfig(job.batch.campaign.rsvp);
+    const rsvpLink = (key: string) => buildRsvpUrl(trackingPayload, key);
+    const bodyHtml = rsvpConfig ? placeRsvpBlock(job.html, renderRsvpBlock(rsvpConfig, rsvpLink)) : stripRsvpPlaceholder(job.html);
+    const plainText = rsvpConfig
+      ? `${stripRsvpPlaceholder(job.plainText ?? '')}${renderRsvpText(rsvpConfig, rsvpLink)}`
+      : job.plainText
+        ? stripRsvpPlaceholder(job.plainText)
+        : job.plainText;
+
     // A full HTML document gets the footer inside <body>, not after </html>.
-    const htmlWithFooter = /<\/body>/i.test(job.html) ? job.html.replace(/<\/body>/i, `${unsubscribeFooter}</body>`) : job.html + unsubscribeFooter;
+    const htmlWithFooter = /<\/body>/i.test(bodyHtml) ? bodyHtml.replace(/<\/body>/i, `${unsubscribeFooter}</body>`) : bodyHtml + unsubscribeFooter;
 
     const trackedHtml = injectTracking(
       htmlWithFooter,
-      { campaignId: job.campaignId, emailJobId: job.id, email: job.toEmail },
+      trackingPayload,
       job.batch.campaign.workspaceId
     );
 
@@ -157,7 +170,7 @@ export async function processEmailJob(
       replyTo: job.replyTo ?? undefined,
       subject: job.subject,
       html: trackedHtml,
-      plainText: job.plainText,
+      plainText,
       threadId: job.gmailThreadId,
       listUnsubscribeUrl: unsubscribeUrl,
       ...(documents.length > 0

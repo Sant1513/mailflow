@@ -22,6 +22,7 @@ import { buildContactWhere } from '@/app/api/segments/_filterContacts';
 import { columnsFromTable, normalizeVariables, textToHtml } from '@/lib/quickSend/prepare';
 import { inlineEmailCss, looksLikeHtml } from '@/lib/quickSend/html';
 import { checkAddresses } from '@/lib/email/addressCheck';
+import { placeRsvpBlock, renderRsvpBlock, rsvpConfigSchema, stripRsvpPlaceholder } from '@/lib/rsvp/config';
 import { QUICK_SEND_DESCRIPTION, QUICK_SEND_ON_APPROVAL, campaignStats } from '@/lib/quickSend/stats';
 
 export const maxDuration = 60;
@@ -65,6 +66,8 @@ const bodySchema = z.object({
   bcc: emailList.optional(),
   fallbackAccountIds: z.array(z.string()).max(5).optional(),
   scheduledAt: z.string().datetime().optional(),
+  /** RSVP buttons in the email (lib/rsvp/config.ts); omitted or disabled = none. */
+  rsvp: rsvpConfigSchema.nullable().optional(),
 });
 
 interface Resolved {
@@ -182,6 +185,10 @@ export const POST = withErrorHandling(async (req) => {
     resolved.rows.map((r) => (resolved.emailKey ? r.data[resolved.emailKey] : null)).filter((e): e is string => typeof e === 'string'),
     session.workspaceId,
   );
+  // RSVP buttons: shown in previews and the test email with inactive links; the real links are
+  // per recipient and added at send time (lib/email/processJob.ts).
+  const rsvp = body.rsvp?.enabled ? body.rsvp : null;
+  const withRsvp = (h: string) => (rsvp ? placeRsvpBlock(h, renderRsvpBlock(rsvp, () => '#')) : stripRsvpPlaceholder(h));
   const simulation = dryRun(resolved.rows, { emailColumnKey: resolved.emailKey, template: { subject, html, plainText }, origin: { campaignName: body.subject }, addressProblems });
 
   const sender = await senderAccountFor({ workspaceId: session.workspaceId, createdById: session.userId });
@@ -203,7 +210,7 @@ export const POST = withErrorHandling(async (req) => {
       byReason: simulation.byReason,
       skippedExamples: simulation.evaluations.filter((e) => !e.willSend).slice(0, 10).map((e) => ({ email: e.email ?? '(no email)', reason: e.reasonDetail ?? e.skipReason })),
       unknownVariables,
-      preview: preview && first ? { to: first.email, subject: preview.subject, html: sanitizeEmailHtml(normalizeEmailLinks(preview.html)), missingVariables: preview.missingVariables } : null,
+      preview: preview && first ? { to: first.email, subject: preview.subject, html: sanitizeEmailHtml(normalizeEmailLinks(withRsvp(preview.html))), missingVariables: preview.missingVariables } : null,
       sender: sender ? { emailAddress: sender.emailAddress, status: sender.status, sentToday: usage?.messages ?? 0, capacityToday: capacity } : null,
       backups: await availableFallbackMailboxes(session.organizationId, sender?.id),
       estimatedMinutes: Math.ceil((Math.min(wouldSend, capacity || wouldSend) * 3.6) / 60),
@@ -236,7 +243,7 @@ export const POST = withErrorHandling(async (req) => {
         fromName: body.fromName?.trim() || sender.displayName || session.name,
         fromEmail: sender.emailAddress,
         subject: `[Test] ${rendered.subject}`,
-        html: `<p style="font-size:12px;color:#888;border:1px dashed #ccc;padding:6px 8px">Test of a Quick Send, filled in as ${first!.email}. Recipients won't see this note.</p>${rendered.html}`,
+        html: `<p style="font-size:12px;color:#888;border:1px dashed #ccc;padding:6px 8px">Test of a Quick Send, filled in as ${first!.email}. Recipients won't see this note${rsvp ? '; the RSVP buttons only work in the real email' : ''}.</p>${withRsvp(rendered.html)}`,
         plainText: rendered.plainText,
         attachments: orderedDocs.map((d) => ({
           filename: d.fileNamePattern.toLowerCase().endsWith('.pdf') ? d.fileNamePattern : `${d.fileNamePattern}.pdf`,
@@ -310,6 +317,7 @@ export const POST = withErrorHandling(async (req) => {
       ccEmails: body.cc ?? [],
       bccEmails: body.bcc ?? [],
       fallbackAccountIds: fallback.ids,
+      ...(rsvp ? { rsvp: rsvp as unknown as Prisma.InputJsonValue } : {}),
       // Attached PDFs go out unchanged: a plain copy, no reference stamp.
       documents: { create: orderedDocs.map((d, i) => ({ documentTemplateId: d.id, order: i, ...snapshotFromTemplate(d), stampReference: false })) },
     },

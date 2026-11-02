@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { EmailPreview } from '@/components/email-preview/EmailPreview';
+import { RsvpEditor } from '@/components/rsvp/RsvpEditor';
+import { defaultRsvpConfig, type RsvpConfig } from '@/lib/rsvp/config';
 import { looksLikeHtml, normalizePastedList } from '@/lib/quickSend/paste';
 
 type Source = 'paste' | 'file' | 'dataset' | 'segment';
@@ -119,6 +121,8 @@ export default function QuickSendPage() {
   const [bcc, setBcc] = useState('');
   const [scheduleAt, setScheduleAt] = useState('');
   const [backups, setBackups] = useState<string[]>([]);
+  // RSVP buttons in the email (off until "Add RSVP buttons").
+  const [rsvp, setRsvp] = useState<RsvpConfig>(() => ({ ...defaultRsvpConfig(), enabled: false }));
 
   // Check, test, send, tracking
   const [check, setCheck] = useState<Check | null>(null);
@@ -161,6 +165,7 @@ export default function QuickSendPage() {
         if (d.pasted) setPasted(d.pasted);
         if (Array.isArray(d.attachments)) setAttachments(d.attachments);
         if (typeof d.includeSignature === 'boolean') setIncludeSignature(d.includeSignature);
+        if (d.rsvp && typeof d.rsvp === 'object') setRsvp({ ...defaultRsvpConfig(), ...d.rsvp });
       }
     } catch {
       /* storage unavailable: start empty */
@@ -171,13 +176,13 @@ export default function QuickSendPage() {
     if (!restored.current || current) return;
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(DRAFT_KEY, JSON.stringify({ campaignName, subject, body, format, fromName, replyTo, cc, bcc, pasted: pasted.length < 200_000 ? pasted : '', attachments, includeSignature }));
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ campaignName, subject, body, format, fromName, replyTo, cc, bcc, pasted: pasted.length < 200_000 ? pasted : '', attachments, includeSignature, rsvp }));
       } catch {
         /* ignore */
       }
     }, 600);
     return () => clearTimeout(t);
-  }, [campaignName, subject, body, format, fromName, replyTo, cc, bcc, pasted, attachments, includeSignature, current]);
+  }, [campaignName, subject, body, format, fromName, replyTo, cc, bcc, pasted, attachments, includeSignature, rsvp, current]);
 
   const loadRecent = useCallback(async () => {
     const res = await fetch('/api/quick-send');
@@ -247,8 +252,9 @@ export default function QuickSendPage() {
       bcc: bcc || undefined,
       fallbackAccountIds: backups,
       scheduledAt: scheduleAt ? new Date(scheduleAt).toISOString() : undefined,
+      rsvp: rsvp.enabled ? rsvp : undefined,
     }),
-    [recipients, campaignName, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt],
+    [recipients, campaignName, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt, rsvp],
   );
 
   // ── live check: dry run + preview as you type ──
@@ -677,6 +683,15 @@ export default function QuickSendPage() {
               Personalise with a column name in double braces, like <code className="font-mono">{'{{Name}}'}</code>. An unsubscribe link is added at the bottom automatically.
             </p>
           </section>
+
+          <details className="rounded-lg border bg-card p-4" open={rsvp.enabled || undefined}>
+            <summary className="cursor-pointer text-sm font-semibold">
+              RSVP buttons <span className="font-normal text-muted-foreground">(optional: “✅ I&apos;ll attend / ❌ Can&apos;t make it”, answers saved for you)</span>
+            </summary>
+            <div className="mt-3">
+              <RsvpEditor value={rsvp} onChange={setRsvp} />
+            </div>
+          </details>
 
           <details className="rounded-lg border bg-card p-4">
             <summary className="cursor-pointer text-sm font-semibold">
