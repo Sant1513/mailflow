@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { generateSignedHtml } from '@/lib/documents/html';
+import { readRef } from '@/lib/storage/files';
 import { placementsOf } from '@/lib/signing/placements';
 
 /**
@@ -24,11 +25,11 @@ export const GET = withErrorHandling(
       const group = request.groupId
         ? await prisma.signingGroup.findUnique({ where: { id: request.groupId }, select: { combinedPdfData: true } })
         : null;
-      const base64 = group?.combinedPdfData ?? request.signedPdfData;
-      if (!base64) {
-        return NextResponse.json({ error: 'The signed PDF is not available.' }, { status: 404 });
+      const stored = group?.combinedPdfData ?? request.signedPdfData;
+      const pdf = stored ? await readRef(stored) : null;
+      if (!pdf) {
+        return NextResponse.json({ error: stored ? 'The signed PDF is in the archive, which is offline right now. Try again later.' : 'The signed PDF is not available.' }, { status: stored ? 503 : 404 });
       }
-      const pdf = Buffer.from(base64, 'base64');
       const filename = `${request.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_signed.pdf`;
       return new NextResponse(new Uint8Array(pdf), {
         headers: {

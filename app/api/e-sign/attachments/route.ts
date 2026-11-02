@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { put } from '@vercel/blob';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
+import { putFile, storageEnabled } from '@/lib/storage/files';
 
 const MAX_SIZE = 10 * 1024 * 1024; // 10 MB per file
 const ALLOWED_TYPES = new Set([
@@ -13,12 +14,13 @@ const ALLOWED_TYPES = new Set([
 ]);
 
 /**
- * POST /api/e-sign/attachments
- * Upload a file to Vercel Blob. Returns { url, name, contentType, size }.
- * Accepts multipart/form-data with a single field "file".
+ * POST /api/e-sign/attachments — upload one file (multipart field "file") for a signing
+ * request. Stored privately in Supabase Storage (lib/storage/files.ts); once the request is
+ * final, the laptop server archives it and frees the cloud space. Returns
+ * { url, name, contentType, size } where url is the storage reference.
  */
 export const POST = withErrorHandling(async (req) => {
-  await requireSession();
+  const session = await requireSession();
 
   const formData = await req.formData();
   const file = formData.get('file');
@@ -27,24 +29,25 @@ export const POST = withErrorHandling(async (req) => {
     return NextResponse.json({ error: 'No file provided.' }, { status: 400 });
   }
   if (!ALLOWED_TYPES.has(file.type)) {
-    return NextResponse.json(
-      { error: 'Unsupported file type. Allowed: PDF, Word, JPEG, PNG.' },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: 'Unsupported file type. Allowed: PDF, Word, JPEG, PNG.' }, { status: 400 });
   }
   if (file.size > MAX_SIZE) {
     return NextResponse.json({ error: 'File too large. Maximum 10 MB.' }, { status: 400 });
   }
 
-  const blob = await put(`signing-attachments/${Date.now()}-${file.name}`, file, {
-    access: 'public',
-    contentType: file.type,
-  });
+  const safeName = file.name.replace(/[^\w.\- ]+/g, '_').slice(0, 120);
+  const path = `signing-attachments/${session.workspaceId ?? 'shared'}/${Date.now()}-${safeName}`;
 
-  return NextResponse.json({
-    url: blob.url,
-    name: file.name,
-    contentType: file.type,
-    size: file.size,
-  });
+  if (storageEnabled()) {
+    const ref = await putFile(path, Buffer.from(await file.arrayBuffer()), file.type);
+    return NextResponse.json({ url: ref, name: file.name, contentType: file.type, size: file.size });
+  }
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    const blob = await put(path, file, { access: 'public', contentType: file.type });
+    return NextResponse.json({ url: blob.url, name: file.name, contentType: file.type, size: file.size });
+  }
+  return NextResponse.json(
+    { error: 'File storage is not set up yet, so attachments can\'t be uploaded. An admin needs to add SUPABASE_URL and SUPABASE_SERVICE_KEY.' },
+    { status: 503 },
+  );
 });

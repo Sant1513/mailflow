@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
+import { readRef } from '@/lib/storage/files';
 import { withErrorHandling } from '@/lib/api/respond';
 
 /** GET /api/signing-groups/[id]/download — download the combined signed PDF for a completed group. */
@@ -29,11 +30,14 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
     return NextResponse.json({ error: 'Combined PDF not yet available — signing is still in progress.' }, { status: 404 });
   }
 
-  const pdfBuffer = Buffer.from(group.combinedPdfData, 'base64');
+  const pdfBuffer = await readRef(group.combinedPdfData);
+  if (!pdfBuffer) {
+    return NextResponse.json({ error: 'The combined PDF is in the archive, which is offline right now. Try again later.' }, { status: 503 });
+  }
   const title = group.requests[0]?.title ?? 'signed_document';
   const filename = `${title.replace(/[^a-zA-Z0-9_-]/g, '_')}_complete.pdf`;
 
-  return new NextResponse(pdfBuffer, {
+  return new NextResponse(new Uint8Array(pdfBuffer), {
     headers: {
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${filename}"`,

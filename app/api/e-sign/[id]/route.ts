@@ -16,6 +16,7 @@ import {
   publicSigningFieldValues,
 } from '@/lib/signing/fields';
 import { placementsOf } from '@/lib/signing/placements';
+import { pdfBase64 } from '@/lib/storage/files';
 import { syncSigningStatusToRecord } from '@/lib/signing/writeback';
 
 /** GET /api/e-sign/[id] — fetch a single signing request for the current workspace. */
@@ -65,7 +66,8 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
           select: { combinedPdfData: true },
         })
       : null;
-    signedPdfData = group?.combinedPdfData ?? _pdf;
+    // Stored inline, in Supabase Storage, or archived on the laptop (lib/storage/files.ts).
+    signedPdfData = await pdfBase64(group?.combinedPdfData ?? _pdf);
   }
   return NextResponse.json({
     request: {

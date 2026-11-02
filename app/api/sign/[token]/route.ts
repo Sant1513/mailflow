@@ -5,6 +5,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
 import type { EmailAttachment } from '@/lib/email/provider';
+import { attachmentsForEmail, pdfBase64, storePdf } from '@/lib/storage/files';
 import { generateSignedPdf } from '@/lib/documents/pdf';
 import { lockedFieldsOf, publicSigningFieldValues, mergeGroupFieldValues } from '@/lib/signing/fields';
 import { placementsOf } from '@/lib/signing/placements';
@@ -15,15 +16,9 @@ export const maxDuration = 60;
 
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
+/** Attachments from wherever they are stored (lib/storage/files.ts). */
 async function fetchEmailAttachments(metas: AttachmentMeta[]): Promise<EmailAttachment[]> {
-  const results = await Promise.allSettled(
-    metas.map(async (m) => {
-      const res = await fetch(m.url);
-      const buf = Buffer.from(await res.arrayBuffer());
-      return { filename: m.name, mimeType: m.contentType, content: buf } satisfies EmailAttachment;
-    })
-  );
-  return results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+  return attachmentsForEmail(metas);
 }
 
 // Public route — no requireSession() calls.
@@ -121,7 +116,7 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
     previousSignatures,
     status: request.status === 'SENT' ? 'VIEWED' : request.status,
     expiresAt: request.expiresAt,
-    signedPdfData: request.status === 'SIGNED' ? request.signedPdfData : null,
+    signedPdfData: request.status === 'SIGNED' ? await pdfBase64(request.signedPdfData) : null,
   });
 });
 
@@ -244,7 +239,8 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
     ],
   });
 
-  const signedPdfBase64 = pdfBuffer.toString('base64');
+  // Stored in Supabase Storage when set up (the laptop archives it once final), else inline.
+  const signedPdfStored = await storePdf(`signed/${request.id}.pdf`, pdfBuffer);
 
   // Persist the signature
   await prisma.signingRequest.update({
@@ -253,7 +249,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
       status: 'SIGNED',
       signedAt: now,
       signatureImage: body.signatureImage,
-      signedPdfData: signedPdfBase64,
+      signedPdfData: signedPdfStored,
       fieldValues: mergedFieldValues,
       signerIp,
       signerAgent,
@@ -383,7 +379,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
 
         await prisma.signingGroup.update({
           where: { id: group.id },
-          data: { combinedPdfData: combinedPdf.toString('base64') },
+          data: { combinedPdfData: await storePdf(`signed/group-${group.id}.pdf`, combinedPdf) },
         });
 
         completedGroupId = group.id;

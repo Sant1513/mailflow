@@ -7,6 +7,7 @@ import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
 import type { EmailAttachment } from '@/lib/email/provider';
+import { attachmentsForEmail } from '@/lib/storage/files';
 import {
   effectiveAssignedFields,
   lockedKeysForSigner,
@@ -20,15 +21,9 @@ import { syncSigningStatusToRecord } from '@/lib/signing/writeback';
 
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
+/** Attachments from wherever they are stored (lib/storage/files.ts). */
 async function fetchEmailAttachments(metas: AttachmentMeta[]): Promise<EmailAttachment[]> {
-  const results = await Promise.allSettled(
-    metas.map(async (m) => {
-      const res = await fetch(m.url);
-      const buf = Buffer.from(await res.arrayBuffer());
-      return { filename: m.name, mimeType: m.contentType, content: buf } satisfies EmailAttachment;
-    })
-  );
-  return results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+  return attachmentsForEmail(metas);
 }
 
 /** GET /api/signing-batches — list batches for the current workspace. */

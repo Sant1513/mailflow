@@ -26,7 +26,8 @@
  * every night (7 days kept). If the app stops unexpectedly while active, it is restarted.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -120,6 +121,10 @@ const CLOUD_URL = SUPABASE.SUPABASE_DIRECT_URL || '';
 const LOCAL_URL = DATABASE_URL.replace(/\?.*$/, '');
 const LAPTOP_PUBLIC_URL = (APP_ENV.LAPTOP_PUBLIC_URL || '').replace(/\/+$/, '');
 if (SUPABASE.SUPABASE_DATABASE_URL) APP_ENV.CONTROL_DATABASE_URL = SUPABASE.SUPABASE_DATABASE_URL;
+// Archived files (signed PDFs, signing attachments) live here once the cloud copy is removed.
+const FILES_DIR = path.join(DATA, 'files');
+fs.mkdirSync(FILES_DIR, { recursive: true });
+APP_ENV.ARCHIVE_DIR = FILES_DIR;
 
 // ---------- helpers ----------
 const node = process.execPath;
@@ -463,10 +468,150 @@ async function requestSwitchToCloud(by) {
   if (ok) log(`Asked to move MailFlow to the cloud (${by}).`);
 }
 
+// ---------- standby file server ----------
+// On standby the app isn't running, but the cloud still fetches archived files from this
+// laptop (lib/storage/files.ts → /api/archive/…). This small server answers on the app's port
+// until the app starts again; same signed, 5-minute links as app/api/archive.
+let standbyServer = null;
+const ARCHIVE_TYPES = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+
+function archiveSig(rel, exp) {
+  return createHmac('sha256', APP_ENV.CRON_SECRET ?? '').update(`${rel}\n${exp}`).digest('hex').slice(0, 32);
+}
+
+function startStandbyServer() {
+  if (standbyServer) return;
+  freeAppPort();
+  standbyServer = http.createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname === '/api/ping') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, standby: true }));
+    }
+    const m = url.pathname.match(/^\/api\/archive\/(.+)$/);
+    if (!m) {
+      res.writeHead(404);
+      return res.end();
+    }
+    const rel = m[1].split('/').map(decodeURIComponent).join('/');
+    const exp = Number(url.searchParams.get('exp'));
+    const sig = url.searchParams.get('sig') ?? '';
+    const expected = archiveSig(rel, exp);
+    const full = path.resolve(FILES_DIR, rel);
+    const ok = Number.isFinite(exp) && exp > Date.now() && sig.length === expected.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expected)) && full.startsWith(path.resolve(FILES_DIR) + path.sep);
+    if (!ok) {
+      res.writeHead(403);
+      return res.end();
+    }
+    fs.readFile(full, (err, data) => {
+      if (err) {
+        res.writeHead(404);
+        return res.end();
+      }
+      res.writeHead(200, { 'content-type': ARCHIVE_TYPES[path.extname(full).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'private, no-store' });
+      res.end(data);
+    });
+  });
+  standbyServer.on('error', (e) => log('Standby file server:', String(e?.message ?? e)));
+  standbyServer.listen(APP_PORT, '127.0.0.1');
+}
+
+async function stopStandbyServer() {
+  if (!standbyServer) return;
+  const s = standbyServer;
+  standbyServer = null;
+  await new Promise((resolve) => s.close(() => resolve()));
+}
+
+// ---------- archiving finished files ----------
+// Once a signing request is final, its files move from Supabase Storage to this laptop
+// (FILES_DIR): download, write, read back and compare, point the database at the archive copy,
+// then delete the cloud copy — keeping Supabase within its free 1 GB.
+const STORAGE_URL = (SUPABASE.SUPABASE_URL || '').replace(/\/+$/, '');
+const STORAGE_KEY = SUPABASE.SUPABASE_SERVICE_KEY || '';
+const BUCKET = 'mailflow-files';
+const storageHeaders = { Authorization: `Bearer ${STORAGE_KEY}`, apikey: STORAGE_KEY };
+const encodePath = (p) => p.split('/').map(encodeURIComponent).join('/');
+
+async function archiveRef(ref) {
+  const rel = ref.slice('storage:'.length);
+  const res = await fetch(`${STORAGE_URL}/storage/v1/object/${BUCKET}/${encodePath(rel)}`, { headers: storageHeaders });
+  if (!res.ok) throw new Error(`download ${rel}: ${res.status}`);
+  const data = Buffer.from(await res.arrayBuffer());
+  const dest = path.resolve(FILES_DIR, rel);
+  if (!dest.startsWith(path.resolve(FILES_DIR) + path.sep)) throw new Error(`unsafe path ${rel}`);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(`${dest}.partial`, data);
+  fs.renameSync(`${dest}.partial`, dest);
+  const check = fs.readFileSync(dest);
+  const sha = (b) => createHash('sha256').update(b).digest('hex');
+  if (check.length !== data.length || sha(check) !== sha(data)) throw new Error(`verify ${rel} failed`);
+  return { rel, archived: `archive:${rel}` };
+}
+
+async function deleteFromStorage(rel) {
+  await fetch(`${STORAGE_URL}/storage/v1/object/${BUCKET}`, {
+    method: 'DELETE',
+    headers: { ...storageHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ prefixes: [rel] }),
+  }).catch(() => undefined);
+}
+
+let archiving = false;
+let lastArchive = 0;
+async function tickArchive() {
+  if (!control || !STORAGE_URL || !STORAGE_KEY || archiving || Date.now() - lastArchive < 6 * 3600_000) return;
+  archiving = true;
+  lastArchive = Date.now();
+  let moved = 0;
+  try {
+    const { rows: requests } = await control.query(
+      `SELECT id, "signedPdfData" AS pdf, attachments FROM "SigningRequest"
+       WHERE status IN ('SIGNED', 'VOIDED', 'EXPIRED') AND ("signedPdfData" LIKE 'storage:%' OR attachments::text LIKE '%"storage:%') LIMIT 200`,
+    );
+    for (const r of requests) {
+      if (r.pdf?.startsWith('storage:')) {
+        const a = await archiveRef(r.pdf);
+        const u = await control.query(`UPDATE "SigningRequest" SET "signedPdfData" = $1 WHERE id = $2 AND "signedPdfData" = $3`, [a.archived, r.id, r.pdf]);
+        if (u.rowCount) { await deleteFromStorage(a.rel); moved++; }
+      }
+      const list = Array.isArray(r.attachments) ? r.attachments : [];
+      if (list.some((x) => typeof x?.url === 'string' && x.url.startsWith('storage:'))) {
+        const done = [];
+        const next = [];
+        for (const x of list) {
+          if (typeof x?.url === 'string' && x.url.startsWith('storage:')) {
+            const a = await archiveRef(x.url);
+            done.push(a.rel);
+            next.push({ ...x, url: a.archived });
+          } else next.push(x);
+        }
+        const u = await control.query(`UPDATE "SigningRequest" SET attachments = $1::jsonb WHERE id = $2 AND attachments::text = $3::jsonb::text`, [JSON.stringify(next), r.id, JSON.stringify(list)]);
+        if (u.rowCount) for (const rel of done) { await deleteFromStorage(rel); moved++; }
+      }
+    }
+    const { rows: groups } = await control.query(
+      `SELECT id, "combinedPdfData" AS pdf FROM "SigningGroup" WHERE status IN ('COMPLETED', 'VOIDED') AND "combinedPdfData" LIKE 'storage:%' LIMIT 200`,
+    );
+    for (const g of groups) {
+      const a = await archiveRef(g.pdf);
+      const u = await control.query(`UPDATE "SigningGroup" SET "combinedPdfData" = $1 WHERE id = $2 AND "combinedPdfData" = $3`, [a.archived, g.id, g.pdf]);
+      if (u.rowCount) { await deleteFromStorage(a.rel); moved++; }
+    }
+    if (moved) log(`Archived ${moved} finished file(s) to this laptop and freed the cloud copies.`);
+  } catch (err) {
+    log('Archiving files failed (will retry):', String(err?.message ?? err));
+    lastArchive = Date.now() - 5 * 3600_000; // retry in about an hour
+  } finally {
+    archiving = false;
+  }
+}
+
 async function becomeActive() {
   if (role === 'active') return;
   role = 'active';
   log('Role: ACTIVE — MailFlow runs on this laptop.');
+  await stopStandbyServer();
   startApp();
   if (await waitForApp()) tickJobs();
 }
@@ -476,6 +621,7 @@ async function becomeStandby() {
   role = 'standby';
   log('Role: STANDBY — MailFlow runs on the cloud; this laptop keeps a copy.');
   await stopApp();
+  startStandbyServer();
 }
 
 async function waitForJobs(maxMs) {
@@ -492,6 +638,7 @@ async function handoverToLaptop(s) {
     await backupBeforePull();
     const r = await copyDatabase(CLOUD_URL, LOCAL_URL);
     log(`Copied ${r.rows} rows from the cloud.`);
+    await stopStandbyServer();
     startApp();
     if (!(await waitForApp())) throw new Error('the app did not start');
     const done = await setState(`"switchTo" = 'laptop'`, {
@@ -501,6 +648,7 @@ async function handoverToLaptop(s) {
     if (!done) {
       log('The switch was cancelled while copying; staying on standby.');
       await stopApp();
+      startStandbyServer();
       return;
     }
     role = 'active';
@@ -510,6 +658,7 @@ async function handoverToLaptop(s) {
   } catch (err) {
     log('Switch to the laptop failed:', err);
     await stopApp();
+    startStandbyServer();
     await setState(`"switchTo" = 'laptop'`, {
       switchTo: null, switchStartedAt: null,
       note: `The switch to the laptop failed (${String(err?.message ?? err).slice(0, 200)}). MailFlow stayed on the cloud; nothing was lost.`,
@@ -535,6 +684,7 @@ async function handoverToCloud(s) {
       note: `Switched to the cloud on ${fmtIst(Date.now())}${s.switchRequestedBy ? ` (requested by ${s.switchRequestedBy})` : ''}.`,
     });
     role = 'standby';
+    startStandbyServer();
     state_lastPull(Date.now());
     log('Role: STANDBY — switch to the cloud complete.');
   } catch (err) {
@@ -688,6 +838,8 @@ if (control) {
   setInterval(controlTick, 15_000);
   setInterval(tickPush, 60_000);
   setInterval(tickPull, 5 * 60_000);
+  setTimeout(tickArchive, 60_000);
+  setInterval(tickArchive, 15 * 60_000);
   setTimeout(tickPull, 20_000);
 } else {
   log('No supabase.env: no server switch, this laptop is always the active server.');
