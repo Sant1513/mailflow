@@ -444,15 +444,22 @@ async function heartbeat() {
   return rows[0];
 }
 
+// SystemState's times are stored without a time zone, in UTC (Prisma's convention). Times are
+// therefore always written by the database (NOW → now()) and read back as UTC: passing a JS
+// Date would store this laptop's local (IST) wall-clock time instead.
+const NOW = Symbol('now');
+pg.types.setTypeParser(1114, (v) => new Date(v.replace(' ', 'T') + 'Z'));
+
 async function setState(where, fields) {
   const keys = Object.keys(fields);
-  const sets = keys.map((k, i) => `"${k}" = $${i + 1}`).join(', ');
-  const res = await control.query(`UPDATE "SystemState" SET ${sets}, "updatedAt" = now() WHERE id = 'main' AND ${where}`, keys.map((k) => fields[k]));
+  const params = [];
+  const sets = keys.map((k) => (fields[k] === NOW ? `"${k}" = now()` : (params.push(fields[k]), `"${k}" = ${params.length}`))).join(', ');
+  const res = await control.query(`UPDATE "SystemState" SET ${sets}, "updatedAt" = now() WHERE id = 'main' AND ${where}`, params);
   return res.rowCount > 0;
 }
 
 async function requestSwitchToCloud(by) {
-  const ok = await setState(`"activeServer" = 'laptop' AND "switchTo" IS NULL`, { switchTo: 'cloud', switchStartedAt: new Date(), switchRequestedBy: by, note: null }).catch(() => false);
+  const ok = await setState(`"activeServer" = 'laptop' AND "switchTo" IS NULL`, { switchTo: 'cloud', switchStartedAt: NOW, switchRequestedBy: by, note: null }).catch(() => false);
   if (ok) log(`Asked to move MailFlow to the cloud (${by}).`);
 }
 
@@ -488,7 +495,7 @@ async function handoverToLaptop(s) {
     startApp();
     if (!(await waitForApp())) throw new Error('the app did not start');
     const done = await setState(`"switchTo" = 'laptop'`, {
-      activeServer: 'laptop', switchTo: null, switchStartedAt: null, lastSyncAt: new Date(),
+      activeServer: 'laptop', switchTo: null, switchStartedAt: null, lastSyncAt: NOW,
       note: `Switched to the laptop on ${fmtIst(Date.now())}.`,
     });
     if (!done) {
@@ -524,7 +531,7 @@ async function handoverToCloud(s) {
     const r = await copyDatabase(LOCAL_URL, CLOUD_URL);
     log(`Copied ${r.rows} rows to the cloud.`);
     await setState(`"switchTo" = 'cloud'`, {
-      activeServer: 'cloud', switchTo: null, switchStartedAt: null, lastSyncAt: new Date(),
+      activeServer: 'cloud', switchTo: null, switchStartedAt: null, lastSyncAt: NOW,
       note: `Switched to the cloud on ${fmtIst(Date.now())}${s.switchRequestedBy ? ` (requested by ${s.switchRequestedBy})` : ''}.`,
     });
     role = 'standby';
@@ -551,7 +558,7 @@ async function tickPush() {
   try {
     const r = await copyDatabase(LOCAL_URL, CLOUD_URL);
     lastPush = Date.now();
-    await setState('true', { lastSyncAt: new Date() });
+    await setState('true', { lastSyncAt: NOW });
     log(`Copied ${r.rows} rows to the cloud (standby copy).`);
   } catch (err) {
     log('Copy to the cloud failed (will retry):', String(err?.message ?? err));
@@ -580,7 +587,7 @@ async function tickPull() {
     await backupBeforePull();
     const r = await copyDatabase(CLOUD_URL, LOCAL_URL);
     state_lastPull(Date.now());
-    await setState('true', { lastSyncAt: new Date() });
+    await setState('true', { lastSyncAt: NOW });
     log(`Pulled ${r.rows} rows from the cloud (laptop backup copy).`);
   } catch (err) {
     log('Pulling the cloud copy failed (will retry):', String(err?.message ?? err));
