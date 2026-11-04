@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { FallbackOptIn } from '@/components/settings/FallbackOptIn';
+import { ProfilePhotosOptIn } from '@/components/settings/ProfilePhotosOptIn';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 
@@ -98,6 +99,7 @@ export function GmailPanel() {
       </div>
 
       {connected && <FallbackOptIn />}
+      {connected && <ProfilePhotosOptIn />}
 
       <p className="mt-3 text-xs text-muted-foreground">
         Campaigns send from your own @masaischool.com address — never a shared &quot;noreply@&quot; sender.

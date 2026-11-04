@@ -4,7 +4,7 @@ import { cookies } from 'next/headers';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
-import { buildConsentUrl, OAUTH_RETURN_COOKIE, OAUTH_STATE_COOKIE, safeReturnPath, SHEETS_OAUTH_SCOPE } from '@/lib/gmail/oauth';
+import { buildConsentUrl, OAUTH_RETURN_COOKIE, OAUTH_STATE_COOKIE, PHOTOS_OAUTH_SCOPE, safeReturnPath, SHEETS_OAUTH_SCOPE } from '@/lib/gmail/oauth';
 import { audit } from '@/lib/audit/log';
 
 /**
@@ -31,6 +31,8 @@ export const GET = withErrorHandling(async (req) => {
   // ?with=sheets adds Google Sheets access (incremental: Gmail access is kept).
   const url = new URL(req.url);
   const withSheets = url.searchParams.get('with') === 'sheets';
+  // ?with=photos adds read-only Google "Other contacts" for profile photos (also incremental).
+  const withPhotos = url.searchParams.get('with') === 'photos';
   const returnTo = safeReturnPath(url.searchParams.get('return'));
   if (returnTo) {
     cookies().set(OAUTH_RETURN_COOKIE, returnTo, {
@@ -44,7 +46,7 @@ export const GET = withErrorHandling(async (req) => {
     cookies().delete(OAUTH_RETURN_COOKIE);
   }
 
-  await audit(session, 'GMAIL_CONNECT_STARTED', withSheets ? { metadata: { scopes: 'gmail+sheets' } } : undefined);
+  await audit(session, 'GMAIL_CONNECT_STARTED', withSheets || withPhotos ? { metadata: { scopes: withSheets ? 'gmail+sheets' : 'gmail+photos' } } : undefined);
 
-  return NextResponse.redirect(buildConsentUrl(state, withSheets ? [SHEETS_OAUTH_SCOPE] : []));
+  return NextResponse.redirect(buildConsentUrl(state, withSheets ? [SHEETS_OAUTH_SCOPE] : withPhotos ? [PHOTOS_OAUTH_SCOPE] : []));
 });

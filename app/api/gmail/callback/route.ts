@@ -4,7 +4,9 @@ import { google } from 'googleapis';
 import { prisma } from '@/lib/db/client';
 import { requireSession, ForbiddenError } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
-import { createOAuthClient, GMAIL_SCOPES, OAUTH_RETURN_COOKIE, OAUTH_STATE_COOKIE, safeReturnPath } from '@/lib/gmail/oauth';
+import { createOAuthClient, GMAIL_SCOPES, hasScope, OAUTH_RETURN_COOKIE, OAUTH_STATE_COOKIE, PHOTOS_OAUTH_SCOPE, safeReturnPath } from '@/lib/gmail/oauth';
+import { waitUntil } from '@vercel/functions';
+import { syncProfilePhotos } from '@/lib/profilePhotos/sync';
 import { encryptSecret } from '@/lib/crypto/secretBox';
 import { audit } from '@/lib/audit/log';
 import { ensureWatch } from '@/lib/gmail/watch';
@@ -137,6 +139,16 @@ export const GET = withErrorHandling(async (req) => {
   });
 
   await audit(session, 'GMAIL_CONNECTED', { targetType: 'EmailProviderAccount', metadata: { emailAddress } });
+
+  // Profile photos switched on (or still on): read this mailbox's Other contacts now, in the
+  // background, so photos appear without waiting for the scheduled refresh.
+  if (hasScope(account, PHOTOS_OAUTH_SCOPE)) {
+    try {
+      waitUntil(syncProfilePhotos(account).catch((err) => console.error('[photos] first sync failed', err)));
+    } catch {
+      void syncProfilePhotos(account).catch(() => undefined);
+    }
+  }
 
   // Instant replies (Gmail push): start the watch right away when push is set up. A failure
   // here never blocks connecting; the scheduled sync retries it.

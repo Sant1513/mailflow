@@ -47,6 +47,17 @@ export const OAUTH_RETURN_COOKIE = 'mailflow_gmail_oauth_return';
 /** Google Sheets read/write, asked for only when someone connects a sheet. */
 export const SHEETS_OAUTH_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 
+/**
+ * Read-only access to the mailbox's Google "Other contacts" (people it has emailed), asked for
+ * only when someone turns on profile photos; it never affects sending or syncing.
+ */
+export const PHOTOS_OAUTH_SCOPE = 'https://www.googleapis.com/auth/contacts.other.readonly';
+
+/** Whether the mailbox granted a scope (EmailProviderAccount.scope is the space-separated list). */
+export function hasScope(account: { scope: string | null }, scope: string): boolean {
+  return (account.scope ?? '').split(/\s+/).includes(scope);
+}
+
 /** Only plain same-site paths: never "//host" or a full URL (open redirect). */
 export function safeReturnPath(raw: string | null | undefined): string | null {
   if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return null;

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
 import { ExplainButton } from '@/components/ai/ExplainButton';
 
@@ -160,7 +161,10 @@ export default function HistoryPage() {
                 {(items as SentItem[]).map((j) => (
                   <tr key={j.id} className="border-t border-border-subtle align-top">
                     <td className="px-4 py-3">
-                      {j.record?.contactId ? <Link href={`/contacts/${j.record.contactId}`} className="hover:text-primary">{j.toEmail}</Link> : j.toEmail}
+                      <span className="flex items-center gap-2.5">
+                        <Avatar email={j.toEmail} size={28} />
+                        {j.record?.contactId ? <Link href={`/contacts/${j.record.contactId}`} className="hover:text-primary">{j.toEmail}</Link> : j.toEmail}
+                      </span>
                     </td>
                     <td className="max-w-[320px] truncate px-4 py-3" title={j.subject}>{j.subject}</td>
                     <td className="hidden px-4 py-3 text-xs md:table-cell">
@@ -197,8 +201,13 @@ export default function HistoryPage() {
                 {(items as ReceivedItem[]).map((m) => (
                   <tr key={m.id} className="border-t border-border-subtle align-top">
                     <td className="px-4 py-3">
+                      <div className="flex items-start gap-2.5">
+                      <Avatar email={m.senderEmail} name={m.senderName ?? m.conversation?.contact?.name} size={30} />
+                      <div className="min-w-0">
                       {m.conversation?.contact ? <Link href={`/contacts/${m.conversation.contact.id}`} className="font-medium hover:text-primary">{m.senderName || m.conversation.contact.name || m.senderEmail}</Link> : <span className="font-medium">{m.senderName || m.senderEmail}</span>}
                       <div className="text-xs text-faint">{m.senderEmail}</div>
+                      </div>
+                      </div>
                     </td>
                     <td className="max-w-[420px] px-4 py-3">
                       <Link href={m.conversation ? `/inbox/${m.conversation.id}` : '/inbox'} className={`block truncate hover:text-primary ${m.isRead ? '' : 'font-semibold'}`} title={m.subject ?? ''}>{m.subject || m.conversation?.subject || '(no subject)'}</Link>

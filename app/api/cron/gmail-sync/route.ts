@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { syncAccountToCompletion } from '@/lib/gmail/sync';
 import { ensureWatch, pushEnabled, watchDue } from '@/lib/gmail/watch';
+import { refreshDuePhotos } from '@/lib/profilePhotos/sync';
 
 export const maxDuration = 60;
 
@@ -52,5 +53,8 @@ export async function GET(req: Request) {
       }
     }
   }
-  return NextResponse.json({ startedAt, finishedAt: new Date(), accounts: accounts.length, results, push: pushEnabled() ? { renewed: watches } : 'off' });
+  // Profile photos (lib/profilePhotos): weekly per mailbox that allowed them, in the time left.
+  const photoBudget = deadline + 5_000 - Date.now();
+  const photos = photoBudget > 8_000 ? await refreshDuePhotos(photoBudget - 3_000).catch((err) => [{ account: '-', contacts: 0, photos: 0, error: String(err) }]) : [];
+  return NextResponse.json({ startedAt, finishedAt: new Date(), accounts: accounts.length, results, push: pushEnabled() ? { renewed: watches } : 'off', photos });
 }

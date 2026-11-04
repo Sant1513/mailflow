@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 
 interface ContactRow {
   id: string;
@@ -69,7 +70,8 @@ export default function ContactsPage() {
               {contacts.map((c) => (
                 <tr key={c.id} className="border-t hover:bg-elevated/60">
                   <td className="px-4 py-2">
-                    <Link href={`/contacts/${c.id}`} className="font-medium text-primary hover:underline">
+                    <Link href={`/contacts/${c.id}`} className="flex items-center gap-2.5 font-medium text-primary hover:underline">
+                      <Avatar email={c.primaryEmail} name={c.name} size={28} />
                       {c.name || '—'}
                     </Link>
                   </td>

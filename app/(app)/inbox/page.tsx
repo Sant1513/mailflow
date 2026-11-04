@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
 import { useAutoSync } from '@/components/inbox/useAutoSync';
 
@@ -354,6 +355,7 @@ export default function InboxPage() {
                         <Link href={`/inbox/${c.id}`}
                           className={`block min-w-0 flex-1 py-3 pr-4 hover:bg-elevated/60 ${c.unread ? 'bg-primary/5' : ''}`}>
                           <div className="flex items-start justify-between gap-3">
+                            <Avatar email={c.recipientEmail} name={c.contact?.name} size={34} className="mt-0.5" />
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">
                                 {c.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" />}

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmailPreview } from '@/components/email-preview/EmailPreview';
+import { Avatar } from '@/components/ui/Avatar';
 
 /**
  * Recruiter Bulk Send previews: the live email preview beside the form (like Quick Send), and
@@ -293,7 +294,7 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
               <tbody>
                 {shownRows.map((p) => (
                   <tr key={p.email} className={`border-t border-border-subtle ${p.skipped ? 'bg-red-50 dark:bg-red-950/30' : ''}`}>
-                    <td className="max-w-[14rem] truncate px-3 py-1.5" title={p.email}>{p.email}</td>
+                    <td className="max-w-[16rem] px-3 py-1.5" title={p.email}><span className="flex min-w-0 items-center gap-2"><Avatar email={p.email} name={p.name} size={22} /><span className="truncate">{p.email}</span></span></td>
                     <td className="max-w-[8rem] truncate px-2 py-1.5">{p.name ?? ''}</td>
                     <td className="px-2 py-1.5">{p.batch ?? '—'}</td>
                     <td className="max-w-[12rem] truncate px-2 py-1.5" title={p.mailbox ?? ''}>{p.skipped ? '—' : p.mailbox ?? <span className="text-warning">later</span>}</td>

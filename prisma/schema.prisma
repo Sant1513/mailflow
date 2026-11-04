@@ -428,6 +428,8 @@ model EmailProviderAccount {
   watchExpiresAt  DateTime?
   status          String        @default("CONNECTED") // CONNECTED | DISCONNECTED | EXPIRED
   lastSyncAt      DateTime?
+  /// When this mailbox's Google "Other contacts" photos were last read (lib/profilePhotos).
+  photosSyncedAt  DateTime?
   lastVerifiedAt  DateTime?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
@@ -1544,4 +1546,21 @@ model RecruiterBlastGroup {
   @@unique([blastId, seq])
   @@index([accountId, status, sentAt])
   @@index([messageIdHeader])
+}
+
+/// Profile photos of people we email, from each connected mailbox's Google "Other contacts"
+/// (people.otherContacts.list, photos the person made visible; Google's default letter avatars
+/// are skipped). One row per address per organization; shown by components/ui/Avatar.tsx with
+/// initials as the fallback.
+model ProfilePhoto {
+  id             String   @id @default(cuid())
+  organizationId String
+  email          String
+  url            String
+  /// Which mailbox's contacts it came from (for refresh / removal).
+  accountId      String?
+  checkedAt      DateTime @default(now())
+
+  @@unique([organizationId, email])
+  @@index([accountId])
 }

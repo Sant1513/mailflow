@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
+import { Avatar } from '@/components/ui/Avatar';
 import { LivePreview, Pager, SendSummary, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
 
 type Mode = 'BCC' | 'INDIVIDUAL';
@@ -695,7 +696,7 @@ function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPa
             <tbody>
               {detail.recipients.map((r) => (
                 <tr key={r.email} className="border-t border-border-subtle align-top">
-                  <td className="py-1 pr-2">{r.name ? <>{r.name} <span className="text-xs text-muted-foreground">{r.email}</span></> : r.email}</td>
+                  <td className="py-1 pr-2"><span className="flex items-center gap-2"><Avatar email={r.email} name={r.name} size={24} /><span className="min-w-0">{r.name ? <>{r.name} <span className="text-xs text-muted-foreground">{r.email}</span></> : r.email}</span></span></td>
                   <td className="py-1 pr-2 text-xs">{r.status.toLowerCase()}{r.skipReason && <span className="block text-muted-foreground">{r.skipReason}</span>}</td>
                   {b.mode === 'INDIVIDUAL' && <td className="py-1 pr-2 text-xs">{r.openCount > 0 ? `✓ ${r.openCount}× · ${r.openedAt ? new Date(r.openedAt).toLocaleString() : ''}` : '—'}</td>}
                   <td className="py-1 text-xs">{r.repliedAt ? <a className="text-primary hover:underline" href={`/inbox?filter=all&q=${encodeURIComponent(r.email)}`}>✓ {new Date(r.repliedAt).toLocaleString()}</a> : '—'}</td>

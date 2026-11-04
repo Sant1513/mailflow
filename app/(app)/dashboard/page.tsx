@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 import { getOptionalSession } from '@/lib/auth/session';
@@ -304,12 +305,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
             ) : (
               <ul className="divide-y divide-border-subtle">
                 {conversations.map((c) => (
-                  <li key={c.id} className="px-5 py-2.5 text-sm">
+                  <li key={c.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+                    <Avatar email={c.recipientEmail} size={30} />
+                    <div className="min-w-0 flex-1">
                     <Link href={`/inbox/${c.id}`} className="flex items-center gap-2 text-foreground hover:underline">
                       {c.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-gradient-to-br from-accent-from to-accent-to" aria-label="unread" />}
                       <span className={`truncate ${c.unread ? 'font-semibold' : ''}`}>{c.subject || '(no subject)'}</span>
                     </Link>
                     <div className="truncate text-xs text-faint">{c.recipientEmail} · {c.status.replace(/_/g, ' ').toLowerCase()}</div>
+                    </div>
                   </li>
                 ))}
               </ul>

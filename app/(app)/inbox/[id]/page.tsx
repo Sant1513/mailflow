@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
 import { AiSummaryCard } from '@/components/ai/ReplyAssistant';
 import { MessageBody } from '@/components/inbox/MessageBody';
@@ -309,13 +310,16 @@ export default function ConversationPage() {
       <div className="border-b bg-card px-4 py-3">
         <Link href="/inbox" className="text-xs text-muted-foreground hover:text-foreground">← Inbox</Link>
         <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-start gap-3">
+            <Avatar email={c.recipientEmail} name={c.contact.name} size={40} />
+            <div className="min-w-0">
             <h1 className="truncate text-base font-semibold">{c.subject}</h1>
             <div className="text-sm text-muted-foreground">
               <Link href={`/contacts/${c.contact.id}`} className="font-medium text-foreground hover:underline">
                 {c.contact.name || c.recipientEmail}
               </Link>{' '}
               · {c.recipientEmail} · {c.messageCount} message{c.messageCount === 1 ? '' : 's'} · via {c.account.emailAddress}
+            </div>
             </div>
           </div>
 
