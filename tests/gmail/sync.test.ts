@@ -10,6 +10,7 @@ const db = {
   conversation: { findMany: vi.fn().mockResolvedValue([]) },
   emailJob: { findMany: vi.fn().mockResolvedValue([]) },
   contact: { findMany: vi.fn().mockResolvedValue([]) },
+  recruiterBlastGroup: { findMany: vi.fn().mockResolvedValue([]) },
   emailProviderAccount: { update: vi.fn().mockResolvedValue({}) },
 };
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
@@ -17,6 +18,7 @@ vi.mock('@/lib/gmail/oauth', () => ({ authorizedClientFor: vi.fn(), markAccountE
 vi.mock('@/lib/gmail/ingest', () => ({ ingestInboundMessage: vi.fn().mockResolvedValue({ status: 'STORED' }) }));
 
 const { syncAccount } = await import('@/lib/gmail/sync');
+const { ingestInboundMessage } = await import('@/lib/gmail/ingest');
 
 const account = { id: 'acc1', emailAddress: 'me@example.com', workspaceId: 'w1', gmailHistoryId: '100' } as any;
 
@@ -62,5 +64,18 @@ describe('Gmail sync progress', () => {
     const r = await syncAccount(account, sourceWith(5) as any);
     expect(r.remaining).toBe(0);
     expect(r.newHistoryId).toBe('999');
+  });
+
+  it('fetches replies in threads started by a Recruiter Bulk Send', async () => {
+    db.recruiterBlastGroup.findMany.mockImplementation(async ({ where }: any) =>
+      where.OR.some((o: any) => o.gmailThreadId?.in?.includes('t1')) ? [{ gmailThreadId: 't1', messageIdHeader: '<s1>', accountId: 'acc1' }] : [],
+    );
+    const source = sourceWith(3);
+    source.getMessage.mockResolvedValue({ id: 'm1', threadId: 't1', labelIds: ['INBOX'], payload: { headers: [] } });
+    await syncAccount(account, source as any);
+    expect(source.getMessage).toHaveBeenCalledWith('m1');
+    expect(source.getMessage).toHaveBeenCalledTimes(1);
+    expect(ingestInboundMessage).toHaveBeenCalledTimes(1);
+    db.recruiterBlastGroup.findMany.mockReset().mockResolvedValue([]);
   });
 });

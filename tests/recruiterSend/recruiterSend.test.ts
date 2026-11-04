@@ -100,6 +100,8 @@ describe('sending', () => {
     expect(r.sent).toBe(1);
     expect(sent[0]).toMatchObject({ from: 'one@masaischool.com', to: 'placements@masaischool.com', bcc: ['a@corp.com', 'b@corp.com'], replyTo: 'hr@masaischool.com', listUnsubscribeUrl: null });
     expect(sent[0].html).toContain('href="https://x.com"');
+    // The Message-ID and thread are kept so recruiters' replies find their way to the admin.
+    expect(db.recruiterBlastGroup.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'SENT', messageIdHeader: '<x>', gmailThreadId: 't' }) }));
   });
 
   it('moves to the next mailbox when one reaches the limit set for this send', async () => {

@@ -19,14 +19,15 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
   if (!blast) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const page = Math.max(1, Number(new URL(req.url).searchParams.get('page') ?? '1'));
 
-  const [statusCounts, recipients, groups, mailboxes, me] = await Promise.all([
+  const [statusCounts, replied, recipients, groups, mailboxes, me] = await Promise.all([
     prisma.recruiterBlastRecipient.groupBy({ by: ['status'], where: { blastId: blast.id }, _count: { _all: true } }),
+    prisma.recruiterBlastRecipient.count({ where: { blastId: blast.id, repliedAt: { not: null } } }),
     prisma.recruiterBlastRecipient.findMany({
       where: { blastId: blast.id },
-      orderBy: [{ openCount: 'desc' }, { email: 'asc' }],
+      orderBy: [{ repliedAt: { sort: 'desc', nulls: 'last' } }, { openCount: 'desc' }, { email: 'asc' }],
       skip: (page - 1) * 200,
       take: 200,
-      select: { email: true, name: true, status: true, skipReason: true, sentAt: true, openedAt: true, openCount: true },
+      select: { email: true, name: true, status: true, skipReason: true, sentAt: true, openedAt: true, openCount: true, repliedAt: true },
     }),
     prisma.recruiterBlastGroup.findMany({
       where: { blastId: blast.id },
@@ -42,7 +43,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
 
   return NextResponse.json({
     blast,
-    counts: { total: Object.values(counts).reduce((n: number, v) => n + (v as number), 0), ...counts },
+    counts: { total: Object.values(counts).reduce((n: number, v) => n + (v as number), 0), ...counts, REPLIED: replied },
     recipients,
     page,
     groups,

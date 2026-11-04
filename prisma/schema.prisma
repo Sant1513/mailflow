@@ -742,10 +742,15 @@ model Conversation {
   tags             ConversationTag[]
   followUps        FollowUp[]
   scheduledReplies ScheduledReply[]
+  /// Set when a recruiter replied to a Recruiter Bulk Send: the conversation belongs to the admin
+  /// who sent it (their workspace, assigned to them), even if a teammate's mailbox carried it,
+  /// and replies go out from that mailbox in the same thread.
+  recruiterBlastId String?
 
   @@unique([emailProviderAccountId, gmailThreadId])
   @@index([workspaceId])
   @@index([contactId])
+  @@index([recruiterBlastId])
 }
 
 enum MessageDirection {
@@ -1494,6 +1499,8 @@ model RecruiterBlastRecipient {
   skipReason String?
   groupId   String?
   sentAt    DateTime?
+  /// When this recruiter first replied (the conversation is in the admin sender's inbox).
+  repliedAt DateTime?
   /// INDIVIDUAL mode only: when this recruiter first opened, and how often.
   openedAt  DateTime?
   openCount Int       @default(0)
@@ -1517,6 +1524,9 @@ model RecruiterBlastGroup {
   accountId      String?
   fromEmail      String?
   gmailMessageId String?
+  /// The Message-ID header and Gmail thread of the sent email, so replies are recognised.
+  messageIdHeader String?
+  gmailThreadId  String?
   errorCode      String?
   error          String?
   attempts       Int       @default(0)
@@ -1531,4 +1541,5 @@ model RecruiterBlastGroup {
 
   @@unique([blastId, seq])
   @@index([accountId, status, sentAt])
+  @@index([messageIdHeader])
 }

@@ -6,6 +6,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { loadConversationForSession } from '@/lib/conversations/access';
+import { gmailThreadOf } from '@/lib/recruiterSend/replies';
 import { GmailProvider } from '@/lib/email/gmail';
 import { SendEmailError } from '@/lib/email/provider';
 import { buildReferences, buildQuotedTrail } from '@/lib/email/mime';
@@ -57,9 +58,12 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   //    thread — that is what the owner allowed;
   //  - otherwise the caller's OWN mailbox. A SUPER_ADMIN viewing another workspace, or an
   //    assignee from another inbox, cannot send as the owner; they send a new email instead.
+  //  - a recruiter's reply to the admin's Recruiter Bulk Send: the admin answers from the
+  //    mailbox the send went out from, in the same thread (that mailbox was their choice).
   const sharedReply = conversation.access === 'REPLY';
+  const recruiterReply = !!conversation.recruiterBlastId && conversation.access === 'FULL' && conversation.workspaceId === session.workspaceId;
   if (!sharedReply && !session.workspaceId) throw new ForbiddenError('No workspace on session');
-  const sender = sharedReply
+  const sender = sharedReply || recruiterReply
     ? await prisma.emailProviderAccount.findUnique({ where: { id: conversation.emailProviderAccountId } })
     : await prisma.emailProviderAccount.findUnique({
         where: {
@@ -72,7 +76,13 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       });
   if (!sender || sender.status !== 'CONNECTED') {
     return NextResponse.json(
-      { error: sharedReply ? "The owner's Gmail mailbox is disconnected, so replies can't be sent from it right now." : 'Connect your Gmail account in Settings before replying.' },
+      {
+        error: sharedReply
+          ? "The owner's Gmail mailbox is disconnected, so replies can't be sent from it right now."
+          : recruiterReply
+            ? 'The mailbox this recruiter email went out from is disconnected; reconnect it in Settings to reply.'
+            : 'Connect your Gmail account in Settings before replying.',
+      },
       { status: 400 },
     );
   }
@@ -91,7 +101,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   const last = conversation.messages[conversation.messages.length - 1] ?? null;
   const inReplyTo = body.newThread ? null : (last?.messageIdHeader ?? null);
   const references = body.newThread ? null : buildReferences(last?.references ?? null, last?.messageIdHeader ?? null);
-  const threadId = body.newThread ? null : conversation.gmailThreadId;
+  const threadId = body.newThread ? null : gmailThreadOf(conversation.gmailThreadId);
 
   const baseSubject = conversation.subject.replace(/^\s*(re|fwd?)\s*:\s*/i, '');
   const subject = body.subject?.trim() || (body.newThread ? baseSubject : `Re: ${baseSubject}`);
@@ -144,8 +154,10 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
             data: {
               organizationId: conversation.organizationId,
               // The new thread lives in the mailbox it was sent from, so its replies sync to it.
-              workspaceId: sender.workspaceId,
-              ownerId: sender.userId,
+              // A recruiter thread stays the admin's (assigned to them) whichever mailbox carried it.
+              ...(recruiterReply
+                ? { workspaceId: conversation.workspaceId, ownerId: conversation.ownerId, assigneeId: conversation.assigneeId, recruiterBlastId: conversation.recruiterBlastId }
+                : { workspaceId: sender.workspaceId, ownerId: sender.userId }),
               contactId: conversation.contactId,
               recipientEmail: conversation.recipientEmail,
               subject,

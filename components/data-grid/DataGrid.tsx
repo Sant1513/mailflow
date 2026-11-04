@@ -93,6 +93,8 @@ export function DataGrid({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  // Re-measure after every render on purpose (fonts/density change row height); the >1px guard stops loops.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const h = measureRow.current?.offsetHeight;
     if (h && Math.abs(h - rowHeight) > 1) setRowHeight(h);

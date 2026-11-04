@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db/client';
 import { authorizedClientFor, markAccountExpired } from '@/lib/gmail/oauth';
 import { parseAddressList, parseGmailMessage, type GmailMessage } from '@/lib/gmail/parseMessage';
 import { ingestInboundMessage, type IngestOutcome } from '@/lib/gmail/ingest';
+import { recruiterSendRefs } from '@/lib/recruiterSend/replies';
 import type { EmailProviderAccount } from '@prisma/client';
 
 /**
@@ -345,6 +346,8 @@ export async function syncAccount(
       select: { gmailThreadId: true },
     });
     for (const r of rows) if (r.gmailThreadId) knownThreads.add(r.gmailThreadId);
+    // Threads started by a Recruiter Bulk Send from this mailbox: recruiters' replies land there.
+    for (const t of (await recruiterSendRefs(account, ids, [])).threads) knownThreads.add(t);
   }
 
   const outOfBudget = () => Date.now() - startedAt > budgetMs;
@@ -437,6 +440,7 @@ export async function syncAccount(
           : Promise.resolve([] as { primaryEmail: string }[]),
       ]);
       const answered = new Set(jobs.map((j) => j.messageIdHeader).filter((x): x is string => !!x));
+      for (const id of (await recruiterSendRefs(account, [], refs)).messageIds) answered.add(id);
       const knownContacts = new Set(contacts.map((c) => c.primaryEmail.toLowerCase()));
       for (const c of candidates) {
         const ours = referencedIds(c.meta).some((r) => answered.has(r)) || (!!c.meta.fromEmail && knownContacts.has(c.meta.fromEmail));

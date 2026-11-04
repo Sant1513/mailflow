@@ -90,6 +90,15 @@ export default function InboxPage() {
     setSelected(new Set()); // clear selection on reload
   }, [filter, scope, q, page, assigneeId, tag]);
 
+  // Links into the inbox (e.g. "Replied" on a Recruiter Bulk Send) can preset ?filter= and ?q=.
+  useEffect(() => {
+    const url = new URLSearchParams(window.location.search);
+    const f = url.get('filter');
+    if (f && ['unread', 'mine', 'open', 'waiting', 'resolved', 'all'].includes(f)) setFilter(f);
+    const query = url.get('q');
+    if (query) setQ(query);
+  }, []);
+
   useEffect(() => {
     fetch('/api/members')
       .then((r) => r.json())

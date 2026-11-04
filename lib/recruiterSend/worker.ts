@@ -2,7 +2,8 @@ import { waitUntil } from '@vercel/functions';
 import { prisma } from '@/lib/db/client';
 import { appBaseUrl } from '@/lib/app-url';
 import { GmailProvider } from '@/lib/email/gmail';
-import { SendEmailError, type EmailAttachment } from '@/lib/email/provider';
+import { SendEmailError, type EmailAttachment, type SendEmailInput } from '@/lib/email/provider';
+import type { EmailProviderAccount } from '@prisma/client';
 import { backoffUntil, usageLast24h, wouldExceedDaily } from '@/lib/queue/drain';
 import { decorate, type BlastMode } from '@/lib/recruiterSend/core';
 import { readVideo } from '@/lib/recruiterSend/video';
@@ -105,7 +106,12 @@ async function chooseMailbox(blast: { id: string; accountIds: string[]; accountL
   return { account: null, reasons };
 }
 
-export async function runRecruiterWorker(opts: { budgetMs?: number } = {}): Promise<{ sent: number; failed: number; waiting: string | null }> {
+/** Sends one message; replaceable in tests so no real email goes out. */
+export type RecruiterSender = (account: EmailProviderAccount, input: SendEmailInput, large: boolean) => Promise<{ providerMessageId: string; threadId?: string | null; messageIdHeader?: string | null }>;
+const gmailSender: RecruiterSender = (account, input, large) => (large ? sendViaUpload(account, input) : new GmailProvider(account).sendEmail(input));
+
+export async function runRecruiterWorker(opts: { budgetMs?: number; send?: RecruiterSender } = {}): Promise<{ sent: number; failed: number; waiting: string | null }> {
+  const send = opts.send ?? gmailSender;
   const deadline = Date.now() + (opts.budgetMs ?? 45_000);
   let sent = 0;
   let failed = 0;
@@ -190,10 +196,11 @@ export async function runRecruiterWorker(opts: { budgetMs?: number } = {}): Prom
         };
         // Big messages (a video) go through Gmail's upload endpoint, which takes up to 35 MB.
         const bytes = attachments.reduce((n, a) => n + a.content.length, 0);
-        const result = bytes > UPLOAD_THRESHOLD_BYTES ? await sendViaUpload(account, input) : await new GmailProvider(account).sendEmail(input);
+        const result = await send(account, input, bytes > UPLOAD_THRESHOLD_BYTES);
         const now = new Date();
         await prisma.$transaction([
-          prisma.recruiterBlastGroup.update({ where: { id: group.id }, data: { status: 'SENT', sentAt: now, gmailMessageId: result.providerMessageId, errorCode: null, error: null, recipientCount: recipients.length } }),
+          // The Message-ID and thread let Gmail sync recognise recruiters' replies (lib/gmail/ingest.ts).
+          prisma.recruiterBlastGroup.update({ where: { id: group.id }, data: { status: 'SENT', sentAt: now, gmailMessageId: result.providerMessageId, messageIdHeader: result.messageIdHeader ?? null, gmailThreadId: result.threadId ?? null, errorCode: null, error: null, recipientCount: recipients.length } }),
           prisma.recruiterBlastRecipient.updateMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, data: { status: 'SENT', sentAt: now } }),
           prisma.recruiterBlast.update({ where: { id: blast.id }, data: { note: null } }),
         ]);

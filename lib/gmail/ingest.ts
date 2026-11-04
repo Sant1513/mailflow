@@ -7,6 +7,7 @@ import { MessageDirection, MessageClassification, type EmailProviderAccount } fr
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
 import { suppressBounced } from '@/lib/email/bounces';
 import { applyReplyRules } from '@/lib/replyRules/apply';
+import { findRecruiterSend, markRecruiterReplied, recruiterContact, recruiterThreadKey, type RecruiterReplyMatch } from '@/lib/recruiterSend/replies';
 
 /**
  * §47-§50 inbound ingestion. Given an already-parsed Gmail message and the
@@ -102,7 +103,7 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   }
 
   // ── Resolve the conversation this belongs to ──
-  const knownThread = await prisma.conversation.findUnique({
+  let knownThread = await prisma.conversation.findUnique({
     where: {
       emailProviderAccountId_gmailThreadId: {
         emailProviderAccountId: account.id,
@@ -112,6 +113,11 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   });
 
   let contactId = knownThread?.contactId ?? null;
+  let recruiter: RecruiterReplyMatch | null = null;
+  // ── Classify ──
+  const cls = classifyInbound(message);
+  const isReply = countsAsReply(cls.classification);
+  const isBounce = cls.classification === 'BOUNCE' || cls.classification === 'DELIVERY_FAILURE';
 
   if (!knownThread) {
     // Not a known thread. Does it answer something we sent?
@@ -127,6 +133,26 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
       contactId = parentJob?.record.contactId ?? null;
     }
 
+    // A reply to a Recruiter Bulk Send goes to the admin who sent it, one conversation per
+    // recruiter, not to the owner of the mailbox that carried it (lib/recruiterSend/replies.ts).
+    const recruiterSend = contactId ? null : await findRecruiterSend(account, referenced, message.gmailThreadId);
+    if (recruiterSend) {
+      if (isBounce) {
+        await suppressBounced({ workspaceId: recruiterSend.workspaceId, conversationRecipient: null, message, ownAddresses: [account.emailAddress] }).catch((err) =>
+          console.error('[ingest] recruiter bounce suppression failed', err),
+        );
+        return { status: 'IGNORED', reason: 'Bounce from a recruiter send: the address was suppressed.' };
+      }
+      if (!fromEmail) return { status: 'IGNORED', reason: 'Recruiter reply without a sender address.' };
+      knownThread = await prisma.conversation.findUnique({
+        where: { emailProviderAccountId_gmailThreadId: { emailProviderAccountId: account.id, gmailThreadId: recruiterThreadKey(message.gmailThreadId, fromEmail) } },
+      });
+      // Out-of-office and other automatic answers to a bulk send don't open a conversation.
+      if (!knownThread && !isReply) return { status: 'IGNORED', reason: `Automatic answer (${cls.classification}) to a recruiter send.` };
+      contactId = knownThread?.contactId ?? (await recruiterContact(recruiterSend, fromEmail, message.from?.name ?? null));
+      recruiter = recruiterSend;
+    }
+
     // Rule 3 (removed): we no longer accept unsolicited messages from known
     // contacts. Doing so imported every email that arrived in the mailbox from
     // someone who ever received a campaign — which is the opposite of what the
@@ -137,33 +163,51 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
     }
   }
 
-  // ── Classify ──
-  const cls = classifyInbound(message);
-  const isReply = countsAsReply(cls.classification);
-
   const result = await prisma.$transaction(async (tx) => {
     let conversation = knownThread;
     let created = false;
 
     if (!conversation) {
       conversation = await tx.conversation.create({
-        data: {
-          organizationId: account.organizationId,
-          workspaceId: account.workspaceId,
-          ownerId: account.userId,
-          contactId: contactId!,
-          recipientEmail: fromEmail,
-          subject: normalizeSubject(message.subject) || '(no subject)',
-          emailProviderAccountId: account.id,
-          gmailThreadId: message.gmailThreadId,
-          firstMessageAt: message.sentAt,
-          lastMessageAt: message.sentAt,
-          messageCount: 0,
-          unread: false,
-        },
+        data: recruiter
+          ? {
+              // The admin's conversation, assigned to them, whichever mailbox carried the send.
+              organizationId: recruiter.organizationId,
+              workspaceId: recruiter.workspaceId,
+              ownerId: recruiter.adminId,
+              assigneeId: recruiter.adminId,
+              recruiterBlastId: recruiter.blastId,
+              contactId: contactId!,
+              recipientEmail: fromEmail.toLowerCase(),
+              subject: normalizeSubject(message.subject) || '(no subject)',
+              emailProviderAccountId: account.id,
+              gmailThreadId: recruiterThreadKey(message.gmailThreadId, fromEmail),
+              firstMessageAt: message.sentAt,
+              lastMessageAt: message.sentAt,
+              messageCount: 0,
+              unread: false,
+            }
+          : {
+              organizationId: account.organizationId,
+              workspaceId: account.workspaceId,
+              ownerId: account.userId,
+              contactId: contactId!,
+              recipientEmail: fromEmail,
+              subject: normalizeSubject(message.subject) || '(no subject)',
+              emailProviderAccountId: account.id,
+              gmailThreadId: message.gmailThreadId,
+              firstMessageAt: message.sentAt,
+              lastMessageAt: message.sentAt,
+              messageCount: 0,
+              unread: false,
+            },
       });
       created = true;
     }
+    // Recruiter conversations notify and act as the admin, in the admin's workspace.
+    const forAdmin = !!conversation.recruiterBlastId;
+    const notifyWorkspaceId = forAdmin ? conversation.workspaceId : account.workspaceId;
+    const fallbackUserId = forAdmin ? conversation.ownerId : account.userId;
 
     const stored = await tx.conversationMessage.create({
       data: {
@@ -247,8 +291,8 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
       // §87 notify the conversation owner (or assignee).
       await tx.notification.create({
         data: {
-          workspaceId: account.workspaceId,
-          userId: conversation.assigneeId ?? account.userId,
+          workspaceId: notifyWorkspaceId,
+          userId: conversation.assigneeId ?? fallbackUserId,
           type: 'NEW_REPLY',
           title: `New reply from ${message.from?.name ?? fromEmail}`,
           body: message.snippet.slice(0, 200),
@@ -257,7 +301,12 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
       });
     }
 
-    return { conversationId: conversation.id, messageId: stored.id, created };
+    return {
+      conversationId: conversation.id,
+      messageId: stored.id,
+      created,
+      owner: { workspaceId: notifyWorkspaceId, userId: fallbackUserId, recruiterBlastId: conversation.recruiterBlastId },
+    };
   },
   // Six round trips against a hosted database can exceed Prisma's 5s
   // default interactive-transaction timeout (P2028), which would drop
@@ -265,9 +314,10 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   { timeout: 30_000, maxWait: 10_000 });
 
   // A bounce notice: suppress the dead address so it is never mailed again (lib/email/bounces.ts).
-  if (cls.classification === 'BOUNCE' || cls.classification === 'DELIVERY_FAILURE') {
+  const { owner, ...stored } = result;
+  if (isBounce) {
     await suppressBounced({
-      workspaceId: account.workspaceId,
+      workspaceId: owner.workspaceId,
       conversationRecipient: knownThread?.recipientEmail ?? null,
       message,
       ownAddresses: [account.emailAddress],
@@ -275,9 +325,12 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   }
 
   if (isReply) {
+    if (owner.recruiterBlastId) {
+      await markRecruiterReplied(owner.recruiterBlastId, fromEmail, message.sentAt).catch((err) => console.error('[ingest] recruiter replied mark failed', err));
+    }
     // §80 AI intent, stored beside the header-first result. Best effort:
     // AI being off, over limit or slow never delays or fails ingestion.
-    const aiCtx = { userId: account.userId, organizationId: account.organizationId, workspaceId: account.workspaceId };
+    const aiCtx = { userId: owner.userId, organizationId: account.organizationId, workspaceId: owner.workspaceId };
     const intent = await classifyStoredMessage(result.messageId, aiCtx);
     // AI triage (tag, assign, close thank-yous, draft an answer): best effort, per-org settings.
     if (intent) {
@@ -294,7 +347,7 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
       await applyReplyRules({ conversationId: result.conversationId, intent: intent.intent, confidence: intent.confidence });
     }
 
-    dispatchWebhook(account.workspaceId, 'conversation.message.received', {
+    dispatchWebhook(owner.workspaceId, 'conversation.message.received', {
       conversationId: result.conversationId,
       messageId: result.messageId,
       senderEmail: fromEmail,
@@ -302,5 +355,5 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
     }).catch(() => undefined);
   }
 
-  return { status: 'STORED', ...result, classification: cls.classification };
+  return { status: 'STORED', ...stored, classification: cls.classification };
 }

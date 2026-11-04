@@ -17,7 +17,7 @@ interface Blast {
 }
 interface Mailbox { id: string; emailAddress: string; ownerName: string | null; status: string; own: boolean; sentLast24h: number; dailyLimit: number }
 interface Group { id: string; seq: number; status: string; recipientCount: number; fromEmail: string | null; sentAt: string | null; openCount: number; firstOpenedAt: string | null; lastOpenedAt: string | null; error: string | null }
-interface RecipientRow { email: string; name: string | null; status: string; skipReason: string | null; sentAt: string | null; openedAt: string | null; openCount: number }
+interface RecipientRow { email: string; name: string | null; status: string; skipReason: string | null; sentAt: string | null; openedAt: string | null; openCount: number; repliedAt: string | null }
 interface Detail { blast: Blast; counts: Record<string, number>; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; hasSignature: boolean }
 interface Check {
   total: number; eligible: number; skipped: { email: string; reason: string }[]; skippedByReason: Record<string, number>; messages: number; perMessage: number;
@@ -466,10 +466,11 @@ function Progress({ detail }: { detail: Detail }) {
   return (
     <div className="space-y-4">
       <section className="rounded-lg border bg-card p-4">
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-5">
           <div><div className="text-xs text-muted-foreground">Recruiters sent</div><div className="text-xl font-semibold">{(detail.counts.SENT ?? 0).toLocaleString()} / {((detail.counts.total ?? 0) - (detail.counts.SKIPPED ?? 0)).toLocaleString()}</div></div>
           <div><div className="text-xs text-muted-foreground">Emails sent</div><div className="text-xl font-semibold">{sentMessages} / {totalMessages}</div></div>
           <div><div className="text-xs text-muted-foreground">{b.mode === 'INDIVIDUAL' ? 'Recruiters who opened' : 'Opens (all groups)'}</div><div className="text-xl font-semibold">{b.mode === 'INDIVIDUAL' ? openedRecruiters : opens}</div></div>
+          <div><div className="text-xs text-muted-foreground">Replied</div><div className="text-xl font-semibold"><a className="hover:underline" href={`/inbox?filter=all&q=${encodeURIComponent(b.subject.replace(/^s*(re|fwd?)s*:s*/i, ''))}`}>{detail.counts.REPLIED ?? 0}</a></div></div>
           <div><div className="text-xs text-muted-foreground">Skipped / failed</div><div className="text-xl font-semibold">{(detail.counts.SKIPPED ?? 0) + (detail.counts.FAILED ?? 0)}</div></div>
         </div>
         <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={sentMessages} aria-valuemax={totalMessages} aria-label="Emails sent">
@@ -506,20 +507,21 @@ function Progress({ detail }: { detail: Detail }) {
         <div className="max-h-96 overflow-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
-              <tr><th className="py-1 pr-2 font-medium">Recruiter</th><th className="py-1 pr-2 font-medium">Status</th>{b.mode === 'INDIVIDUAL' && <th className="py-1 font-medium">Opened</th>}</tr>
+              <tr><th className="py-1 pr-2 font-medium">Recruiter</th><th className="py-1 pr-2 font-medium">Status</th>{b.mode === 'INDIVIDUAL' && <th className="py-1 pr-2 font-medium">Opened</th>}<th className="py-1 font-medium">Replied</th></tr>
             </thead>
             <tbody>
               {detail.recipients.map((r) => (
                 <tr key={r.email} className="border-t border-border-subtle align-top">
                   <td className="py-1 pr-2">{r.name ? <>{r.name} <span className="text-xs text-muted-foreground">{r.email}</span></> : r.email}</td>
                   <td className="py-1 pr-2 text-xs">{r.status.toLowerCase()}{r.skipReason && <span className="block text-muted-foreground">{r.skipReason}</span>}</td>
-                  {b.mode === 'INDIVIDUAL' && <td className="py-1 text-xs">{r.openCount > 0 ? `✓ ${r.openCount}× · ${r.openedAt ? new Date(r.openedAt).toLocaleString() : ''}` : '—'}</td>}
+                  {b.mode === 'INDIVIDUAL' && <td className="py-1 pr-2 text-xs">{r.openCount > 0 ? `✓ ${r.openCount}× · ${r.openedAt ? new Date(r.openedAt).toLocaleString() : ''}` : '—'}</td>}
+                  <td className="py-1 text-xs">{r.repliedAt ? <a className="text-primary hover:underline" href={`/inbox?filter=all&q=${encodeURIComponent(r.email)}`}>✓ {new Date(r.repliedAt).toLocaleString()}</a> : '—'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        {(detail.counts.total ?? 0) > detail.recipients.length && <p className="mt-1 text-xs text-muted-foreground">Showing the first {detail.recipients.length} (most opened first).</p>}
+        {(detail.counts.total ?? 0) > detail.recipients.length && <p className="mt-1 text-xs text-muted-foreground">Showing the first {detail.recipients.length} (replied, then most opened, first).</p>}
       </section>
     </div>
   );

@@ -22,11 +22,11 @@ function classify(err: unknown): SendEmailError {
   return new SendEmailError(message, 'TRANSIENT', String(status));
 }
 
-export async function sendViaUpload(account: EmailProviderAccount, input: SendEmailInput): Promise<{ providerMessageId: string }> {
+export async function sendViaUpload(account: EmailProviderAccount, input: SendEmailInput): Promise<{ providerMessageId: string; threadId: string | null; messageIdHeader: string | null }> {
   if (input.fromEmail.toLowerCase() !== account.emailAddress.toLowerCase()) {
     throw new SendEmailError(`From (${input.fromEmail}) does not match the mailbox (${account.emailAddress}).`, 'AUTH');
   }
-  const { raw } = buildMimeMessage({
+  const { raw, messageIdHeader } = buildMimeMessage({
     to: input.to,
     cc: input.cc,
     bcc: input.bcc,
@@ -43,7 +43,7 @@ export async function sendViaUpload(account: EmailProviderAccount, input: SendEm
     const gmail = google.gmail({ version: 'v1', auth: await authorizedClientFor(account) });
     const res = await gmail.users.messages.send({ userId: 'me', requestBody: {}, media: { mimeType: 'message/rfc822', body: raw } });
     if (!res.data.id) throw new SendEmailError('Gmail accepted the message but returned no id.', 'UNKNOWN');
-    return { providerMessageId: res.data.id };
+    return { providerMessageId: res.data.id, threadId: res.data.threadId ?? null, messageIdHeader: messageIdHeader ?? null };
   } catch (err) {
     if (err instanceof SendEmailError) throw err;
     throw classify(err);

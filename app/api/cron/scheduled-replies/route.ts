@@ -4,6 +4,7 @@ import { GmailProvider } from '@/lib/email/gmail';
 import { SendEmailError } from '@/lib/email/provider';
 import { buildReferences, buildQuotedTrail } from '@/lib/email/mime';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
+import { gmailThreadOf } from '@/lib/recruiterSend/replies';
 import { MessageDirection, EmailProvider as EmailProviderEnum } from '@prisma/client';
 
 function authorised(req: Request): boolean {
@@ -58,7 +59,7 @@ export async function GET(req: Request) {
     const last = conversation.messages[conversation.messages.length - 1] ?? null;
     const inReplyTo = reply.newThread ? null : (last?.messageIdHeader ?? null);
     const references = reply.newThread ? null : buildReferences(last?.references ?? null, last?.messageIdHeader ?? null);
-    const threadId = reply.newThread ? null : conversation.gmailThreadId;
+    const threadId = reply.newThread ? null : gmailThreadOf(conversation.gmailThreadId);
 
     const baseSubject = conversation.subject.replace(/^\s*(re|fwd?)\s*:\s*/i, '');
     const subject = reply.newThread ? baseSubject : `Re: ${baseSubject}`;
