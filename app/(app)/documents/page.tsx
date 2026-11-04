@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
 import { EditSigningRequestModal } from '@/components/documents/EditSigningRequestModal';
 
@@ -467,7 +468,8 @@ export default function ESignDocumentsPage() {
                                 title={SIGNER_STATUS_LABEL[s.status]}
                               />
                               <div className="min-w-0">
-                                <div className="text-xs font-medium">
+                                <div className="flex items-center gap-1.5 text-xs font-medium">
+                                  <Avatar email={s.recipientEmail} name={s.recipientName} size={18} />
                                   {s.signerOrder + 1}. {s.recipientName}
                                   <span className="font-normal text-muted-foreground">
                                     {' '}· {s.signerRole ?? `Signer ${s.signerOrder + 1}`} · {SIGNER_STATUS_LABEL[s.status]}
@@ -480,8 +482,13 @@ export default function ESignDocumentsPage() {
                         </ol>
                       ) : (
                         <>
-                          <div className="text-xs font-medium">{req.recipientName}</div>
-                          <div className="text-xs text-muted-foreground">{req.recipientEmail}</div>
+                          <div className="flex items-center gap-2">
+                            <Avatar email={req.recipientEmail} name={req.recipientName} size={26} />
+                            <div className="min-w-0">
+                              <div className="text-xs font-medium">{req.recipientName}</div>
+                              <div className="text-xs text-muted-foreground">{req.recipientEmail}</div>
+                            </div>
+                          </div>
                         </>
                       )}
                     </td>

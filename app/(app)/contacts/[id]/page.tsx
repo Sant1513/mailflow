@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 
 const TYPE_LABEL: Record<string, { label: string; tone: string }> = {
   EMAIL_SENT: { label: 'Campaign email', tone: 'text-primary' },
@@ -39,8 +40,13 @@ export default function ContactProfilePage() {
   return (
     <div className="p-6">
       <Link href="/contacts" className="text-xs text-muted-foreground hover:text-foreground">← Contacts</Link>
-      <h1 className="mt-1 text-xl font-semibold">{contact.name || contact.primaryEmail}</h1>
-      <p className="text-sm text-muted-foreground">{contact.primaryEmail}{contact.phone ? ` · ${contact.phone}` : ''}</p>
+      <div className="mt-2 flex items-center gap-4">
+        <Avatar email={contact.primaryEmail} name={contact.name} size={72} className="shadow-card" />
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold">{contact.name || contact.primaryEmail}</h1>
+          <p className="text-sm text-muted-foreground">{contact.primaryEmail}{contact.phone ? ` · ${contact.phone}` : ''}</p>
+        </div>
+      </div>
 
       <div className="mt-3 flex flex-wrap gap-2 text-xs">
         <span className="rounded bg-muted px-2 py-1">{contact.records.length} dataset record{contact.records.length === 1 ? '' : 's'}</span>

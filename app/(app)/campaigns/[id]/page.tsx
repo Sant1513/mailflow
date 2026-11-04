@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
 import { ExplainButton } from '@/components/ai/ExplainButton';
 import { SenderSettings } from '@/components/campaign/SenderSettings';
@@ -807,7 +808,7 @@ export default function CampaignDetailPage() {
                   <tbody>
                     {batch.jobs.map((j: any) => (
                       <tr key={j.id} className="border-t">
-                        <td className="px-2 py-1">{j.toEmail}</td>
+                        <td className="px-2 py-1"><span className="flex items-center gap-2"><Avatar email={j.toEmail} size={20} />{j.toEmail}</span></td>
                         <td className="px-2 py-1">{j.status}</td>
                         <td className="px-2 py-1 text-muted-foreground">
                           {j.errorMessage ?? j.skipReason ?? (j.gmailThreadId ? `thread ${j.gmailThreadId.slice(0, 10)}…` : '')}

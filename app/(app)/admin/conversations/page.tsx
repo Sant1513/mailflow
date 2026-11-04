@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
 
 interface Row {
@@ -132,8 +133,13 @@ export default function AdminConversationsPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={`/contacts/${c.contact.id}`} className="hover:text-primary">{c.contact.name || c.recipientEmail}</Link>
-                      <div className="text-xs text-faint">{c.recipientEmail}</div>
+                      <div className="flex items-center gap-2.5">
+                        <Avatar email={c.recipientEmail} name={c.contact.name} size={28} />
+                        <div className="min-w-0">
+                          <Link href={`/contacts/${c.contact.id}`} className="hover:text-primary">{c.contact.name || c.recipientEmail}</Link>
+                          <div className="text-xs text-faint">{c.recipientEmail}</div>
+                        </div>
+                      </div>
                     </td>
                     <td className="hidden px-4 py-3 text-xs md:table-cell">
                       <div>{c.workspace.name}</div>

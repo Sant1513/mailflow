@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { EditSigningRequestModal } from '@/components/documents/EditSigningRequestModal';
@@ -232,6 +233,7 @@ export default function BulkSendDetailPage() {
                             <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-medium">
                               {req.signerOrder + 1}
                             </span>
+                            <Avatar email={req.recipientEmail} name={req.recipientName} size={24} />
                             <div>
                               <div className="text-xs font-medium">{req.recipientName}</div>
                               <div className="text-xs text-muted-foreground">{req.recipientEmail}</div>
@@ -280,8 +282,13 @@ export default function BulkSendDetailPage() {
                   className={`border-t border-border-subtle ${i % 2 === 1 ? 'bg-muted/30' : ''}`}
                 >
                   <td className="px-4 py-2">
+                    <div className="flex items-center gap-2">
+                    <Avatar email={req.recipientEmail} name={req.recipientName} size={26} />
+                    <div className="min-w-0">
                     <div className="text-xs font-medium">{req.recipientName}</div>
                     <div className="text-xs text-muted-foreground">{req.recipientEmail}</div>
+                    </div>
+                    </div>
                     {req.signerRole && (
                       <div className="mt-0.5 text-[11px] text-muted-foreground">Role: {req.signerRole}</div>
                     )}

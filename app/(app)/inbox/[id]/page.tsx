@@ -412,7 +412,8 @@ export default function ConversationPage() {
                   className={`rounded-lg border bg-card p-3 text-sm ${item.direction === 'OUTBOUND' ? 'ml-8' : 'mr-8'}`}
                 >
                   <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span>
+                    <span className="inline-flex flex-wrap items-center gap-1.5">
+                      <Avatar email={item.direction === 'OUTBOUND' ? c.account.emailAddress : item.senderEmail} name={item.direction === 'OUTBOUND' ? null : item.senderName} size={22} />
                       <strong className={item.direction === 'OUTBOUND' ? 'text-primary' : ''}>
                         {item.direction === 'OUTBOUND' ? 'You' : item.senderName || item.senderEmail}
                       </strong>{' '}

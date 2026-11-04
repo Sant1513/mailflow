@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { Avatar } from '@/components/ui/Avatar';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
@@ -302,7 +303,7 @@ export default function SegmentsPage() {
                     <tbody className="divide-y divide-border">
                       {previewContacts.map((c) => (
                         <tr key={c.id}>
-                          <td className="py-1 pr-4">{c.name || '—'}</td>
+                          <td className="py-1 pr-4"><span className="flex items-center gap-2"><Avatar email={c.primaryEmail} name={c.name} size={22} />{c.name || '—'}</span></td>
                           <td className="py-1">{c.primaryEmail}</td>
                         </tr>
                       ))}
@@ -428,7 +429,7 @@ export default function SegmentsPage() {
                                   href={`/contacts/${c.id}`}
                                   className="text-primary hover:underline"
                                 >
-                                  {c.name || '—'}
+                                  <span className="inline-flex items-center gap-2"><Avatar email={c.primaryEmail} name={c.name} size={22} />{c.name || '—'}</span>
                                 </Link>
                               </td>
                               <td className="py-1">{c.primaryEmail}</td>

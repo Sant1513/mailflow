@@ -81,10 +81,13 @@ export function Avatar({ email, name, size = 32, className = '' }: { email?: str
 
   const style = { width: size, height: size, fontSize: Math.max(9, Math.round(size * 0.36)) };
   if (url && !broken) {
+    // Google photo URLs end "=s96-c": ask for the size shown (2× for sharp screens), so a large
+    // avatar (the contact page) isn't blurry and a small one doesn't download more than needed.
+    const src = url.replace(/=s\d+(-c)?$/, `=s${Math.min(400, Math.max(48, size * 2))}-c`);
     return (
       // eslint-disable-next-line @next/next/no-img-element -- Google's photo CDN, small and already sized
       <img
-        src={url}
+        src={src}
         alt=""
         width={size}
         height={size}
