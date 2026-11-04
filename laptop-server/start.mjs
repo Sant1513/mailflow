@@ -255,6 +255,7 @@ async function waitForApp() {
 // Same jobs as vercel.json + .github/workflows; times are UTC.
 const JOBS = [
   { name: 'send-queue', path: '/api/cron/send-queue?reason=laptop', everyMin: 1 },
+  { name: 'recruiter-send', path: '/api/cron/recruiter-send?reason=laptop', everyMin: 1 },
   { name: 'gmail-sync', path: '/api/cron/gmail-sync', everyMin: 15 },
   { name: 'follow-ups', path: '/api/cron/follow-ups', everyMin: 15 },
   { name: 'sheets-sync', path: '/api/cron/sheets-sync', everyMin: 15 },
@@ -300,7 +301,7 @@ async function runJob(job) {
       signal: AbortSignal.timeout(15 * 60_000),
     });
     const body = (await res.text()).slice(0, 300).replace(/\s+/g, ' ');
-    if (!res.ok || job.name !== 'send-queue' || /"sent":[1-9]/.test(body)) log(`[job] ${job.name} ${res.status} in ${Date.now() - started} ms ${body}`);
+    if (!res.ok || !['send-queue', 'recruiter-send'].includes(job.name) || /"sent":[1-9]/.test(body)) log(`[job] ${job.name} ${res.status} in ${Date.now() - started} ms ${body}`);
   } catch (err) {
     log(`[job] ${job.name} failed:`, String(err?.message ?? err));
   } finally {

@@ -108,14 +108,29 @@ export interface DailyUsage {
   unique: Set<string>;
 }
 
-/** What this mailbox has sent as campaign email in the last 24 hours. */
+/**
+ * What this mailbox has sent in the last 24 hours: campaign email plus Recruiter Bulk Send
+ * messages (lib/recruiterSend), so neither can push a mailbox past Google's limits.
+ */
 export async function usageLast24h(emailProviderAccountId: string): Promise<DailyUsage> {
-  const rows = await prisma.emailJob.findMany({
-    where: { emailProviderAccountId, status: EmailJobStatus.SENT, sentAt: { gte: new Date(Date.now() - 24 * 3600_000) } },
-    select: { toEmail: true, ccEmails: true, bccEmails: true },
-  });
+  const since = new Date(Date.now() - 24 * 3600_000);
+  const [rows, groups] = await Promise.all([
+    prisma.emailJob.findMany({
+      where: { emailProviderAccountId, status: EmailJobStatus.SENT, sentAt: { gte: since } },
+      select: { toEmail: true, ccEmails: true, bccEmails: true },
+    }),
+    prisma.recruiterBlastGroup.findMany({
+      where: { accountId: emailProviderAccountId, status: 'SENT', sentAt: { gte: since } },
+      select: { blast: { select: { mode: true, toAddress: true } }, recipients: { select: { email: true } } },
+    }),
+  ]);
   const usage: DailyUsage = { messages: 0, totalRecipients: 0, unique: new Set() };
   for (const r of rows) addUsage(usage, r);
+  for (const g of groups) {
+    const emails = g.recipients.map((r) => r.email);
+    const visibleTo = g.blast.mode === 'BCC' ? g.blast.toAddress : null;
+    addUsage(usage, visibleTo ? { toEmail: visibleTo, ccEmails: [], bccEmails: emails } : { toEmail: emails[0] ?? '', ccEmails: [], bccEmails: emails.slice(1) });
+  }
   return usage;
 }
 
@@ -142,13 +157,25 @@ export const BACKOFF_MS: Record<string, number> = { RATE_LIMIT: 10 * 60_000, QUO
 
 /** Epoch ms until which this mailbox should not send because Gmail pushed back recently (0 = free). */
 export async function backoffUntil(emailProviderAccountId: string): Promise<number> {
-  const last = await prisma.emailJob.findFirst({
-    where: { emailProviderAccountId, status: EmailJobStatus.FAILED, errorCode: { in: Object.keys(BACKOFF_MS) }, lastAttemptAt: { gte: new Date(Date.now() - 60 * 60_000) } },
-    orderBy: { lastAttemptAt: 'desc' },
-    select: { errorCode: true, lastAttemptAt: true },
-  });
-  if (!last?.lastAttemptAt || !last.errorCode) return 0;
-  const until = last.lastAttemptAt.getTime() + (BACKOFF_MS[last.errorCode] ?? 0);
+  const hourAgo = new Date(Date.now() - 60 * 60_000);
+  const [last, lastGroup] = await Promise.all([
+    prisma.emailJob.findFirst({
+      where: { emailProviderAccountId, status: EmailJobStatus.FAILED, errorCode: { in: Object.keys(BACKOFF_MS) }, lastAttemptAt: { gte: hourAgo } },
+      orderBy: { lastAttemptAt: 'desc' },
+      select: { errorCode: true, lastAttemptAt: true },
+    }),
+    // A Recruiter Bulk Send message Gmail pushed back on holds the mailbox the same way.
+    prisma.recruiterBlastGroup.findFirst({
+      where: { accountId: emailProviderAccountId, errorCode: { in: Object.keys(BACKOFF_MS) }, sentAt: { gte: hourAgo } },
+      orderBy: { sentAt: 'desc' },
+      select: { errorCode: true, sentAt: true },
+    }),
+  ]);
+  const holds = [
+    last?.lastAttemptAt && last.errorCode ? last.lastAttemptAt.getTime() + (BACKOFF_MS[last.errorCode] ?? 0) : 0,
+    lastGroup?.sentAt && lastGroup.errorCode ? lastGroup.sentAt.getTime() + (BACKOFF_MS[lastGroup.errorCode] ?? 0) : 0,
+  ];
+  const until = Math.max(...holds);
   return until > Date.now() ? until : 0;
 }
 

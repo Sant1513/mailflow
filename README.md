@@ -226,6 +226,25 @@ Being explicit about what is *not* live yet:
 | AI | Google Gemini via a provider abstraction |
 | Hosting | Vercel (Hobby, functions in Mumbai `bom1`), GitHub Actions for 15-minute schedules; optional laptop server as standby |
 
+## Recruiter Bulk Send
+
+**Mail → Recruiter Bulk Send** (admins) sends one email to many recruiters, separately from campaigns (`lib/recruiterSend/`, tables `RecruiterBlast*`).
+
+- **Two ways out**, chosen per send:
+  - **BCC groups**: up to 250 recruiters in Bcc per email, with a fixed visible To address. Opens are counted per group, because every recipient loads the same image.
+  - **Individual copies**: each recruiter gets their own email, and opens are known per recruiter.
+- **Opens only.** Links are never rewritten. Scanner and prefetch opens don't count.
+- **Recruiters.** Paste, upload a CSV/Excel file, or use saved data. The same pre-send address checks as campaigns apply: unsubscribed, bounced, dead domains, typos, no-reply and throwaway addresses are skipped.
+- **The email.** Subject, a simple or HTML body, signature, From name, Reply-To, and PDFs from the PDF Library.
+- **Video.**
+  - Attached (≤ 20 MB): uploaded straight to Supabase Storage. Large messages go through Gmail's upload endpoint.
+  - As a "Watch the video" link: Drive or YouTube, any size.
+- **Mailboxes.** The admin's own plus teammates' opted-in backup mailboxes, used in the chosen order. Each can have a **limit for the send**; the next mailbox takes over when one reaches its limit, Google's daily limits (shared with campaigns in `usageLast24h`), or a Gmail pause.
+- **Pacing and control.** A pause between emails, test send, schedule, pause/resume/cancel, and **Copy** for a new draft with the same recruiters, email and mailboxes.
+- **Unsubscribe.** Every email has an unsubscribe line. In BCC mode it opens a page where the recruiter types their address, and only addresses on that send are accepted.
+- **Sender.** `/api/cron/recruiter-send` restarts itself while work remains. GitHub Actions (every 15 minutes) and the laptop (every minute, while active) are the backstops.
+- **Mailbox usage** (admins) shows every mailbox's last 24 hours: campaign emails, recruiter sends and Google's limits.
+
 ## Where MailFlow runs
 
 MailFlow runs on **one server at a time**, chosen on **Settings → Server** (super admins):

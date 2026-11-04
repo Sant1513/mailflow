@@ -1427,3 +1427,108 @@ model RsvpResponse {
   @@unique([campaignId, email])
   @@index([campaignId, answer])
 }
+
+/// Recruiter Bulk Send (Mail → Recruiter Bulk Send, admins): one email to many recruiters,
+/// separate from campaigns. Mode BCC sends groups of up to 250 in Bcc with a fixed visible To
+/// (opens counted per group); mode INDIVIDUAL sends each recruiter their own copy (opens per
+/// recruiter). Opens only — links are never rewritten. See lib/recruiterSend/.
+model RecruiterBlast {
+  id              String    @id @default(cuid())
+  organizationId  String
+  workspaceId     String
+  createdById     String
+  name            String
+  /// BCC | INDIVIDUAL
+  mode            String    @default("BCC")
+  /// BCC mode: the visible To address.
+  toAddress       String?
+  subject         String
+  html            String    @db.Text
+  plainText       String    @db.Text
+  /// What was typed, to edit again (text or html) and how.
+  body            String    @db.Text
+  format          String    @default("text")
+  includeSignature Boolean  @default(true)
+  fromName        String?
+  replyTo         String?
+  /// Sending mailboxes (EmailProviderAccount ids), used in this order; the next one takes
+  /// over when a mailbox is near its daily limit, paused by Gmail or disconnected.
+  accountIds      String[]  @default([])
+  /// Most recruiters each mailbox may send to in this send ({ accountId: number }); when a
+  /// mailbox reaches its number, the next chosen mailbox takes over. Missing = no extra limit
+  /// (Google's daily limits always apply).
+  accountLimits   Json      @default("{}")
+  /// A video: attached ({ mode: "attach", ref: "storage:…", fileName, size, contentType }) or
+  /// shown as a "Watch the video" button ({ mode: "link", url, title }). Null = none.
+  video           Json?
+  /// PDF Library documents attached to every email.
+  attachmentDocumentIds String[] @default([])
+  groupSize       Int       @default(250)
+  /// Pause between emails (BCC groups or individual copies), seconds.
+  gapSeconds      Int       @default(60)
+  /// DRAFT | SCHEDULED | SENDING | PAUSED | COMPLETED | CANCELLED
+  status          String    @default("DRAFT")
+  scheduledAt     DateTime?
+  /// Why sending is waiting, shown on the page (e.g. every mailbox is at its daily limit).
+  note            String?
+  copiedFromId    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  recipients RecruiterBlastRecipient[]
+  groups     RecruiterBlastGroup[]
+
+  @@index([workspaceId, createdAt])
+  @@index([status])
+}
+
+model RecruiterBlastRecipient {
+  id        String    @id @default(cuid())
+  blastId   String
+  email     String
+  name      String?
+  /// PENDING | QUEUED | SENT | SKIPPED | FAILED
+  status    String    @default("PENDING")
+  skipReason String?
+  groupId   String?
+  sentAt    DateTime?
+  /// INDIVIDUAL mode only: when this recruiter first opened, and how often.
+  openedAt  DateTime?
+  openCount Int       @default(0)
+
+  blast RecruiterBlast       @relation(fields: [blastId], references: [id], onDelete: Cascade)
+  group RecruiterBlastGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  @@unique([blastId, email])
+  @@index([blastId, status])
+  @@index([groupId])
+}
+
+/// One Gmail message: a BCC group of up to 250, or one individual copy.
+model RecruiterBlastGroup {
+  id             String    @id @default(cuid())
+  blastId        String
+  seq            Int
+  /// PENDING | SENDING | SENT | FAILED
+  status         String    @default("PENDING")
+  recipientCount Int
+  accountId      String?
+  fromEmail      String?
+  gmailMessageId String?
+  errorCode      String?
+  error          String?
+  attempts       Int       @default(0)
+  sentAt         DateTime?
+  openCount      Int       @default(0)
+  firstOpenedAt  DateTime?
+  lastOpenedAt   DateTime?
+  createdAt      DateTime  @default(now())
+
+  blast      RecruiterBlast            @relation(fields: [blastId], references: [id], onDelete: Cascade)
+  recipients RecruiterBlastRecipient[]
+
+  @@unique([blastId, seq])
+  @@index([accountId, status, sentAt])
+}

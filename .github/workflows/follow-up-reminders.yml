@@ -26,3 +26,7 @@ jobs:
         run: |
           curl -fsS -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "https://mailflow-six-sooty.vercel.app/api/cron/sheets-sync"
+      - name: Recruiter bulk sends (restarts sending if it stopped)
+        run: |
+          curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://mailflow-six-sooty.vercel.app/api/cron/recruiter-send?reason=github"

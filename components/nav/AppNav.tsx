@@ -10,7 +10,12 @@ import { ProductSwitcher } from '@/components/nav/ProductSwitcher';
 import { PRODUCT_NAV, PRODUCTS, activeNavHref, productForPath, type Product } from '@/lib/products';
 import { rememberVisit } from '@/lib/products-client';
 
-const REVIEWER_ITEMS = [{ href: '/approvals', label: 'Approvals' }];
+// Admins (ADMIN, SUPER_ADMIN): approvals, recruiter bulk sends and every mailbox's sending today.
+const REVIEWER_ITEMS = [
+  { href: '/approvals', label: 'Approvals' },
+  { href: '/recruiter-send', label: 'Recruiter Bulk Send' },
+  { href: '/mailbox-usage', label: 'Mailbox usage' },
+];
 
 const SETTINGS_ITEM = { href: '/settings', label: 'Settings' };
 
