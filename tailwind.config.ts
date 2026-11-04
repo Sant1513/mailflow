@@ -30,6 +30,9 @@ const config: Config = {
         warning: 'hsl(var(--warning))',
         info: 'hsl(var(--info))',
         ring: 'hsl(var(--ring))',
+        ink: { DEFAULT: 'hsl(var(--ink))', foreground: 'hsl(var(--ink-foreground))' },
+        'accent-from': 'hsl(var(--accent-from))',
+        'accent-to': 'hsl(var(--accent-to))',
       },
       fontFamily: {
         // Outfit for everything, Poppins as the reference site's secondary.
@@ -39,8 +42,12 @@ const config: Config = {
       borderRadius: {
         // Cards are 8px on the reference; controls are tighter; CTAs are pills.
         lg: 'var(--radius-card)',
-        md: '6px',
-        sm: '4px',
+        md: '10px',
+        sm: '6px',
+      },
+      boxShadow: {
+        card: 'var(--shadow-card)',
+        lift: 'var(--shadow-lift)',
       },
       transitionTimingFunction: {
         DEFAULT: 'var(--ease)',

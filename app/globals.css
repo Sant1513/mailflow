@@ -8,16 +8,28 @@
 :root {
   color-scheme: light;
 
-  --background: 0 0% 98%;            /* #fafafa  page                      */
+  /* Light = "minimal": soft grey page, white rounded cards, black pills, red-orange accent. */
+  --background: 240 7% 95%;          /* #f1f1f4  page                      */
   --card: 0 0% 100%;                 /* #ffffff  panels                    */
-  --elevated: 240 5% 94%;            /* #eeeef0  raised rows / hover        */
-  --muted: 240 5% 96%;               /* #f4f4f5  subtle surface             */
-  --muted-foreground: 240 4% 32%;    /* #4b4b52  body copy                  */
-  --faint: 240 4% 50%;               /* #7a7a82  captions / metadata        */
-  --foreground: 240 10% 6%;          /* #0d0d10  headings / strong text     */
+  --elevated: 240 6% 95%;            /* #f1f1f3  raised rows / hover        */
+  --muted: 240 6% 96.5%;             /* #f5f5f7  subtle surface             */
+  --muted-foreground: 240 4% 34%;    /* #52525a  body copy                  */
+  --faint: 240 4% 52%;               /* #7f7f87  captions / metadata        */
+  --foreground: 240 10% 7%;          /* #101014  headings / strong text     */
 
-  --border: 240 6% 86%;              /* #d9d9de  visible borders            */
-  --border-subtle: 240 5% 92%;       /* #e9e9ec  hairlines                  */
+  --border: 240 6% 89%;              /* #e1e1e6  visible borders            */
+  --border-subtle: 240 6% 93.5%;     /* #ececf0  hairlines                  */
+
+  /* Pills, active tabs and primary buttons: near-black ink on light. */
+  --ink: 240 10% 9%;
+  --ink-foreground: 0 0% 100%;
+  /* Highlight card / logo: Masai red into orange. */
+  --accent-from: 348 97% 50%;
+  --accent-to: 20 95% 55%;
+  --shadow-card: 0 1px 2px rgb(16 16 20 / 0.04), 0 10px 28px -14px rgb(16 16 20 / 0.12);
+  --shadow-lift: 0 2px 4px rgb(16 16 20 / 0.05), 0 18px 40px -18px rgb(16 16 20 / 0.22);
+  --glass: 0 0% 100%;
+  --glass-alpha: 0.78;
 
   --primary: 348 97% 47%;            /* #ED0331  Masai red                  */
   --primary-hover: 347 77% 45%;      /* rose, a touch darker on white       */
@@ -29,7 +41,7 @@
   --info: 221 83% 45%;               /* blue-700                            */
 
   --ring: 348 97% 47%;
-  --radius-card: 8px;
+  --radius-card: 16px;
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -39,24 +51,47 @@
  * no shadow, warm-white headings in Outfit 700–800, light zinc-400 body
  * copy, and Masai red (#ED0331 / rose #E11D48) as the single accent.
  */
+/* Dark = "glass": a deep teal-to-blue gradient behind frosted panels, sky-blue active pills. */
 .dark {
   color-scheme: dark;
 
-  --background: 240 6% 4%;          /* #09090b  page                      */
-  --card: 240 6% 7%;                /* #111113  panels                    */
-  --elevated: 240 6% 13%;           /* #1f1f23  raised rows / hover        */
-  --muted: 240 5% 10%;              /* #18181b  subtle surface            */
-  --muted-foreground: 240 5% 65%;   /* #a1a1aa  body copy                 */
-  --faint: 240 4% 46%;              /* #71717a  captions / metadata       */
-  --foreground: 60 5% 96%;          /* #f5f5f4  headings / strong text    */
+  --background: 199 62% 8%;         /* #08202b  fallback behind the gradient */
+  --card: 199 44% 13%;              /* #12303d  opaque surfaces (sticky rows) */
+  --elevated: 198 36% 20%;          /* #213f4c  raised rows / hover        */
+  --muted: 199 40% 15%;             /* #17323f  subtle surface            */
+  --muted-foreground: 197 22% 78%;  /* #b9cdd5  body copy                 */
+  --faint: 197 16% 60%;             /* #8aa1aa  captions / metadata       */
+  --foreground: 195 40% 97%;        /* #f3f9fb  headings / strong text    */
 
-  --border: 240 4% 16%;             /* #27272a  visible borders           */
-  --border-subtle: 240 5% 10%;      /* #18181b  hairlines                 */
+  --border: 195 40% 90% / 0.16;     /* white hairlines on glass           */
+  --border-subtle: 195 40% 90% / 0.09;
 
-  --primary-hover: 347 77% 50%;     /* #E11D48  rose                      */
-  --success: 160 64% 52%;           /* emerald-400                        */
-  --warning: 43 96% 56%;            /* amber-400                          */
-  --info: 213 94% 68%;              /* blue-400                           */
+  --primary: 199 89% 55%;           /* #2bb3f1  sky blue                  */
+  --primary-hover: 199 89% 62%;
+  --primary-foreground: 200 60% 8%;
+  --ring: 199 89% 55%;
+  --success: 152 60% 55%;
+  --warning: 43 96% 60%;
+  --info: 199 89% 66%;
+
+  --ink: 195 40% 97%;               /* light pills on the dark glass       */
+  --ink-foreground: 200 50% 10%;
+  --accent-from: 199 89% 55%;
+  --accent-to: 188 78% 48%;
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.06) inset, 0 18px 40px -22px rgb(0 0 0 / 0.55);
+  --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.08) inset, 0 26px 50px -22px rgb(0 0 0 / 0.65);
+  --glass: 197 45% 22%;
+  --glass-alpha: 0.38;
+}
+
+/* The glass theme's backdrop: fixed so it doesn't scroll with the page. */
+.dark body {
+  background:
+    radial-gradient(1100px 700px at 12% 0%, rgb(56 189 248 / 0.18), transparent 60%),
+    radial-gradient(900px 700px at 90% 95%, rgb(20 184 166 / 0.22), transparent 60%),
+    radial-gradient(700px 500px at 60% 40%, rgb(14 116 144 / 0.25), transparent 70%),
+    linear-gradient(135deg, #061923 0%, #0a3043 42%, #0d4760 68%, #08212f 100%);
+  background-attachment: fixed;
 }
 
 @layer base {
@@ -145,16 +180,19 @@
 }
 
 @layer components {
-  /* Primary CTA — the "REGISTER NOW" pill: red, uppercase, tracked. */
+  /* Primary action: a solid ink pill (black on light, light on glass) that lifts and presses. */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold uppercase tracking-wider text-primary-foreground;
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold;
+    background: hsl(var(--ink));
+    color: hsl(var(--ink-foreground));
+    box-shadow: 0 6px 16px -8px hsl(var(--ink) / 0.6);
   }
   .btn-primary:hover:not(:disabled) {
-    background: hsl(var(--primary-hover));
     transform: translateY(-1px);
+    box-shadow: 0 10px 22px -10px hsl(var(--ink) / 0.7);
   }
   .btn-primary:active:not(:disabled) {
-    transform: translateY(0);
+    transform: translateY(0) scale(0.98);
   }
   .btn-primary:disabled {
     @apply cursor-not-allowed opacity-50;
@@ -167,13 +205,16 @@
   .btn-secondary:hover:not(:disabled) {
     @apply border-faint bg-elevated;
   }
+  .btn-secondary:active:not(:disabled) {
+    transform: scale(0.98);
+  }
   .btn-secondary:disabled {
     @apply cursor-not-allowed opacity-50;
   }
 
-  /* Eyebrow badge — "IN-PERSON · 20 WEEKS": uppercase, tracked, red-tinted. */
+  /* Eyebrow label — small, tracked, quiet. */
   .eyebrow {
-    @apply inline-flex items-center gap-2 border border-primary/30 bg-primary/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground;
+    @apply inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-faint;
   }
 
   /* Status pills used across grids and lists. */
@@ -186,9 +227,76 @@
   .badge-danger  { @apply bg-destructive/15 text-primary; }
   .badge-info    { @apply bg-info/15 text-info; }
 
-  /* Panels: flat, hairline border, no shadow — matches the reference. */
+  /* Panels: rounded white cards with a soft shadow; frosted glass in the dark theme. */
   .panel {
-    @apply rounded-[var(--radius-card)] border border-border bg-card;
+    @apply rounded-[var(--radius-card)] border border-border-subtle bg-card;
+    box-shadow: var(--shadow-card);
+  }
+  .dark .panel,
+  .glass {
+    background: hsl(var(--glass) / var(--glass-alpha));
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(18px) saturate(140%);
+    border: 1px solid hsl(var(--border));
+  }
+  /* Sidebar, top bar and drawer: a white floating panel; frosted glass in the dark theme. */
+  .glass-nav {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border-subtle));
+    box-shadow: var(--shadow-card);
+  }
+  .dark .glass-nav {
+    background: hsl(199 50% 12% / 0.45);
+    -webkit-backdrop-filter: blur(22px) saturate(150%);
+    backdrop-filter: blur(22px) saturate(150%);
+    border-color: hsl(var(--border));
+  }
+  /* The sliding active item: an ink pill; a glowing sky-blue pill on glass. */
+  .nav-pill {
+    background: hsl(var(--ink));
+    box-shadow: 0 8px 18px -10px hsl(var(--ink) / 0.7);
+  }
+  .dark .nav-pill {
+    background: linear-gradient(135deg, hsl(199 89% 52%), hsl(205 90% 60%));
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.18) inset, 0 8px 24px -8px rgb(56 189 248 / 0.7);
+  }
+
+  /* Pages build cards as "rounded-lg border bg-card"; on the glass theme they frost too. */
+  .dark .rounded-lg.border.bg-card,
+  .dark .rounded-xl.border.bg-card {
+    background: hsl(var(--glass) / var(--glass-alpha));
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    backdrop-filter: blur(16px) saturate(140%);
+  }
+  .lift {
+    transition: transform 0.25s var(--ease), box-shadow 0.25s var(--ease);
+  }
+  .lift:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lift);
+  }
+
+  /* Segmented control (7d / 30d / 90d, filter tabs): a pill track with an ink active pill. */
+  .segmented {
+    @apply inline-flex items-center gap-1 rounded-full border border-border-subtle bg-card p-1;
+    box-shadow: var(--shadow-card);
+  }
+  .dark .segmented {
+    background: hsl(var(--glass) / var(--glass-alpha));
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
+
+  /* Loading placeholder: a soft shimmer sweeping across. */
+  .skeleton {
+    @apply rounded-xl;
+    background: linear-gradient(100deg, hsl(var(--muted)) 20%, hsl(var(--elevated)) 40%, hsl(var(--muted)) 60%);
+    background-size: 220% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  .dark .skeleton {
+    background: linear-gradient(100deg, rgb(255 255 255 / 0.05) 20%, rgb(255 255 255 / 0.12) 40%, rgb(255 255 255 / 0.05) 60%);
+    background-size: 220% 100%;
   }
 
   /* Data-grid cells. */
@@ -206,6 +314,15 @@
   .accent { color: hsl(var(--primary)); }
   .fade-in { animation: fade-in 0.3s var(--ease) both; }
   .rise-in { animation: rise-in 0.35s var(--ease) both; }
+}
+
+@keyframes shimmer {
+  from { background-position: 120% 0; }
+  to   { background-position: -120% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+  .lift:hover { transform: none; }
 }
 
 @keyframes fade-in {

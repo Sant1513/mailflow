@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { Bell } from 'lucide-react';
 
 interface Item {
   id: string;
@@ -187,13 +188,13 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
         onClick={togglePanel}
         aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`}
         aria-expanded={open}
-        className={`relative flex items-center justify-center rounded-md border border-border text-foreground hover:bg-elevated/60 ${
+        className={`relative flex items-center justify-center rounded-full border border-border-subtle bg-card text-foreground hover:bg-elevated ${
           compact ? 'h-9 w-9' : 'h-8 w-8'
         } ${open ? 'bg-elevated/60' : ''}`}
       >
-        <span aria-hidden className="text-base leading-none">🔔</span>
+        <Bell size={16} aria-hidden />
         {unread > 0 && (
-          <span className="absolute -right-1 -top-1 rounded-full bg-primary px-1.5 text-[10px] font-bold leading-4 text-primary-foreground">
+          <span className="absolute -right-1 -top-1 rounded-full bg-gradient-to-br from-accent-from to-accent-to px-1.5 text-[10px] font-bold leading-4 text-white">
             {unread > 99 ? '99+' : unread}
           </span>
         )}

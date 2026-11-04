@@ -35,6 +35,26 @@ function conversationScope(scope: Scope) {
     : { organizationId: scope.organizationId };
 }
 
+/**
+ * Emails sent and replies received in [from, to) — the period before the one on screen, for
+ * the dashboard's "vs last period" change.
+ */
+export async function periodCounts(scope: Scope, from: Date, to: Date): Promise<{ emailsSent: number; replies: number }> {
+  const [emailsSent, replies] = await Promise.all([
+    prisma.emailJob.count({ where: { ...jobScope(scope), status: EmailJobStatus.SENT, sentAt: { gte: from, lt: to } } }),
+    prisma.conversationMessage.count({
+      where: { conversation: conversationScope(scope), direction: MessageDirection.INBOUND, classification: MessageClassification.HUMAN_REPLY, receivedAt: { gte: from, lt: to } },
+    }),
+  ]);
+  return { emailsSent, replies };
+}
+
+/** Percentage change, or null when there is nothing to compare with. */
+export function changePct(current: number, previous: number): number | null {
+  if (previous <= 0) return null;
+  return Math.round(((current - previous) / previous) * 100);
+}
+
 export interface Totals {
   emailsSent: number;
   emailsPending: number;

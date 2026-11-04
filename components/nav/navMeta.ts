@@ -1,0 +1,80 @@
+import {
+  BarChart3,
+  BookOpen,
+  Building2,
+  CheckCircle2,
+  Contact,
+  Database,
+  FileSignature,
+  FileStack,
+  FileText,
+  FolderKanban,
+  Gauge,
+  History,
+  Inbox,
+  LayoutDashboard,
+  Layers,
+  LineChart,
+  Mail,
+  MailX,
+  Megaphone,
+  PenLine,
+  ScrollText,
+  Send,
+  Settings,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Users,
+  Workflow,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react';
+
+/**
+ * Icons and sidebar groups for each page. Pages not listed fall back to a neutral icon and
+ * their product's default group, so a new page shows up without touching this file.
+ */
+export const NAV_ICON: Record<string, LucideIcon> = {
+  '/quick-send': Zap,
+  '/dashboard': LayoutDashboard,
+  '/inbox': Inbox,
+  '/data': Database,
+  '/contacts': Contact,
+  '/campaigns': Megaphone,
+  '/templates': PenLine,
+  '/documents/library': BookOpen,
+  '/automations': Workflow,
+  '/batches': Layers,
+  '/suppressions': MailX,
+  '/deliverability': ShieldCheck,
+  '/performance': LineChart,
+  '/reports': BarChart3,
+  '/history': History,
+  '/documents': FileSignature,
+  '/documents/new': FileText,
+  '/documents/bulk': FileStack,
+  '/documents/templates': PenLine,
+  '/documents/analytics': BarChart3,
+  '/approvals': CheckCircle2,
+  '/recruiter-send': Send,
+  '/mailbox-usage': Gauge,
+  '/settings': Settings,
+  '/admin/organization': Building2,
+  '/admin/users': Users,
+  '/admin/workspaces': FolderKanban,
+  '/admin/all-data': Database,
+  '/admin/conversations': Mail,
+  '/admin/audit-logs': ScrollText,
+  '/admin/system-settings': SlidersHorizontal,
+};
+
+export const FALLBACK_ICON = Sparkles;
+
+/** Sidebar groups for the Mail product, in order. */
+export const MAIL_GROUPS: { label: string; hrefs: string[] }[] = [
+  { label: 'Overview', hrefs: ['/dashboard', '/inbox'] },
+  { label: 'Send', hrefs: ['/quick-send', '/campaigns', '/templates', '/documents/library', '/automations', '/batches'] },
+  { label: 'People', hrefs: ['/data', '/contacts', '/suppressions'] },
+  { label: 'Insights', hrefs: ['/deliverability', '/performance', '/reports', '/history'] },
+];

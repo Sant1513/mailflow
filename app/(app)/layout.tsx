@@ -4,8 +4,10 @@ import { CURRENT_PRODUCT_COOKIE, isProduct } from '@/lib/products';
 import { getOptionalSession } from '@/lib/auth/session';
 import { prisma } from '@/lib/db/client';
 import { AppNav } from '@/components/nav/AppNav';
+import { TopBar } from '@/components/nav/TopBar';
 import { ViewAsBanner } from '@/components/nav/ViewAsBanner';
 import { KeyboardShortcuts } from '@/components/nav/KeyboardShortcuts';
+import { MotionProvider, PageTransition } from '@/components/motion/Motion';
 import { Role } from '@prisma/client';
 import { reviewScope } from '@/lib/permissions/reviewer';
 
@@ -23,20 +25,27 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
 
   const lastProduct = cookies().get(CURRENT_PRODUCT_COOKIE)?.value;
+  const user = { name: session.name, email: session.email, image: null, role: session.role };
 
   return (
-    <div className="flex min-h-dvh flex-col lg:flex-row">
-      <KeyboardShortcuts />
-      <AppNav
-        user={{ name: session.name, email: session.email, image: null, role: session.role }}
-        pendingApprovals={pendingApprovals}
-        initialProduct={isProduct(lastProduct) ? lastProduct : 'mail'}
-      />
-      <div className="flex min-w-0 flex-1 flex-col">
-        {session.viewingAs && <ViewAsBanner viewingAs={session.viewingAs} />}
-        {/* Pages that want a full-height layout use h-full inside this box. */}
-        <main className="min-h-0 flex-1 overflow-x-hidden bg-background lg:h-dvh lg:overflow-y-auto">{children}</main>
+    <MotionProvider>
+      <div className="flex min-h-dvh flex-col lg:flex-row">
+        <KeyboardShortcuts />
+        <AppNav user={user} pendingApprovals={pendingApprovals} initialProduct={isProduct(lastProduct) ? lastProduct : 'mail'} />
+        {/* The page column scrolls on its own (lg) so the floating sidebar and top bar stay put. */}
+        <div className="flex min-w-0 flex-1 flex-col lg:h-dvh lg:overflow-y-auto" id="app-scroll">
+          <TopBar user={user} />
+          {session.viewingAs && (
+            <div className="lg:px-3 lg:pt-3">
+              <ViewAsBanner viewingAs={session.viewingAs} />
+            </div>
+          )}
+          {/* Pages that want a full-height layout use h-full inside this box. */}
+          <main className="min-h-0 flex-1 overflow-x-hidden">
+            <PageTransition>{children}</PageTransition>
+          </main>
+        </div>
       </div>
-    </div>
+    </MotionProvider>
   );
 }
