@@ -826,6 +826,21 @@ if (!runStep('Applying database migrations', [PRISMA_BIN, 'migrate', 'deploy']))
 // Rebuild whenever the code changed since the last build (git commit of the app folder), so a
 // switch to the laptop never runs an older MailFlow than the cloud.
 const BUILT_FILE = path.join(DATA, 'built-commit.txt');
+// New or changed packages (package-lock.json changed) are installed first; otherwise a version
+// that adds a library fails to build here ("Module not found") while the cloud builds fine.
+const DEPS_FILE = path.join(DATA, 'deps-hash.txt');
+const PACKAGE_LOCK = path.join(APP_DIR, 'package-lock.json');
+const NPM_CLI = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+const depsHash = fs.existsSync(PACKAGE_LOCK) ? createHash('sha256').update(fs.readFileSync(PACKAGE_LOCK)).digest('hex') : '';
+if (depsHash && (!fs.existsSync(DEPS_FILE) || fs.readFileSync(DEPS_FILE, 'utf8').trim() !== depsHash)) {
+  if (!fs.existsSync(NPM_CLI)) {
+    log(`npm was not found next to Node (${NPM_CLI}); if the build fails, run "npm install" in ${APP_DIR}.`);
+  } else if (runStep('Installing packages (package-lock.json changed)', [NPM_CLI, 'install', '--include=dev', '--no-audit', '--no-fund'])) {
+    fs.writeFileSync(DEPS_FILE, depsHash);
+  } else {
+    fail('npm install');
+  }
+}
 const commit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: APP_DIR, encoding: 'utf8', windowsHide: true }).stdout?.trim() || 'unknown';
 const builtCommit = fs.existsSync(BUILT_FILE) ? fs.readFileSync(BUILT_FILE, 'utf8').trim() : '';
 if (!fs.existsSync(path.join(APP_DIR, '.next', 'BUILD_ID')) || builtCommit !== commit) {

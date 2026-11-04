@@ -86,7 +86,7 @@ export function ThemeSwitch() {
         const on = t === 'dark' ? dark : !dark;
         const Icon = t === 'dark' ? Moon : Sun;
         return (
-          <button key={t} type="button" onClick={() => choose(t)} aria-pressed={on} title={t === 'dark' ? 'Glass (dark)' : 'Minimal (light)'} className={`relative flex h-7 w-7 items-center justify-center rounded-full ${on ? 'text-ink-foreground' : 'text-faint hover:text-foreground'}`}>
+          <button key={t} type="button" onClick={() => choose(t)} aria-pressed={on} title={t === 'dark' ? 'Dark' : 'Light'} className={`relative flex h-7 w-7 items-center justify-center rounded-full ${on ? 'text-ink-foreground' : 'text-faint hover:text-foreground'}`}>
             {on && <motion.span layoutId="theme-knob" className="absolute inset-0 rounded-full bg-ink shadow-card" transition={{ type: 'spring', stiffness: 500, damping: 34 }} />}
             <Icon size={14} className="relative" />
           </button>

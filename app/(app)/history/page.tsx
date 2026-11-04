@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { ExplainButton } from '@/components/ai/ExplainButton';
@@ -50,23 +50,31 @@ export default function HistoryPage() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
+  // The rows and which tab they belong to: Sent and Received rows have different shapes, so a
+  // tab only draws rows fetched for it (drawing Sent rows as Received crashed the page).
   const [items, setItems] = useState<(SentItem | ReceivedItem)[]>([]);
+  const [itemsFor, setItemsFor] = useState<'sent' | 'received'>('sent');
+  const requestSeq = useRef(0);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [meta, setMeta] = useState({ total: 0, page: 1, pageCount: 1 });
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    const seq = ++requestSeq.current;
     const qs = new URLSearchParams({ direction, page: String(page) });
     if (q.trim()) qs.set('q', q.trim());
     if (status) qs.set('status', status);
-    const res = await fetch(`/api/history?${qs}`);
-    if (!res.ok) {
+    const res = await fetch(`/api/history?${qs}`).catch(() => null);
+    if (seq !== requestSeq.current) return; // a newer request (other tab, new search) wins
+    if (!res?.ok) {
       toast.error('Could not load history');
       setLoading(false);
       return;
     }
     const json = await res.json();
+    if (seq !== requestSeq.current) return;
     setItems(json.items ?? []);
+    setItemsFor(direction);
     setCounts(json.counts ?? {});
     setMeta({ total: json.total, page: json.page, pageCount: json.pageCount });
     setLoading(false);
@@ -92,7 +100,10 @@ export default function HistoryPage() {
             <button
               key={d}
               onClick={() => {
+                if (d === direction) return;
                 setDirection(d);
+                setItems([]);
+                setLoading(true);
                 setStatus('');
                 setPage(1);
               }}
@@ -125,7 +136,7 @@ export default function HistoryPage() {
       </div>
 
       <div className="panel overflow-hidden">
-        {loading ? (
+        {loading || itemsFor !== direction ? (
           <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p>
         ) : items.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-muted-foreground">{direction === 'sent' ? 'Nothing has been sent yet.' : 'Nothing has been received yet — replies appear after Gmail sync.'}</p>
@@ -183,15 +194,15 @@ export default function HistoryPage() {
                 {(items as ReceivedItem[]).map((m) => (
                   <tr key={m.id} className="border-t border-border-subtle align-top">
                     <td className="px-4 py-3">
-                      <Link href={`/contacts/${m.conversation.contact.id}`} className="font-medium hover:text-primary">{m.senderName || m.conversation.contact.name || m.senderEmail}</Link>
+                      {m.conversation?.contact ? <Link href={`/contacts/${m.conversation.contact.id}`} className="font-medium hover:text-primary">{m.senderName || m.conversation.contact.name || m.senderEmail}</Link> : <span className="font-medium">{m.senderName || m.senderEmail}</span>}
                       <div className="text-xs text-faint">{m.senderEmail}</div>
                     </td>
                     <td className="max-w-[420px] px-4 py-3">
-                      <Link href={`/inbox/${m.conversation.id}`} className={`block truncate hover:text-primary ${m.isRead ? '' : 'font-semibold'}`} title={m.subject ?? ''}>{m.subject || m.conversation.subject || '(no subject)'}</Link>
+                      <Link href={m.conversation ? `/inbox/${m.conversation.id}` : '/inbox'} className={`block truncate hover:text-primary ${m.isRead ? '' : 'font-semibold'}`} title={m.subject ?? ''}>{m.subject || m.conversation?.subject || '(no subject)'}</Link>
                       <div className="truncate text-xs text-faint" title={m.snippet ?? ''}>{m.snippet}</div>
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      <span className={`badge ${CLASS_BADGE[m.classification] ?? 'badge-neutral'}`}>{m.classification.replace(/_/g, ' ').toLowerCase()}</span>
+                      <span className={`badge ${CLASS_BADGE[m.classification] ?? 'badge-neutral'}`}>{(m.classification ?? 'UNKNOWN').replace(/_/g, ' ').toLowerCase()}</span>
                       {m.aiIntent && <div className="mt-1 text-faint">AI: {m.aiIntent.replace(/_/g, ' ').toLowerCase()}</div>}
                     </td>
                     <td className="hidden px-4 py-3 text-xs text-muted-foreground lg:table-cell">{when(m.receivedAt ?? m.createdAt)}</td>

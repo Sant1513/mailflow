@@ -51,46 +51,47 @@
  * no shadow, warm-white headings in Outfit 700–800, light zinc-400 body
  * copy, and Masai red (#ED0331 / rose #E11D48) as the single accent.
  */
-/* Dark = "glass": a deep teal-to-blue gradient behind frosted panels, sky-blue active pills. */
+/* Dark: the original near-black zinc and Masai red (as on masaischool.com), on a black
+ * gradient with a faint red glow, with the same frosted panels and motion as light. */
 .dark {
   color-scheme: dark;
 
-  --background: 199 62% 8%;         /* #08202b  fallback behind the gradient */
-  --card: 199 44% 13%;              /* #12303d  opaque surfaces (sticky rows) */
-  --elevated: 198 36% 20%;          /* #213f4c  raised rows / hover        */
-  --muted: 199 40% 15%;             /* #17323f  subtle surface            */
-  --muted-foreground: 197 22% 78%;  /* #b9cdd5  body copy                 */
-  --faint: 197 16% 60%;             /* #8aa1aa  captions / metadata       */
-  --foreground: 195 40% 97%;        /* #f3f9fb  headings / strong text    */
+  --background: 240 6% 4%;          /* #09090b  page                      */
+  --card: 240 6% 7%;                /* #111113  opaque surfaces            */
+  --elevated: 240 6% 13%;           /* #1f1f23  raised rows / hover        */
+  --muted: 240 5% 10%;              /* #18181b  subtle surface            */
+  --muted-foreground: 240 5% 65%;   /* #a1a1aa  body copy                 */
+  --faint: 240 4% 46%;              /* #71717a  captions / metadata       */
+  --foreground: 60 5% 96%;          /* #f5f5f4  headings / strong text    */
 
-  --border: 195 40% 90% / 0.16;     /* white hairlines on glass           */
-  --border-subtle: 195 40% 90% / 0.09;
+  --border: 0 0% 100% / 0.10;       /* white hairlines on glass           */
+  --border-subtle: 0 0% 100% / 0.06;
 
-  --primary: 199 89% 55%;           /* #2bb3f1  sky blue                  */
-  --primary-hover: 199 89% 62%;
-  --primary-foreground: 200 60% 8%;
-  --ring: 199 89% 55%;
-  --success: 152 60% 55%;
-  --warning: 43 96% 60%;
-  --info: 199 89% 66%;
+  --primary: 348 97% 50%;           /* Masai red                          */
+  --primary-hover: 347 77% 50%;     /* #E11D48  rose                      */
+  --primary-foreground: 0 0% 100%;
+  --ring: 348 97% 50%;
+  --success: 160 64% 52%;           /* emerald-400                        */
+  --warning: 43 96% 56%;            /* amber-400                          */
+  --info: 213 94% 68%;              /* blue-400 (info badges only)        */
 
-  --ink: 195 40% 97%;               /* light pills on the dark glass       */
-  --ink-foreground: 200 50% 10%;
-  --accent-from: 199 89% 55%;
-  --accent-to: 188 78% 48%;
-  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.06) inset, 0 18px 40px -22px rgb(0 0 0 / 0.55);
-  --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.08) inset, 0 26px 50px -22px rgb(0 0 0 / 0.65);
-  --glass: 197 45% 22%;
-  --glass-alpha: 0.38;
+  /* Pills, active tabs and primary buttons: Masai red, like the light theme's accent. */
+  --ink: 348 97% 50%;
+  --ink-foreground: 0 0% 100%;
+  --accent-from: 348 97% 50%;
+  --accent-to: 20 95% 55%;
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 18px 40px -22px rgb(0 0 0 / 0.7);
+  --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.06) inset, 0 26px 50px -22px rgb(0 0 0 / 0.8);
+  --glass: 240 6% 10%;
+  --glass-alpha: 0.62;
 }
 
-/* The glass theme's backdrop: fixed so it doesn't scroll with the page. */
+/* The dark backdrop: black with a soft red and ember glow; fixed so it doesn't scroll. */
 .dark body {
   background:
-    radial-gradient(1100px 700px at 12% 0%, rgb(56 189 248 / 0.18), transparent 60%),
-    radial-gradient(900px 700px at 90% 95%, rgb(20 184 166 / 0.22), transparent 60%),
-    radial-gradient(700px 500px at 60% 40%, rgb(14 116 144 / 0.25), transparent 70%),
-    linear-gradient(135deg, #061923 0%, #0a3043 42%, #0d4760 68%, #08212f 100%);
+    radial-gradient(1000px 650px at 8% -5%, rgb(237 3 49 / 0.14), transparent 60%),
+    radial-gradient(900px 650px at 100% 105%, rgb(249 115 22 / 0.09), transparent 60%),
+    linear-gradient(160deg, #0c0c0f 0%, #111114 45%, #08080a 100%);
   background-attachment: fixed;
 }
 
@@ -246,19 +247,19 @@
     box-shadow: var(--shadow-card);
   }
   .dark .glass-nav {
-    background: hsl(199 50% 12% / 0.45);
+    background: hsl(240 6% 8% / 0.72);
     -webkit-backdrop-filter: blur(22px) saturate(150%);
     backdrop-filter: blur(22px) saturate(150%);
     border-color: hsl(var(--border));
   }
-  /* The sliding active item: an ink pill; a glowing sky-blue pill on glass. */
+  /* The sliding active item: an ink pill; a glowing red pill in the dark theme. */
   .nav-pill {
     background: hsl(var(--ink));
     box-shadow: 0 8px 18px -10px hsl(var(--ink) / 0.7);
   }
   .dark .nav-pill {
-    background: linear-gradient(135deg, hsl(199 89% 52%), hsl(205 90% 60%));
-    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.18) inset, 0 8px 24px -8px rgb(56 189 248 / 0.7);
+    background: linear-gradient(135deg, hsl(348 97% 50%), hsl(14 95% 55%));
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14) inset, 0 8px 24px -8px rgb(237 3 49 / 0.6);
   }
 
   /* Pages build cards as "rounded-lg border bg-card"; on the glass theme they frost too. */
