@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 
@@ -15,6 +16,19 @@ export default function ContactsPage() {
   const [contacts, setContacts] = useState<ContactRow[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
+  const [filling, setFilling] = useState(false);
+  const [reload, setReload] = useState(0);
+
+  // Names for contacts without one, from their lists and their replies (never overwrites).
+  async function fillNames() {
+    setFilling(true);
+    const res = await fetch('/api/contacts/fill-names', { method: 'POST' }).catch(() => null);
+    const j = await res?.json().catch(() => ({}));
+    setFilling(false);
+    if (!res?.ok) return toast.error(j?.error ?? 'Could not fill the names.');
+    toast.success(j.total ? `Added ${j.total.toLocaleString()} name${j.total === 1 ? '' : 's'}: ${j.fromLists} from your lists, ${j.fromReplies} from replies${j.fromGoogle ? `, ${j.fromGoogle} from Google` : ''}.` : 'No new names found — turn on profile photos in Settings → Gmail to add names from Google too.');
+    setReload((n) => n + 1);
+  }
 
   useEffect(() => {
     const t = setTimeout(async () => {
@@ -25,7 +39,7 @@ export default function ContactsPage() {
       setLoading(false);
     }, 250);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, reload]);
 
   return (
     <div className="p-6">
@@ -36,9 +50,14 @@ export default function ContactsPage() {
             One person, resolved across every dataset and conversation (§18).
           </p>
         </div>
-        <Link href="/contacts/segments" className="btn-secondary text-sm">
-          Segments
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={fillNames} disabled={filling} className="btn-secondary text-sm disabled:opacity-50" title="From their recipient lists and their replies; never overwrites a name">
+            {filling ? 'Filling…' : 'Fill missing names'}
+          </button>
+          <Link href="/contacts/segments" className="btn-secondary text-sm">
+            Segments
+          </Link>
+        </div>
       </div>
 
       <input

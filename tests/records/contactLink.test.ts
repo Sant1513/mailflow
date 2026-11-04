@@ -3,7 +3,7 @@ import { ColumnType } from '@prisma/client';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    datasetColumn: { findFirst: vi.fn() },
+    datasetColumn: { findFirst: vi.fn(), findMany: vi.fn(async () => []) },
     contact: { upsert: vi.fn() },
   },
 }));
@@ -40,8 +40,7 @@ describe('findOrCreateContactForRecord', () => {
 
   it('upserts a Contact keyed by (workspaceId, lowercased email) when valid', async () => {
     (prisma.datasetColumn.findFirst as any)
-      .mockResolvedValueOnce({ key: 'Email', type: ColumnType.EMAIL }) // email column lookup
-      .mockResolvedValueOnce(null); // name column lookup
+      .mockResolvedValueOnce({ key: 'Email', type: ColumnType.EMAIL }); // email column lookup
     (prisma.contact.upsert as any).mockResolvedValue({ id: 'contact-1' });
 
     const result = await findOrCreateContactForRecord({
@@ -57,5 +56,16 @@ describe('findOrCreateContactForRecord', () => {
         where: { workspaceId_primaryEmail: { workspaceId: 'ws1', primaryEmail: 'rahul@example.com' } },
       })
     );
+  });
+
+  it('takes the person name from the Name column, not Username', async () => {
+    (prisma.datasetColumn.findFirst as any).mockResolvedValueOnce({ key: 'Email', type: ColumnType.EMAIL });
+    (prisma.datasetColumn.findMany as any).mockResolvedValueOnce([
+      { key: 'Username', label: 'Username', type: ColumnType.TEXT },
+      { key: 'name', label: 'name', type: ColumnType.TEXT },
+    ]);
+    (prisma.contact.upsert as any).mockResolvedValue({ id: 'contact-2' });
+    await findOrCreateContactForRecord({ organizationId: 'org1', workspaceId: 'ws1', datasetId: 'ds1', data: { Email: 'b@x.com', Username: 'fw22_0771', name: ' Deepak Yadav ' } });
+    expect(prisma.contact.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ name: 'Deepak Yadav' }) }));
   });
 });

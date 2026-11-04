@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db/client';
 import { syncAccountToCompletion } from '@/lib/gmail/sync';
 import { ensureWatch, pushEnabled, watchDue } from '@/lib/gmail/watch';
 import { refreshDuePhotos } from '@/lib/profilePhotos/sync';
+import { fillMissingNames } from '@/lib/contacts/names';
 
 export const maxDuration = 60;
 
@@ -56,5 +57,13 @@ export async function GET(req: Request) {
   // Profile photos (lib/profilePhotos): weekly per mailbox that allowed them, in the time left.
   const photoBudget = deadline + 5_000 - Date.now();
   const photos = photoBudget > 8_000 ? await refreshDuePhotos(photoBudget - 3_000).catch((err) => [{ account: '-', contacts: 0, photos: 0, error: String(err) }]) : [];
-  return NextResponse.json({ startedAt, finishedAt: new Date(), accounts: accounts.length, results, push: pushEnabled() ? { renewed: watches } : 'off', photos });
+  // Empty contact names, from their lists and replies (lib/contacts/names.ts): cheap, two queries.
+  const names: { organizationId: string; filled?: number; error?: string }[] = [];
+  if (deadline + 5_000 - Date.now() > 4_000) {
+    for (const org of await prisma.organization.findMany({ select: { id: true }, take: 20 })) {
+      const r = await fillMissingNames({ organizationId: org.id }).catch((err) => ({ error: String(err).slice(0, 200) }));
+      names.push('error' in r ? { organizationId: org.id, error: r.error } : { organizationId: org.id, filled: r.fromLists + r.fromReplies });
+    }
+  }
+  return NextResponse.json({ startedAt, finishedAt: new Date(), accounts: accounts.length, results, push: pushEnabled() ? { renewed: watches } : 'off', photos, names });
 }

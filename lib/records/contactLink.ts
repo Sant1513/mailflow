@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db/client';
 import { ColumnType } from '@prisma/client';
+import { cleanName, pickNameColumn } from '@/lib/contacts/names';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -30,13 +31,22 @@ export async function linkContactsForDataset(opts: {
   });
   if (records.length === 0) return 0;
 
+  // The list's name column ("Name", "Full name"… never "Username"), so contacts get names.
+  const columns = await prisma.datasetColumn.findMany({ where: { datasetId: opts.datasetId }, select: { key: true, label: true, type: true }, orderBy: { order: 'asc' } });
+  const nameKey = pickNameColumn(columns)?.key ?? null;
+  const nameByEmail = new Map<string, string>();
+
   // Resolve the distinct addresses first, so N records sharing an address
   // cost one upsert rather than N.
   const emailByRecord = new Map<string, string>();
   for (const record of records) {
     const raw = (record.data as Record<string, unknown>)[emailColumn.key];
     const email = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-    if (email && EMAIL_RE.test(email)) emailByRecord.set(record.id, email);
+    if (email && EMAIL_RE.test(email)) {
+      emailByRecord.set(record.id, email);
+      const name = nameKey ? cleanName((record.data as Record<string, unknown>)[nameKey]) : null;
+      if (name && !nameByEmail.has(email)) nameByEmail.set(email, name);
+    }
   }
 
   // Bulk, in a fixed number of round trips (a 1,000-row list used to cost
@@ -47,9 +57,17 @@ export async function linkContactsForDataset(opts: {
   for (let i = 0; i < emails.length; i += 5000) {
     const chunk = emails.slice(i, i + 5000);
     await prisma.contact.createMany({
-      data: chunk.map((primaryEmail) => ({ organizationId: opts.organizationId, workspaceId: opts.workspaceId, primaryEmail })),
+      data: chunk.map((primaryEmail) => ({ organizationId: opts.organizationId, workspaceId: opts.workspaceId, primaryEmail, name: nameByEmail.get(primaryEmail) ?? null })),
       skipDuplicates: true,
     });
+    // Contacts that already existed without a name get the list's name too (never overwritten).
+    const named = chunk.filter((e) => nameByEmail.has(e));
+    if (named.length) {
+      await prisma.$executeRaw`
+        UPDATE "Contact" AS c SET "name" = v.n, "updatedAt" = now()
+        FROM unnest(${named}::text[], ${named.map((e) => nameByEmail.get(e)!)}::text[]) AS v(e, n)
+        WHERE c."workspaceId" = ${opts.workspaceId} AND c."primaryEmail" = v.e AND c."name" IS NULL`;
+    }
     const found = await prisma.contact.findMany({
       where: { workspaceId: opts.workspaceId, primaryEmail: { in: chunk } },
       select: { id: true, primaryEmail: true },
@@ -88,10 +106,9 @@ export async function findOrCreateContactForRecord(opts: {
   const email = typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
 
-  const nameColumn = await prisma.datasetColumn.findFirst({
-    where: { datasetId: opts.datasetId, type: { in: [ColumnType.TEXT] }, key: { contains: 'name' } },
-  });
-  const name = nameColumn ? String(opts.data[nameColumn.key] ?? '') : undefined;
+  // "Name", "Full name"… never "Username" (it used to take the first key containing "name").
+  const nameColumn = pickNameColumn(await prisma.datasetColumn.findMany({ where: { datasetId: opts.datasetId }, select: { key: true, label: true, type: true }, orderBy: { order: 'asc' } }));
+  const name = nameColumn ? cleanName(opts.data[nameColumn.key]) ?? undefined : undefined;
 
   const contact = await prisma.contact.upsert({
     where: { workspaceId_primaryEmail: { workspaceId: opts.workspaceId, primaryEmail: email } },

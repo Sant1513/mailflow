@@ -6,6 +6,7 @@ import { normalizeSubject, type ParsedMessage } from '@/lib/gmail/parseMessage';
 import { MessageDirection, MessageClassification, type EmailProviderAccount } from '@prisma/client';
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
 import { parseBounce, suppressBounced } from '@/lib/email/bounces';
+import { cleanName } from '@/lib/contacts/names';
 import { applyReplyRules } from '@/lib/replyRules/apply';
 import { findRecruiterSend, markRecruiterBounced, markRecruiterReplied, recruiterContact, recruiterThreadKey, type RecruiterReplyMatch } from '@/lib/recruiterSend/replies';
 
@@ -333,6 +334,13 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   }
 
   if (isReply) {
+    // Their display name ("Bhuvan C <…>") for a contact that has none (never overwrites).
+    const replyName = cleanName(message.from?.name);
+    if (replyName) {
+      await prisma.contact
+        .updateMany({ where: { primaryEmail: { equals: fromEmail, mode: 'insensitive' }, organizationId: account.organizationId, name: null }, data: { name: replyName } })
+        .catch((err) => console.error('[ingest] contact name fill failed', err));
+    }
     if (owner.recruiterBlastId) {
       await markRecruiterReplied(owner.recruiterBlastId, fromEmail, message.sentAt).catch((err) => console.error('[ingest] recruiter replied mark failed', err));
     }

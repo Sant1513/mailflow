@@ -13,6 +13,7 @@ vi.mock('@/lib/gmail/oauth', async () => {
 });
 const executeRaw = vi.fn(async () => 1);
 const update = vi.fn(async () => ({}));
+vi.mock('@/lib/contacts/names', () => ({ fillMissingNames: vi.fn(async () => ({ fromLists: 0, fromReplies: 0, fromGoogle: 0 })) }));
 vi.mock('@/lib/db/client', () => ({ prisma: { $executeRaw: executeRaw, emailProviderAccount: { update, findMany: vi.fn(async () => []) } } }));
 
 const { syncProfilePhotos, sizedPhoto } = await import('@/lib/profilePhotos/sync');
@@ -44,7 +45,7 @@ describe('profile photos', () => {
     const r = await syncProfilePhotos(account(PHOTOS_OAUTH_SCOPE));
     expect(r).toMatchObject({ contacts: 3, photos: 2 });
     expect(list).toHaveBeenCalledTimes(2);
-    expect(list.mock.calls[1]?.[0]).toMatchObject({ pageToken: 'p2', readMask: 'emailAddresses,photos' });
+    expect(list.mock.calls[1]?.[0]).toMatchObject({ pageToken: 'p2', readMask: 'emailAddresses,names,photos' });
     // The upsert gets the lower-cased addresses and the sized URLs, scoped to the organization.
     const sqlValues = (executeRaw.mock.calls[0] as unknown[]).slice(1);
     expect(sqlValues).toContain('org1');

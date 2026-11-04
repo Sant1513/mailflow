@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { EmailProviderAccount } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { authorizedClientFor, hasScope, PHOTOS_OAUTH_SCOPE } from '@/lib/gmail/oauth';
+import { fillMissingNames } from '@/lib/contacts/names';
 
 /**
  * Profile photos of the people we email, from each connected mailbox's Google "Other contacts"
@@ -18,6 +19,8 @@ export interface PhotoSyncResult {
   account: string;
   contacts: number;
   photos: number;
+  /** Contacts that got a name from Google (only empty names are filled). */
+  names?: number;
   error?: string;
 }
 
@@ -45,11 +48,14 @@ export async function syncProfilePhotos(account: EmailProviderAccount): Promise<
   try {
     const people = google.people({ version: 'v1', auth: await authorizedClientFor(account) });
     const found = new Map<string, string>();
+    const names = new Map<string, string>();
     let pageToken: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
-      const res = await people.otherContacts.list({ readMask: 'emailAddresses,photos', pageSize: 1000, pageToken });
+      const res = await people.otherContacts.list({ readMask: 'emailAddresses,names,photos', pageSize: 1000, pageToken });
       for (const person of res.data.otherContacts ?? []) {
         result.contacts += 1;
+        const display = person.names?.find((n) => n.displayName)?.displayName;
+        if (display) for (const e of person.emailAddresses ?? []) if (e.value) names.set(e.value.trim().toLowerCase(), display);
         const photo = (person.photos ?? []).find((p) => p.url && !p.default);
         if (!photo?.url) continue;
         for (const e of person.emailAddresses ?? []) {
@@ -62,6 +68,9 @@ export async function syncProfilePhotos(account: EmailProviderAccount): Promise<
     }
     await savePhotos(account.organizationId, account.id, found);
     result.photos = found.size;
+    // Their names too, for contacts that have none (lib/contacts/names.ts).
+    const filled = await fillMissingNames({ organizationId: account.organizationId, googleNames: names }).catch(() => null);
+    if (filled) result.names = filled.fromGoogle;
     await prisma.emailProviderAccount.update({ where: { id: account.id }, data: { photosSyncedAt: new Date() } });
     return result;
   } catch (err) {

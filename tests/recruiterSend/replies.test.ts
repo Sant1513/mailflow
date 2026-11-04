@@ -27,7 +27,7 @@ const db = {
   emailJob: { findFirst: vi.fn(async () => null) },
   recruiterBlastGroup: { findFirst: vi.fn(), findMany: vi.fn() },
   recruiterBlastRecipient: { updateMany: vi.fn(async () => ({ count: 1 })) },
-  contact: { upsert: vi.fn(async () => ({ id: 'contact-r' })) },
+  contact: { upsert: vi.fn(async () => ({ id: 'contact-r' })), updateMany: vi.fn(async () => ({ count: 0 })) },
   $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
 };
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
