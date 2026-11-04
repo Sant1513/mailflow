@@ -45,7 +45,7 @@ describe('profile photos', () => {
     const r = await syncProfilePhotos(account(PHOTOS_OAUTH_SCOPE));
     expect(r).toMatchObject({ contacts: 3, photos: 2 });
     expect(list).toHaveBeenCalledTimes(2);
-    expect(list.mock.calls[1]?.[0]).toMatchObject({ pageToken: 'p2', readMask: 'emailAddresses,names,photos' });
+    expect(list.mock.calls[1]?.[0]).toMatchObject({ pageToken: 'p2', readMask: 'emailAddresses,names,photos', sources: ['READ_SOURCE_TYPE_CONTACT', 'READ_SOURCE_TYPE_PROFILE'] });
     // The upsert gets the lower-cased addresses and the sized URLs, scoped to the organization.
     const sqlValues = (executeRaw.mock.calls[0] as unknown[]).slice(1);
     expect(sqlValues).toContain('org1');

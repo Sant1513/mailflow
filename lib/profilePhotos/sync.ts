@@ -51,7 +51,14 @@ export async function syncProfilePhotos(account: EmailProviderAccount): Promise<
     const names = new Map<string, string>();
     let pageToken: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
-      const res = await people.otherContacts.list({ readMask: 'emailAddresses,names,photos', pageSize: 1000, pageToken });
+      // READ_SOURCE_TYPE_PROFILE adds each person's Google profile: without it Other contacts only
+      // carry Google's letter placeholders (all 8,296 were default on the first mailbox tried).
+      const res = await people.otherContacts.list({
+        readMask: 'emailAddresses,names,photos',
+        pageSize: 1000,
+        pageToken,
+        sources: ['READ_SOURCE_TYPE_CONTACT', 'READ_SOURCE_TYPE_PROFILE'],
+      });
       for (const person of res.data.otherContacts ?? []) {
         result.contacts += 1;
         const display = person.names?.find((n) => n.displayName)?.displayName;
