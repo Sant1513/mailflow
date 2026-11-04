@@ -18,6 +18,7 @@ import { isValidEmail } from '@/lib/quickSend/prepare';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+const CC_INDIVIDUAL_MAX = 50;
 const MAX_ATTACH_BYTES = 22 * 1024 * 1024; // Gmail takes 25 MB per message, minus encoding room
 
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
@@ -53,6 +54,9 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   if (!plan.eligibleIds.length) problems.push('Nobody to send to: add recruiters, or check why they were skipped.');
   if (video?.mode === 'attach' && mode === 'INDIVIDUAL' && plan.eligibleIds.length > VIDEO_INDIVIDUAL_MAX) {
     problems.push(`An attached video can go to at most ${VIDEO_INDIVIDUAL_MAX} recruiters as individual copies (each copy downloads it again). Use BCC groups, or share the video as a link.`);
+  }
+  if (mode === 'INDIVIDUAL' && blast.ccAddresses.length && plan.eligibleIds.length > CC_INDIVIDUAL_MAX) {
+    problems.push(`With individual copies, each CC address gets one copy per recruiter; that's at most ${CC_INDIVIDUAL_MAX} recruiters. Use BCC groups, or remove the CC.`);
   }
   if (problems.length) return NextResponse.json({ error: problems.join(' ') }, { status: 400 });
 

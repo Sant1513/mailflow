@@ -34,7 +34,7 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
     attachments.push({ filename: video.fileName, mimeType: video.contentType, content: bytes });
   }
 
-  const note = `<p style="font-size:12px;color:#888;border:1px dashed #ccc;padding:6px 8px">Test of a recruiter send (${blast.mode === 'BCC' ? `BCC groups, visible To: ${blast.toAddress ?? '—'}` : 'individual copies'}). Recruiters won't see this note.</p>`;
+  const note = `<p style="font-size:12px;color:#888;border:1px dashed #ccc;padding:6px 8px">Test of a recruiter send (${blast.mode === 'BCC' ? `BCC groups, visible To: ${blast.toAddress ?? '—'}` : 'individual copies'}${blast.ccAddresses.length ? `; CC on the real send: ${blast.ccAddresses.join(', ')} (not copied on this test)` : ''}). Recruiters won't see this note.</p>`;
   const input = {
     to: session.email,
     fromName: blast.fromName || account.displayName || account.emailAddress,

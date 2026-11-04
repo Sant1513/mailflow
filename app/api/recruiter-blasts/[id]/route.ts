@@ -4,7 +4,8 @@ import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { loadBlast, requireBlastAdmin, sendableMailboxes } from '@/lib/recruiterSend/access';
-import { buildBody, MAX_GROUP_SIZE, MIN_GAP, type BlastMode } from '@/lib/recruiterSend/core';
+import { buildBody, MAX_GROUP_SIZE, MIN_GAP, previewHtml, type BlastMode } from '@/lib/recruiterSend/core';
+import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 import { usageLast24h, dailyLimit } from '@/lib/queue/drain';
 import { isValidEmail } from '@/lib/quickSend/prepare';
 import { readVideo, videoLinkCard, videoSchema } from '@/lib/recruiterSend/video';
@@ -61,6 +62,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
     groups,
     mailboxes: mailboxes.map((m) => ({ ...m, sentLast24h: usage.find((u) => u.id === m.id)?.sentLast24h ?? 0, dailyLimit: dailyLimit() })),
     hasSignature: !!me?.emailSignature?.trim(),
+    previewHtml: sanitizeEmailHtml(previewHtml(blast)),
   });
 });
 
@@ -68,6 +70,7 @@ const patchSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   mode: z.enum(['BCC', 'INDIVIDUAL']).optional(),
   toAddress: z.string().trim().max(320).nullable().optional(),
+  ccAddresses: z.array(z.string().trim().max(320)).max(10).optional(),
   subject: z.string().max(300).optional(),
   body: z.string().max(500_000).optional(),
   format: z.enum(['text', 'html']).optional(),
@@ -92,6 +95,8 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
   const body = patchSchema.parse(await req.json());
 
   if (body.toAddress && !isValidEmail(body.toAddress)) return NextResponse.json({ error: 'The visible "To" address is not a valid email address.' }, { status: 400 });
+  const cc = body.ccAddresses ? [...new Set(body.ccAddresses.map((e) => e.toLowerCase()).filter(Boolean))] : undefined;
+  if (cc?.some((e) => !isValidEmail(e))) return NextResponse.json({ error: 'A CC address is not a valid email address.' }, { status: 400 });
   if (body.replyTo && !isValidEmail(body.replyTo)) return NextResponse.json({ error: 'Reply-To is not a valid email address.' }, { status: 400 });
   if (body.accountIds) {
     const allowed = new Set((await sendableMailboxes(session)).map((m) => m.id));
@@ -132,6 +137,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       ...(body.subject !== undefined ? { subject: body.subject } : {}),
       ...(body.fromName !== undefined ? { fromName: body.fromName || null } : {}),
       ...(body.replyTo !== undefined ? { replyTo: body.replyTo || null } : {}),
+      ...(cc !== undefined ? { ccAddresses: cc } : {}),
       ...(body.accountIds !== undefined ? { accountIds: [...new Set(body.accountIds)] } : {}),
       ...(body.attachmentDocumentIds !== undefined ? { attachmentDocumentIds: [...new Set(body.attachmentDocumentIds)] } : {}),
       ...(body.groupSize !== undefined ? { groupSize: body.groupSize } : {}),
@@ -145,7 +151,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       plainText: built.plainText,
     },
   });
-  return NextResponse.json({ blast: updated });
+  return NextResponse.json({ blast: updated, previewHtml: sanitizeEmailHtml(previewHtml(updated)) });
 });
 
 export const DELETE = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {

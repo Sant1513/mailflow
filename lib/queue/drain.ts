@@ -122,7 +122,7 @@ export async function usageLast24h(emailProviderAccountId: string): Promise<Dail
     prisma.recruiterBlastGroup.findMany({
       // SENDING too: a message going out right now already counts (sentAt is its claim time).
       where: { accountId: emailProviderAccountId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: since } },
-      select: { blast: { select: { mode: true, toAddress: true } }, recipients: { select: { email: true } } },
+      select: { blast: { select: { mode: true, toAddress: true, ccAddresses: true } }, recipients: { select: { email: true } } },
     }),
   ]);
   const usage: DailyUsage = { messages: 0, totalRecipients: 0, unique: new Set() };
@@ -130,7 +130,8 @@ export async function usageLast24h(emailProviderAccountId: string): Promise<Dail
   for (const g of groups) {
     const emails = g.recipients.map((r) => r.email);
     const visibleTo = g.blast.mode === 'BCC' ? g.blast.toAddress : null;
-    addUsage(usage, visibleTo ? { toEmail: visibleTo, ccEmails: [], bccEmails: emails } : { toEmail: emails[0] ?? '', ccEmails: [], bccEmails: emails.slice(1) });
+    const cc = g.blast.ccAddresses ?? [];
+    addUsage(usage, visibleTo ? { toEmail: visibleTo, ccEmails: cc, bccEmails: emails } : { toEmail: emails[0] ?? '', ccEmails: cc, bccEmails: emails.slice(1) });
   }
   return usage;
 }

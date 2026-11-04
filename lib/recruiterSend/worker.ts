@@ -79,7 +79,7 @@ async function sentPerAccount(blastId: string): Promise<Map<string, number>> {
  * teammate withdrew it or left), paused by Gmail, at Google's daily limits, or at the limit
  * the admin set for this send.
  */
-async function chooseMailbox(blast: { id: string; organizationId: string; createdById: string; accountIds: string[]; accountLimits: unknown }, to: string, bcc: string[]) {
+async function chooseMailbox(blast: { id: string; organizationId: string; createdById: string; accountIds: string[]; accountLimits: unknown; ccAddresses?: string[] }, to: string, bcc: string[]) {
   const reasons: string[] = [];
   const limits = (blast.accountLimits && typeof blast.accountLimits === 'object' ? blast.accountLimits : {}) as Record<string, number>;
   const [used, allowed] = await Promise.all([sentPerAccount(blast.id), allowedMailboxIds(blast.organizationId, blast.createdById)]);
@@ -104,7 +104,7 @@ async function chooseMailbox(blast: { id: string; organizationId: string; create
       continue;
     }
     const usage = await usageLast24h(id);
-    if (wouldExceedDaily(usage, { toEmail: to, ccEmails: [], bccEmails: bcc })) {
+    if (wouldExceedDaily(usage, { toEmail: to, ccEmails: blast.ccAddresses ?? [], bccEmails: bcc })) {
       reasons.push(`${account.emailAddress} has reached its daily limit`);
       continue;
     }
@@ -217,6 +217,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
         }
         const input = {
           to,
+          cc: blast.ccAddresses,
           bcc,
           fromName: blast.fromName || account.displayName || account.emailAddress,
           fromEmail: account.emailAddress,

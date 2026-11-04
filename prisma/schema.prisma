@@ -1456,6 +1456,8 @@ model RecruiterBlast {
   includeSignature Boolean  @default(true)
   fromName        String?
   replyTo         String?
+  /// Copied on every email of the send (visible to recruiters in BCC mode).
+  ccAddresses     String[]  @default([])
   /// Sending mailboxes (EmailProviderAccount ids), used in this order; the next one takes
   /// over when a mailbox is near its daily limit, paused by Gmail or disconnected.
   accountIds      String[]  @default([])

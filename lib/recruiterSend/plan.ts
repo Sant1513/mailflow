@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db/client';
 import { checkAddresses } from '@/lib/email/addressCheck';
 import { dailyLimit, DAILY_UNIQUE_RECIPIENT_LIMIT, usageLast24h } from '@/lib/queue/drain';
 import { isValidEmail } from '@/lib/quickSend/prepare';
-import { MAX_GROUP_SIZE, type BlastMode } from '@/lib/recruiterSend/core';
+import { MAX_GROUP_SIZE, planGroups, type BlastMode } from '@/lib/recruiterSend/core';
 
 /**
  * The pre-send check for a recruiter send: who will get it, who is skipped and why (same
@@ -23,10 +23,35 @@ export interface BlastPlan {
   /** Messages the mailboxes can carry today (by the stricter of messages / people left). */
   messagesPossibleToday: number;
   estimatedMinutes: number;
+  /** Batch by batch: how many recruiters and the mailbox it is planned to go from (first 500). */
+  batches: { seq: number; size: number; mailbox: string | null }[];
+  /** Everyone with what will happen to them (first 2,000): their batch and mailbox, or why they're skipped. */
+  people: { email: string; name: string | null; batch: number | null; mailbox: string | null; skipped: string | null }[];
 }
 
-export async function planBlast(blast: { id: string; workspaceId: string; mode: string; groupSize: number; gapSeconds: number; accountIds: string[] }): Promise<BlastPlan> {
-  const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, select: { id: true, email: true } });
+/**
+ * Which mailbox each batch is planned to go from, the way the sender picks: the first chosen
+ * mailbox that still has room under the limit set for this send and Google's daily limits.
+ * A batch with no room today goes out when allowances free up (mailbox: null).
+ */
+export function assignMailboxes(
+  sizes: number[],
+  mailboxes: { emailAddress: string; messagesLeft: number; peopleLeft: number; sendLimit: number | null }[],
+): (string | null)[] {
+  const room = mailboxes.map((m) => ({ ...m, sendLeft: m.sendLimit ?? Infinity }));
+  return sizes.map((size) => {
+    const m = room.find((r) => r.messagesLeft >= 1 && r.peopleLeft >= size && r.sendLeft >= size);
+    if (!m) return null;
+    m.messagesLeft -= 1;
+    m.peopleLeft -= size;
+    m.sendLeft -= size;
+    return m.emailAddress;
+  });
+}
+
+export async function planBlast(blast: { id: string; workspaceId: string; mode: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown }): Promise<BlastPlan> {
+  // A stable order: the batches the check shows are the batches start creates.
+  const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { id: true, email: true, name: true } });
   const problems = await checkAddresses(recipients.map((r) => r.email), blast.workspaceId);
   const eligibleIds: string[] = [];
   const skipped: { email: string; reason: string }[] = [];
@@ -59,5 +84,20 @@ export async function planBlast(blast: { id: string; workspaceId: string; mode: 
   const messagesPossibleToday = capacity.reduce((n, c) => n + Math.min(c.messagesLeft, Math.floor(c.peopleLeft / perMessage)), 0);
   const estimatedMinutes = Math.ceil((Math.min(messages, messagesPossibleToday || messages) * blast.gapSeconds) / 60);
 
-  return { total: recipients.length, eligibleIds, skippedReasons, skipped: skipped.slice(0, 200), skippedByReason, messages, perMessage, capacity, messagesPossibleToday, estimatedMinutes };
+  const limits = (blast.accountLimits && typeof blast.accountLimits === 'object' ? blast.accountLimits : {}) as Record<string, number>;
+  const ordered = blast.accountIds.map((id) => capacity.find((c) => c.accountId === id)).filter((c): c is (typeof capacity)[number] => !!c);
+  const groups = planGroups(eligibleIds, mode, blast.groupSize);
+  const planned = assignMailboxes(
+    groups.map((g) => g.length),
+    ordered.map((c) => ({ emailAddress: c.emailAddress, messagesLeft: c.messagesLeft, peopleLeft: c.peopleLeft, sendLimit: Number(limits[c.accountId]) > 0 ? Number(limits[c.accountId]) : null })),
+  );
+  const batchOf = new Map<string, number>();
+  groups.forEach((g, i) => g.forEach((id) => batchOf.set(id, i)));
+  const people = recipients.slice(0, 2000).map((r) => {
+    const b = batchOf.get(r.id);
+    return { email: r.email, name: r.name, batch: b === undefined ? null : b + 1, mailbox: b === undefined ? null : planned[b] ?? null, skipped: skippedReasons.get(r.id) ?? null };
+  });
+  const batches = groups.slice(0, 500).map((g, i) => ({ seq: i + 1, size: g.length, mailbox: planned[i] ?? null }));
+
+  return { total: recipients.length, eligibleIds, skippedReasons, skipped: skipped.slice(0, 200), skippedByReason, messages, perMessage, capacity, messagesPossibleToday, estimatedMinutes, batches, people };
 }

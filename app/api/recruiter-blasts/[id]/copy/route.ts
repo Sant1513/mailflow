@@ -33,6 +33,7 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
       includeSignature: source.includeSignature,
       fromName: source.fromName,
       replyTo: source.replyTo,
+      ccAddresses: source.ccAddresses,
       accountIds,
       accountLimits: Object.fromEntries(Object.entries(limits).filter(([id]) => accountIds.includes(id))),
       video: source.video === null ? Prisma.JsonNull : (source.video as Prisma.InputJsonValue),

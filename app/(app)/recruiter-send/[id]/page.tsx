@@ -5,23 +5,25 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
+import { LivePreview, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
 
 type Mode = 'BCC' | 'INDIVIDUAL';
 interface Video { mode: 'attach'; ref: string; fileName: string; size: number; contentType: string }
 interface VideoLink { mode: 'link'; url: string; title: string }
 interface Blast {
   id: string; name: string; mode: Mode; toAddress: string | null; subject: string; body: string; format: 'text' | 'html';
-  includeSignature: boolean; fromName: string | null; replyTo: string | null; accountIds: string[]; accountLimits: Record<string, number>;
+  includeSignature: boolean; fromName: string | null; replyTo: string | null; ccAddresses: string[]; accountIds: string[]; accountLimits: Record<string, number>;
   video: Video | VideoLink | null; attachmentDocumentIds: string[]; groupSize: number; gapSeconds: number; status: string;
   scheduledAt: string | null; note: string | null; startedAt: string | null; completedAt: string | null; html: string;
 }
 interface Mailbox { id: string; emailAddress: string; ownerName: string | null; status: string; own: boolean; sentLast24h: number; dailyLimit: number }
 interface Group { id: string; seq: number; status: string; recipientCount: number; fromEmail: string | null; sentAt: string | null; openCount: number; firstOpenedAt: string | null; lastOpenedAt: string | null; error: string | null }
 interface RecipientRow { email: string; name: string | null; status: string; skipReason: string | null; sentAt: string | null; openedAt: string | null; openCount: number; repliedAt: string | null }
-interface Detail { blast: Blast; counts: Record<string, number>; stats: { messagesSent: number; messagesTotal: number; opens: number; openedRecruiters: number }; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; hasSignature: boolean }
+interface Detail { blast: Blast; counts: Record<string, number>; stats: { messagesSent: number; messagesTotal: number; opens: number; openedRecruiters: number }; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; hasSignature: boolean; previewHtml: string }
 interface Check {
   total: number; eligible: number; skipped: { email: string; reason: string }[]; skippedByReason: Record<string, number>; messages: number; perMessage: number;
   capacity: { accountId: string; emailAddress: string; messagesLeft: number; peopleLeft: number }[]; messagesPossibleToday: number; estimatedMinutes: number; preview: string;
+  batches: PlannedBatch[]; people: PlannedPerson[];
 }
 
 const FIELD = 'w-full rounded border bg-background px-2 py-1.5 text-sm';
@@ -66,6 +68,8 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const [videoTab, setVideoTab] = useState<'attach' | 'link'>('attach');
   const [videoLink, setVideoLink] = useState({ url: '', title: 'Watch the video' });
   const [scheduleAt, setScheduleAt] = useState('');
+  const [preview, setPreview] = useState('');
+  const [ccText, setCcText] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -73,6 +77,8 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     const j = await res?.json().catch(() => ({}));
     if (!res?.ok) return setError(j?.error ?? 'Could not load this send.');
     setDetail(j);
+    setPreview(j.previewHtml ?? '');
+    setCcText((t) => t ?? (j.blast.ccAddresses ?? []).join(', '));
     setForm((f) => (f && j.blast.status === 'DRAFT' ? { ...j.blast, ...pickEditable(f) } : j.blast));
     if (j.blast.video?.mode === 'link') {
       setVideoTab('link');
@@ -109,7 +115,10 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
         body: JSON.stringify(pickEditable(next)),
       }).catch(() => null);
       const j = await res?.json().catch(() => ({}));
-      if (res?.ok) setSaving('saved');
+      if (res?.ok) {
+        setSaving('saved');
+        if (typeof j?.previewHtml === 'string') setPreview(j.previewHtml);
+      }
       else {
         setSaving('idle');
         toast.error(j?.error ?? 'Could not save.');
@@ -199,7 +208,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const mailboxOrder = [...chosen.map((id) => detail.mailboxes.find((m) => m.id === id)).filter((m): m is Mailbox => !!m), ...detail.mailboxes.filter((m) => !chosen.includes(m.id))];
 
   return (
-    <div className="max-w-5xl space-y-5 p-6">
+    <div className={`space-y-5 p-6 ${draft ? 'max-w-7xl' : 'max-w-5xl'}`}>
       <Link href="/recruiter-send" className="text-sm text-muted-foreground hover:underline">← Recruiter Bulk Send</Link>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -228,7 +237,8 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       {!draft && <Progress detail={detail} />}
 
       {draft && (
-        <>
+        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)]">
+        <div className="min-w-0 space-y-5">
           <Section n={1} title="Recruiters" hint="Paste addresses (one per line, or “Name <email>”), upload a CSV/Excel file, or use saved data. Duplicates are removed; unsubscribed, bounced and bad addresses are skipped at the check.">
             <div className="mb-2 flex gap-1 text-xs" role="tablist">
               {(['paste', 'file', 'data'] as const).map((t) => (
@@ -308,6 +318,14 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label><span className={LABEL}>From name</span><input value={form.fromName ?? ''} onChange={(e) => edit({ fromName: e.target.value })} className={FIELD} placeholder="Masai Placements" /></label>
+                <label className="sm:col-span-2">
+                  <span className={LABEL}>CC (optional, up to 10)</span>
+                  <input value={ccText ?? ''} onChange={(e) => { setCcText(e.target.value); edit({ ccAddresses: splitEmails(e.target.value).valid }); }} className={FIELD} placeholder="manager@masaischool.com, team@masaischool.com" />
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    {splitEmails(ccText ?? '').invalid.length ? <span className="text-red-600">Not an email address: {splitEmails(ccText ?? '').invalid.join(', ')}. </span> : null}
+                    {form.mode === 'BCC' ? 'Copied on every email; recruiters can see CC addresses.' : 'Each CC address gets one copy per recruiter, so CC works with up to 50 recruiters in individual mode.'}
+                  </span>
+                </label>
                 <label><span className={LABEL}>Reply-To (optional)</span><input value={form.replyTo ?? ''} onChange={(e) => edit({ replyTo: e.target.value })} className={FIELD} placeholder="Replies go here instead of the sending mailbox" /></label>
               </div>
               {detail.hasSignature && (
@@ -430,10 +448,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                     <ul className="mt-1 max-h-40 overflow-auto text-xs text-muted-foreground">{check.skipped.map((s) => <li key={s.email}>{s.email} — {s.reason}</li>)}</ul>
                   </details>
                 )}
-                <div>
-                  <span className={LABEL}>Preview</span>
-                  <iframe title="Email preview" srcDoc={check.preview} sandbox="" className="h-96 w-full rounded border bg-white" />
-                </div>
+                <WhoReceives people={check.people} batches={check.batches} total={check.total} html={check.preview} subject={form.subject} mode={form.mode} />
                 <div className="flex flex-wrap items-end gap-2 border-t pt-3">
                   <button type="button" onClick={() => start(false)} disabled={busy === 'start' || check.eligible === 0} className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy === 'start' ? 'Starting…' : 'Send now'}</button>
                   <label className="text-xs">or schedule for <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} className="ml-1 rounded border bg-background px-1 py-0.5" /></label>
@@ -442,16 +457,43 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
               </div>
             )}
           </Section>
-        </>
+        </div>
+        <aside className="lg:sticky lg:top-4">
+          <LivePreview
+            html={preview}
+            envelope={{
+              mode: form.mode,
+              fromName: form.fromName,
+              fromEmail: detail.mailboxes.find((m) => m.id === form.accountIds[0])?.emailAddress ?? null,
+              toAddress: form.toAddress,
+              ccAddresses: splitEmails(ccText ?? '').valid,
+              replyTo: form.replyTo,
+              subject: form.subject,
+              perEmail: form.groupSize,
+              attachments: [
+                ...library.filter((d) => form.attachmentDocumentIds.includes(d.id)).map((d) => d.name),
+                ...(b.video?.mode === 'attach' ? [`${b.video.fileName} (video)`] : []),
+              ],
+            }}
+          />
+        </aside>
+        </div>
       )}
     </div>
   );
 }
 
+/** Comma / space / newline separated addresses: the valid ones (lower-cased, unique) and the rest. */
+function splitEmails(text: string): { valid: string[]; invalid: string[] } {
+  const parts = text.split(/[\s,;]+/).map((p) => p.trim()).filter(Boolean);
+  const ok = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+  return { valid: [...new Set(parts.filter(ok).map((p) => p.toLowerCase()))].slice(0, 10), invalid: parts.filter((p) => !ok(p)) };
+}
+
 function pickEditable(b: Blast) {
   return {
     name: b.name, mode: b.mode, toAddress: b.toAddress, subject: b.subject, body: b.body, format: b.format, includeSignature: b.includeSignature,
-    fromName: b.fromName, replyTo: b.replyTo, accountIds: b.accountIds, accountLimits: b.accountLimits ?? {}, attachmentDocumentIds: b.attachmentDocumentIds,
+    fromName: b.fromName, replyTo: b.replyTo, ccAddresses: b.ccAddresses ?? [], accountIds: b.accountIds, accountLimits: b.accountLimits ?? {}, attachmentDocumentIds: b.attachmentDocumentIds,
     groupSize: b.groupSize, gapSeconds: b.gapSeconds,
   };
 }

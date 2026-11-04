@@ -128,7 +128,7 @@ export function readListUnsubscribeToken(token: string): string | null {
 }
 
 /** Adds the open pixel and an unsubscribe line before </body>. Links are not touched. */
-export function decorate(html: string, opts: { groupId: string; mode: BlastMode; workspaceId: string; blastId: string; recipientEmail?: string }): {
+export function decorate(html: string, opts: { groupId: string; mode: BlastMode; workspaceId: string; blastId: string; recipientEmail?: string; pixel?: boolean }): {
   html: string;
   unsubscribeUrl: string;
 } {
@@ -139,8 +139,14 @@ export function decorate(html: string, opts: { groupId: string; mode: BlastMode;
       : `${base}/unsubscribe/list/${listUnsubscribeToken(opts.blastId)}`;
   const footer = `<p style="margin-top:24px;font-size:11px;color:#999;text-align:center;"><a href="${unsubscribeUrl}" style="color:#999;">Unsubscribe</a> from these emails.</p>`;
   const pixel = `<img src="${base}/api/track/rb/${openToken(opts.groupId)}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0;" />`;
-  const extra = `${footer}${pixel}`;
+  const extra = opts.pixel === false ? footer : `${footer}${pixel}`;
   return { html: /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${extra}</body>`) : html + extra, unsubscribeUrl };
+}
+
+/** The email as recruiters will see it (unsubscribe line included), for previews: no open pixel, so a preview never counts as an open. */
+export function previewHtml(blast: { id: string; html: string; mode: string; workspaceId: string }): string {
+  if (!blast.html) return '';
+  return decorate(blast.html, { groupId: 'preview', mode: blast.mode as BlastMode, workspaceId: blast.workspaceId, blastId: blast.id, recipientEmail: 'recruiter@example.com', pixel: false }).html;
 }
 
 /** Recipients split into the Gmail messages that will carry them. */
