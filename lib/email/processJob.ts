@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db/client';
 import { GmailProvider } from '@/lib/email/gmail';
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
+import { recordHardBounce } from '@/lib/email/bounces';
 import { SendEmailError, type EmailProvider } from '@/lib/email/provider';
 import { buildReferences } from '@/lib/email/mime';
 import { EmailJobStatus, BatchStatus, CampaignStatus, ConversationStatus, MessageDirection } from '@prisma/client';
@@ -357,27 +358,13 @@ async function failJob(
       select: { toEmail: true, campaignId: true, campaign: { select: { workspaceId: true } } },
     });
     if (jobWithWorkspace?.toEmail && jobWithWorkspace.campaign?.workspaceId) {
-      await prisma.emailSuppression.upsert({
-        where: {
-          workspaceId_email: {
-            workspaceId: jobWithWorkspace.campaign.workspaceId,
-            email: jobWithWorkspace.toEmail,
-          },
-        },
-        create: {
-          workspaceId: jobWithWorkspace.campaign.workspaceId,
-          email: jobWithWorkspace.toEmail,
-          source: 'BOUNCE',
-          reason: 'BOUNCED',
-          detail: `${code}: ${message}`,
-          campaignId: jobWithWorkspace.campaignId ?? undefined,
-        },
-        update: {
-          source: 'BOUNCE',
-          reason: 'BOUNCED',
-          detail: `${code}: ${message}`,
-          campaignId: jobWithWorkspace.campaignId ?? undefined,
-        },
+      // Every workspace in the organization, with the reason (lib/email/bounces.ts).
+      await recordHardBounce({
+        workspaceId: jobWithWorkspace.campaign.workspaceId,
+        email: jobWithWorkspace.toEmail,
+        detail: `Gmail rejected the address when sending (${code}): ${message}`,
+        campaignId: jobWithWorkspace.campaignId ?? null,
+        webhook: false, // this path sends its own, with the job id
       }).catch((err) => {
         console.error('[email] auto-suppress failed', { emailJobId, err });
       });

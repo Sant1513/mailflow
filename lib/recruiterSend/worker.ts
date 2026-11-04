@@ -10,6 +10,7 @@ import { readVideo } from '@/lib/recruiterSend/video';
 import { sendViaUpload, UPLOAD_THRESHOLD_BYTES } from '@/lib/recruiterSend/gmailUpload';
 import { readRef } from '@/lib/storage/files';
 import { allowedMailboxIds } from '@/lib/recruiterSend/access';
+import { markRecruiterBounced, suppressRejectedRecruiter } from '@/lib/recruiterSend/replies';
 
 /**
  * Sends Recruiter Bulk Send messages, one Gmail message at a time (a BCC group or one
@@ -234,6 +235,13 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
         result = await send(account, input, bytes > UPLOAD_THRESHOLD_BYTES);
       } catch (err) {
         if (await recordFailure(blast.id, group, account.id, err)) failed++;
+        // Gmail refused the recruiter's address itself (individual copies name one person): it
+        // goes on the suppression list everywhere, with the reason, and shows "bounced" here.
+        if (mode === 'INDIVIDUAL' && err instanceof SendEmailError && err.kind === 'INVALID_RECIPIENT') {
+          const detail = `Gmail rejected the address when sending (Recruiter Bulk Send “${blast.name}”): ${err.message}`;
+          await suppressRejectedRecruiter(blast.workspaceId, to, detail).catch((e) => console.error('[recruiter-send] suppress failed', e));
+          await markRecruiterBounced(blast.id, [to], detail).catch(() => undefined);
+        }
         continue;
       }
 

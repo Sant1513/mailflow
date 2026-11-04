@@ -34,7 +34,11 @@ vi.mock('@/lib/db/client', () => ({ prisma: db }));
 vi.mock('@/lib/ai/context', () => ({ classifyStoredMessage: vi.fn(async () => null) }));
 vi.mock('@/lib/ai/triage', () => ({ triageReply: vi.fn() }));
 vi.mock('@/lib/webhooks/dispatch', () => ({ dispatchWebhook: vi.fn(async () => undefined) }));
-vi.mock('@/lib/email/bounces', () => ({ suppressBounced: vi.fn(async () => undefined) }));
+vi.mock('@/lib/email/bounces', () => ({
+  suppressBounced: vi.fn(async (): Promise<string[]> => ['gone@corp.com']),
+  parseBounce: vi.fn(() => ({ recipients: ['gone@corp.com'], permanent: true, detail: '550 5.1.1 address not found' })),
+  recordHardBounce: vi.fn(async () => undefined),
+}));
 vi.mock('@/lib/replyRules/apply', () => ({ applyReplyRules: vi.fn() }));
 
 const { ingestInboundMessage } = await import('@/lib/gmail/ingest');
@@ -135,7 +139,12 @@ describe('recruiter replies', () => {
     const out = await ingestInboundMessage(mailbox, reply('mailer-daemon@googlemail.com', { subject: 'Delivery Status Notification (Failure)' }));
     expect(out.status).toBe('IGNORED');
     expect(created).toHaveLength(0);
-    expect(suppressBounced).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w-admin' }));
+    expect(suppressBounced).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w-admin', label: expect.stringContaining('Recruiter Bulk Send') }));
+    // ...and shows as bounced, with the reason, on the send's page.
+    expect(db.recruiterBlastRecipient.updateMany).toHaveBeenCalledWith({
+      where: { blastId: 'b1', email: { in: ['gone@corp.com'] } },
+      data: { status: 'BOUNCED', skipReason: 'Bounced: 550 5.1.1 address not found' },
+    });
   });
 
   it('leaves unrelated mail alone', async () => {

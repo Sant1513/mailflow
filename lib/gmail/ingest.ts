@@ -5,9 +5,9 @@ import { triageReply } from '@/lib/ai/triage';
 import { normalizeSubject, type ParsedMessage } from '@/lib/gmail/parseMessage';
 import { MessageDirection, MessageClassification, type EmailProviderAccount } from '@prisma/client';
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
-import { suppressBounced } from '@/lib/email/bounces';
+import { parseBounce, suppressBounced } from '@/lib/email/bounces';
 import { applyReplyRules } from '@/lib/replyRules/apply';
-import { findRecruiterSend, markRecruiterReplied, recruiterContact, recruiterThreadKey, type RecruiterReplyMatch } from '@/lib/recruiterSend/replies';
+import { findRecruiterSend, markRecruiterBounced, markRecruiterReplied, recruiterContact, recruiterThreadKey, type RecruiterReplyMatch } from '@/lib/recruiterSend/replies';
 
 /**
  * §47-§50 inbound ingestion. Given an already-parsed Gmail message and the
@@ -138,8 +138,14 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
     const recruiterSend = contactId ? null : await findRecruiterSend(account, referenced, message.gmailThreadId);
     if (recruiterSend) {
       if (isBounce) {
-        await suppressBounced({ workspaceId: recruiterSend.workspaceId, conversationRecipient: null, message, ownAddresses: [account.emailAddress] }).catch((err) =>
-          console.error('[ingest] recruiter bounce suppression failed', err),
+        // On the suppression list with the reason and which send, and "bounced" on the send's page.
+        const label = `Bounce notice (Recruiter Bulk Send “${recruiterSend.blastName}”)`;
+        const bounced = await suppressBounced({ workspaceId: recruiterSend.workspaceId, conversationRecipient: null, message, ownAddresses: [account.emailAddress], label }).catch((err) => {
+          console.error('[ingest] recruiter bounce suppression failed', err);
+          return [] as string[];
+        });
+        await markRecruiterBounced(recruiterSend.blastId, bounced, `Bounced: ${parseBounce(message, [account.emailAddress]).detail}`).catch((err) =>
+          console.error('[ingest] recruiter bounce mark failed', err),
         );
         return { status: 'IGNORED', reason: 'Bounce from a recruiter send: the address was suppressed.' };
       }
@@ -305,7 +311,7 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
       conversationId: conversation.id,
       messageId: stored.id,
       created,
-      owner: { workspaceId: notifyWorkspaceId, userId: fallbackUserId, recruiterBlastId: conversation.recruiterBlastId },
+      owner: { workspaceId: notifyWorkspaceId, userId: fallbackUserId, recruiterBlastId: conversation.recruiterBlastId, conversationWorkspaceId: conversation.workspaceId },
     };
   },
   // Six round trips against a hosted database can exceed Prisma's 5s
@@ -317,7 +323,9 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   const { owner, ...stored } = result;
   if (isBounce) {
     await suppressBounced({
-      workspaceId: owner.workspaceId,
+      // The workspace that SENT it (a campaign sent through a teammate's backup mailbox belongs
+      // to the campaign's workspace, not the mailbox owner's); recordHardBounce covers the rest.
+      workspaceId: owner.conversationWorkspaceId,
       conversationRecipient: knownThread?.recipientEmail ?? null,
       message,
       ownAddresses: [account.emailAddress],

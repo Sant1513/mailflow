@@ -29,6 +29,9 @@ vi.mock('@/lib/email/gmail', () => ({
 }));
 const allowed = new Set(['a1', 'a2']);
 vi.mock('@/lib/recruiterSend/access', () => ({ allowedMailboxIds: vi.fn(async () => allowed) }));
+const suppressRejectedRecruiter = vi.fn(async () => undefined);
+const markRecruiterBounced = vi.fn(async () => undefined);
+vi.mock('@/lib/recruiterSend/replies', () => ({ suppressRejectedRecruiter, markRecruiterBounced }));
 vi.mock('@/lib/storage/files', () => ({ readRef: vi.fn(), BUCKET: 'b', storageEnabled: () => false }));
 
 const core = await import('@/lib/recruiterSend/core');
@@ -145,6 +148,15 @@ describe('sending', () => {
     await runRecruiterWorker({ budgetMs: 20_000 });
     allowed.add('a1');
     expect(sent[0].from).toBe('two@masaischool.com');
+  });
+
+  it('an individual copy Gmail refuses puts that recruiter on the suppression list, marked bounced', async () => {
+    db.recruiterBlast.findMany.mockReset().mockResolvedValueOnce([blast({ mode: 'INDIVIDUAL', name: 'Hiring partners' })]).mockResolvedValue([]);
+    db.recruiterBlastRecipient.findMany.mockResolvedValue([{ id: 'r1', email: 'gone@corp.com' }]);
+    const { SendEmailError } = await import('@/lib/email/provider');
+    await runRecruiterWorker({ budgetMs: 20_000, send: async () => { throw new SendEmailError('Invalid To header', 'INVALID_RECIPIENT'); } });
+    expect(suppressRejectedRecruiter).toHaveBeenCalledWith('w1', 'gone@corp.com', expect.stringContaining('Recruiter Bulk Send “Hiring partners”'));
+    expect(markRecruiterBounced).toHaveBeenCalledWith('b1', ['gone@corp.com'], expect.stringContaining('Invalid To header'));
   });
 
   it('a failure after the send was cancelled is not left queued', async () => {

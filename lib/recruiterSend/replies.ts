@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db/client';
+import { recordHardBounce } from '@/lib/email/bounces';
 
 /**
  * Replies to Recruiter Bulk Send emails (used by lib/gmail/ingest.ts and lib/gmail/sync.ts).
@@ -14,6 +15,7 @@ import { prisma } from '@/lib/db/client';
  */
 export interface RecruiterReplyMatch {
   blastId: string;
+  blastName: string;
   organizationId: string;
   workspaceId: string;
   adminId: string;
@@ -51,9 +53,9 @@ export async function findRecruiterSend(mailbox: MailboxRef, referencedIds: stri
   if (!or.length) return null;
   const group = await prisma.recruiterBlastGroup.findFirst({
     where: { status: 'SENT', OR: or },
-    select: { blast: { select: { id: true, organizationId: true, workspaceId: true, createdById: true } } },
+    select: { blast: { select: { id: true, name: true, organizationId: true, workspaceId: true, createdById: true } } },
   });
-  return group ? { blastId: group.blast.id, organizationId: group.blast.organizationId, workspaceId: group.blast.workspaceId, adminId: group.blast.createdById } : null;
+  return group ? { blastId: group.blast.id, blastName: group.blast.name, organizationId: group.blast.organizationId, workspaceId: group.blast.workspaceId, adminId: group.blast.createdById } : null;
 }
 
 /** Of these Gmail threads (this mailbox) / Message-IDs (the organization), which belong to recruiter sends — sync triage, bulk. */
@@ -88,6 +90,20 @@ export async function recruiterContact(match: RecruiterReplyMatch, email: string
     select: { id: true },
   });
   return contact.id;
+}
+
+/** Bounced recruiters show as "bounced" with the reason on the send's page. */
+export async function markRecruiterBounced(blastId: string, emails: string[], detail: string): Promise<void> {
+  if (!emails.length) return;
+  await prisma.recruiterBlastRecipient.updateMany({
+    where: { blastId, email: { in: emails.map((e) => e.trim().toLowerCase()) } },
+    data: { status: 'BOUNCED', skipReason: detail.slice(0, 300) },
+  });
+}
+
+/** An address Gmail refused outright when sending: on the suppression list, so it's never mailed again. */
+export async function suppressRejectedRecruiter(workspaceId: string, email: string, detail: string): Promise<void> {
+  await recordHardBounce({ workspaceId, email, detail });
 }
 
 /** Marks the recruiter as having replied, for the send's page. */

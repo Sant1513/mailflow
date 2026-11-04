@@ -654,7 +654,7 @@ function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPa
           <div><div className="text-xs text-muted-foreground">Emails sent</div><div className="text-xl font-semibold">{sentMessages} / {totalMessages}</div></div>
           {showOpens && <div><div className="text-xs text-muted-foreground">Recruiters who opened</div><div className="text-xl font-semibold">{openedRecruiters}</div></div>}
           <div><div className="text-xs text-muted-foreground">Replied</div><div className="text-xl font-semibold"><a className="hover:underline" href={`/inbox?filter=all&q=${encodeURIComponent(b.subject.trim())}`}>{detail.counts.REPLIED ?? 0}</a></div></div>
-          <div><div className="text-xs text-muted-foreground">Skipped / failed</div><div className="text-xl font-semibold">{(detail.counts.SKIPPED ?? 0) + (detail.counts.FAILED ?? 0)}</div></div>
+          <div><div className="text-xs text-muted-foreground">Skipped / failed / bounced</div><div className="text-xl font-semibold">{(detail.counts.SKIPPED ?? 0) + (detail.counts.FAILED ?? 0) + (detail.counts.BOUNCED ?? 0)}{(detail.counts.BOUNCED ?? 0) > 0 && <span className="ml-1 text-xs font-normal text-muted-foreground">({detail.counts.BOUNCED} bounced)</span>}</div></div>
         </div>
         <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={sentMessages} aria-valuemax={totalMessages} aria-label="Emails sent">
           <div className="h-full bg-primary" style={{ width: `${share * 100}%` }} />

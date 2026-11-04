@@ -96,6 +96,41 @@ export function parseBounce(
 }
 
 /**
+ * A permanent bounce, from any tool (campaign, Quick Send, Recruiter Bulk Send) and any user:
+ * the address doesn't exist, so it is suppressed in EVERY workspace of the organization, not
+ * just the sender's — no teammate's tool should mail it again. The sender's entry carries the
+ * full reason and campaign; the others say it bounced on a teammate's send. Existing entries
+ * (an unsubscribe, a manual entry, an earlier bounce) are kept as they are.
+ * Also marks matching records BOUNCED with the error, and fires the email.bounced webhook.
+ */
+export async function recordHardBounce(input: { workspaceId: string; email: string; detail: string; campaignId?: string | null; webhook?: boolean }): Promise<void> {
+  const email = input.email.trim().toLowerCase();
+  const detail = input.detail.slice(0, 1000);
+  const ws = await prisma.workspace.findUnique({ where: { id: input.workspaceId }, select: { organizationId: true } });
+  await prisma.emailSuppression.upsert({
+    where: { workspaceId_email: { workspaceId: input.workspaceId, email } },
+    create: { workspaceId: input.workspaceId, email, source: 'BOUNCE', reason: 'BOUNCED', detail, campaignId: input.campaignId ?? undefined },
+    update: {},
+  });
+  if (ws) {
+    const others = await prisma.workspace.findMany({ where: { organizationId: ws.organizationId, id: { not: input.workspaceId } }, select: { id: true } });
+    if (others.length) {
+      await prisma.emailSuppression.createMany({
+        data: others.map((o) => ({ workspaceId: o.id, email, source: 'BOUNCE', reason: 'BOUNCED', detail: `${detail} (bounced on a teammate's send)`.slice(0, 1000) })),
+        skipDuplicates: true,
+      });
+    }
+  }
+  await prisma.record.updateMany({
+    where: { contact: { primaryEmail: { equals: email, mode: 'insensitive' }, ...(ws ? { workspace: { organizationId: ws.organizationId } } : { workspaceId: input.workspaceId }) } },
+    data: { emailStatus: 'BOUNCED', lastEmailError: detail.slice(0, 500) },
+  });
+  if (input.webhook !== false) {
+    dispatchWebhook(input.workspaceId, 'email.bounced', { email, reason: 'BOUNCED', detail, campaignId: input.campaignId ?? null }).catch(() => undefined);
+  }
+}
+
+/**
  * Suppresses the addresses a permanent bounce names. When the notice doesn't say which
  * address failed (some servers don't), the conversation's own recipient is used — the notice
  * is in that conversation's thread, so it is about the email sent to them.
@@ -106,6 +141,8 @@ export async function suppressBounced(input: {
   conversationRecipient: string | null;
   message: { plainTextBody: string | null; htmlBody: string | null; headers?: Record<string, string>; subject?: string };
   ownAddresses: string[];
+  /** Where it came from, for the suppression list's detail (default "Bounce notice"). */
+  label?: string;
 }): Promise<string[]> {
   const info = parseBounce(input.message, input.ownAddresses);
   if (!info.permanent) return [];
@@ -120,18 +157,8 @@ export async function suppressBounced(input: {
       orderBy: { createdAt: 'desc' },
       select: { campaignId: true },
     });
-    const detail = `Bounce notice: ${info.detail}`;
-    await prisma.emailSuppression.upsert({
-      where: { workspaceId_email: { workspaceId: input.workspaceId, email } },
-      create: { workspaceId: input.workspaceId, email, source: 'BOUNCE', reason: 'BOUNCED', detail, campaignId: lastJob?.campaignId ?? undefined },
-      // An unsubscribe or a manual entry stays as it is; only bounce entries are refreshed.
-      update: {},
-    });
-    await prisma.record.updateMany({
-      where: { contact: { primaryEmail: { equals: email, mode: 'insensitive' }, workspaceId: input.workspaceId } },
-      data: { emailStatus: 'BOUNCED', lastEmailError: detail.slice(0, 500) },
-    });
-    dispatchWebhook(input.workspaceId, 'email.bounced', { email, reason: 'BOUNCED', detail, campaignId: lastJob?.campaignId ?? null }).catch(() => undefined);
+    const detail = `${input.label ?? 'Bounce notice'}: ${info.detail}`;
+    await recordHardBounce({ workspaceId: input.workspaceId, email, detail, campaignId: lastJob?.campaignId ?? null });
   }
   return addresses;
 }
