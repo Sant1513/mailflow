@@ -76,7 +76,9 @@ export async function syncProfilePhotos(account: EmailProviderAccount): Promise<
   } catch (err) {
     // Try again at the next scheduled run rather than every few minutes.
     await prisma.emailProviderAccount.update({ where: { id: account.id }, data: { photosSyncedAt: new Date() } }).catch(() => undefined);
-    return { ...result, error: explain(err) };
+    const reason = explain(err);
+    console.error(`[photos] ${account.emailAddress}: ${reason}`);
+    return { ...result, error: reason };
   }
 }
 
