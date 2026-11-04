@@ -36,11 +36,17 @@ export async function POST(req: NextRequest, { params }: { params: { token: stri
   const email = String((await req.formData().catch(() => null))?.get('email') ?? '').trim().toLowerCase();
   const blast = await prisma.recruiterBlast.findUnique({ where: { id: blastId }, select: { workspaceId: true } });
   const wasSent = email && blast ? await prisma.recruiterBlastRecipient.findUnique({ where: { blastId_email: { blastId, email } }, select: { id: true } }) : null;
-  if (!blast || !wasSent) return form(params.token, "That address wasn't on this email. Check the spelling, or reply to the email instead.");
-  await prisma.emailSuppression.upsert({
-    where: { workspaceId_email: { workspaceId: blast.workspaceId, email } },
-    create: { workspaceId: blast.workspaceId, email, reason: 'UNSUBSCRIBED', source: 'UNSUBSCRIBE', detail: 'Recruiter bulk send (BCC) unsubscribe page' },
-    update: {},
-  });
-  return page(`<h1>You're unsubscribed</h1><p>${esc(email)} won't get these emails again.</p>`);
+  if (!email || !email.includes('@')) return form(params.token, 'Enter the email address this message was sent to.');
+  // The same answer whether or not the address was on the send, so the page can't be used to
+  // find out who else was BCC'd.
+  if (blast && wasSent) {
+    await prisma.emailSuppression.upsert({
+      where: { workspaceId_email: { workspaceId: blast.workspaceId, email } },
+      create: { workspaceId: blast.workspaceId, email, reason: 'UNSUBSCRIBED', source: 'UNSUBSCRIBE', detail: 'Recruiter bulk send (BCC) unsubscribe page' },
+      update: {},
+    });
+    // Not in this send's later messages either.
+    await prisma.recruiterBlastRecipient.updateMany({ where: { blastId, email, status: 'QUEUED', group: { status: 'PENDING' } }, data: { status: 'SKIPPED', skipReason: 'Unsubscribed' } });
+  }
+  return page(`<h1>Done</h1><p>If ${esc(email)} was on this email, it won't get these emails again.</p>`);
 }

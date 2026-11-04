@@ -103,7 +103,10 @@ export async function GET(req: Request) {
                 data: {
                   organizationId: conversation.organizationId,
                   workspaceId: conversation.workspaceId,
-                  ownerId: reply.createdById,
+                  // A recruiter thread stays the admin's: same owner, assignee and send.
+                  ...(conversation.recruiterBlastId
+                    ? { ownerId: conversation.ownerId, assigneeId: conversation.assigneeId, recruiterBlastId: conversation.recruiterBlastId }
+                    : { ownerId: reply.createdById }),
                   contactId: conversation.contactId,
                   recipientEmail: conversation.recipientEmail,
                   subject,

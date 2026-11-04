@@ -19,6 +19,17 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
   if (!blast) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const page = Math.max(1, Number(new URL(req.url).searchParams.get('page') ?? '1'));
 
+  // Totals come from the whole send, not the capped lists below (groups 500, recruiters 200 a page).
+  const [groupTotals, openedRecruiters] = await Promise.all([
+    prisma.recruiterBlastGroup.groupBy({ by: ['status'], where: { blastId: blast.id }, _count: { _all: true }, _sum: { openCount: true } }),
+    prisma.recruiterBlastRecipient.count({ where: { blastId: blast.id, openCount: { gt: 0 } } }),
+  ]);
+  const stats = {
+    messagesSent: groupTotals.find((g) => g.status === 'SENT')?._count._all ?? 0,
+    messagesTotal: groupTotals.reduce((n, g) => n + g._count._all, 0),
+    opens: groupTotals.reduce((n, g) => n + (g._sum.openCount ?? 0), 0),
+    openedRecruiters,
+  };
   const [statusCounts, replied, recipients, groups, mailboxes, me] = await Promise.all([
     prisma.recruiterBlastRecipient.groupBy({ by: ['status'], where: { blastId: blast.id }, _count: { _all: true } }),
     prisma.recruiterBlastRecipient.count({ where: { blastId: blast.id, repliedAt: { not: null } } }),
@@ -44,6 +55,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
   return NextResponse.json({
     blast,
     counts: { total: Object.values(counts).reduce((n: number, v) => n + (v as number), 0), ...counts, REPLIED: replied },
+    stats,
     recipients,
     page,
     groups,
@@ -84,6 +96,11 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
   if (body.accountIds) {
     const allowed = new Set((await sendableMailboxes(session)).map((m) => m.id));
     if (body.accountIds.some((id) => !allowed.has(id))) return NextResponse.json({ error: 'You can only send from your own mailbox or teammates’ opted-in backup mailboxes.' }, { status: 400 });
+  }
+  if (body.attachmentDocumentIds?.length) {
+    const ids = [...new Set(body.attachmentDocumentIds)];
+    const found = await prisma.documentTemplate.count({ where: { id: { in: ids }, workspaceId: blast.workspaceId, archived: false } });
+    if (found !== ids.length) return NextResponse.json({ error: 'Attach PDFs from this workspace’s Documents only.' }, { status: 400 });
   }
   const mode = (body.mode ?? blast.mode) as BlastMode;
   const gapSeconds = body.gapSeconds !== undefined || body.mode ? Math.max(MIN_GAP[mode], body.gapSeconds ?? blast.gapSeconds) : undefined;

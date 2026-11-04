@@ -18,7 +18,7 @@ interface Blast {
 interface Mailbox { id: string; emailAddress: string; ownerName: string | null; status: string; own: boolean; sentLast24h: number; dailyLimit: number }
 interface Group { id: string; seq: number; status: string; recipientCount: number; fromEmail: string | null; sentAt: string | null; openCount: number; firstOpenedAt: string | null; lastOpenedAt: string | null; error: string | null }
 interface RecipientRow { email: string; name: string | null; status: string; skipReason: string | null; sentAt: string | null; openedAt: string | null; openCount: number; repliedAt: string | null }
-interface Detail { blast: Blast; counts: Record<string, number>; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; hasSignature: boolean }
+interface Detail { blast: Blast; counts: Record<string, number>; stats: { messagesSent: number; messagesTotal: number; opens: number; openedRecruiters: number }; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; hasSignature: boolean }
 interface Check {
   total: number; eligible: number; skipped: { email: string; reason: string }[]; skippedByReason: Record<string, number>; messages: number; perMessage: number;
   capacity: { accountId: string; emailAddress: string; messagesLeft: number; peopleLeft: number }[]; messagesPossibleToday: number; estimatedMinutes: number; preview: string;
@@ -458,10 +458,7 @@ function pickEditable(b: Blast) {
 
 function Progress({ detail }: { detail: Detail }) {
   const b = detail.blast;
-  const sentMessages = detail.groups.filter((g) => g.status === 'SENT').length;
-  const totalMessages = detail.groups.length;
-  const opens = detail.groups.reduce((n, g) => n + g.openCount, 0);
-  const openedRecruiters = detail.recipients.filter((r) => r.openCount > 0).length;
+  const { messagesSent: sentMessages, messagesTotal: totalMessages, opens, openedRecruiters } = detail.stats;
   const share = totalMessages ? sentMessages / totalMessages : 0;
   return (
     <div className="space-y-4">
@@ -470,7 +467,7 @@ function Progress({ detail }: { detail: Detail }) {
           <div><div className="text-xs text-muted-foreground">Recruiters sent</div><div className="text-xl font-semibold">{(detail.counts.SENT ?? 0).toLocaleString()} / {((detail.counts.total ?? 0) - (detail.counts.SKIPPED ?? 0)).toLocaleString()}</div></div>
           <div><div className="text-xs text-muted-foreground">Emails sent</div><div className="text-xl font-semibold">{sentMessages} / {totalMessages}</div></div>
           <div><div className="text-xs text-muted-foreground">{b.mode === 'INDIVIDUAL' ? 'Recruiters who opened' : 'Opens (all groups)'}</div><div className="text-xl font-semibold">{b.mode === 'INDIVIDUAL' ? openedRecruiters : opens}</div></div>
-          <div><div className="text-xs text-muted-foreground">Replied</div><div className="text-xl font-semibold"><a className="hover:underline" href={`/inbox?filter=all&q=${encodeURIComponent(b.subject.replace(/^s*(re|fwd?)s*:s*/i, ''))}`}>{detail.counts.REPLIED ?? 0}</a></div></div>
+          <div><div className="text-xs text-muted-foreground">Replied</div><div className="text-xl font-semibold"><a className="hover:underline" href={`/inbox?filter=all&q=${encodeURIComponent(b.subject.trim())}`}>{detail.counts.REPLIED ?? 0}</a></div></div>
           <div><div className="text-xs text-muted-foreground">Skipped / failed</div><div className="text-xl font-semibold">{(detail.counts.SKIPPED ?? 0) + (detail.counts.FAILED ?? 0)}</div></div>
         </div>
         <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={sentMessages} aria-valuemax={totalMessages} aria-label="Emails sent">

@@ -120,7 +120,8 @@ export async function usageLast24h(emailProviderAccountId: string): Promise<Dail
       select: { toEmail: true, ccEmails: true, bccEmails: true },
     }),
     prisma.recruiterBlastGroup.findMany({
-      where: { accountId: emailProviderAccountId, status: 'SENT', sentAt: { gte: since } },
+      // SENDING too: a message going out right now already counts (sentAt is its claim time).
+      where: { accountId: emailProviderAccountId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: since } },
       select: { blast: { select: { mode: true, toAddress: true } }, recipients: { select: { email: true } } },
     }),
   ]);

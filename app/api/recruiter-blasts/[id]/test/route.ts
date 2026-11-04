@@ -24,7 +24,7 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
   if (!account) return NextResponse.json({ error: 'Choose a connected mailbox to send from.' }, { status: 400 });
 
   const docs = blast.attachmentDocumentIds.length
-    ? await prisma.documentTemplate.findMany({ where: { id: { in: blast.attachmentDocumentIds } }, select: { fileNamePattern: true, file: { select: { data: true } } } })
+    ? await prisma.documentTemplate.findMany({ where: { id: { in: blast.attachmentDocumentIds }, workspaceId: blast.workspaceId, archived: false }, select: { fileNamePattern: true, file: { select: { data: true } } } })
     : [];
   const attachments: EmailAttachment[] = docs.map((d) => ({ filename: /\.pdf$/i.test(d.fileNamePattern) ? d.fileNamePattern : `${d.fileNamePattern}.pdf`, mimeType: 'application/pdf', content: Buffer.from(d.file.data) }));
   const video = readVideo(blast.video);

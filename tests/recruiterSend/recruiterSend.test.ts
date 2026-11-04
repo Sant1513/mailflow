@@ -3,11 +3,12 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // ── worker mocks ──
 const sent: any[] = [];
 const db = {
-  recruiterBlast: { findMany: vi.fn(), updateMany: vi.fn(), update: vi.fn(), count: vi.fn(async () => 0) },
+  recruiterBlast: { findMany: vi.fn(), findUnique: vi.fn(async () => ({ status: 'SENDING' })), updateMany: vi.fn(), update: vi.fn(), count: vi.fn(async () => 0) },
   recruiterBlastGroup: { findMany: vi.fn(async () => []), findFirst: vi.fn(), count: vi.fn(async () => 1), groupBy: vi.fn(async () => []), updateMany: vi.fn(async () => ({ count: 1 })), update: vi.fn() },
   recruiterBlastRecipient: { findMany: vi.fn(), updateMany: vi.fn() },
   emailProviderAccount: { findUnique: vi.fn(), update: vi.fn() },
   documentTemplate: { findMany: vi.fn(async () => []) },
+  emailSuppression: { findMany: vi.fn(async (): Promise<any[]> => []) },
   $transaction: vi.fn(async (ops: unknown[]) => ops),
 };
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
@@ -26,6 +27,8 @@ vi.mock('@/lib/email/gmail', () => ({
     }
   },
 }));
+const allowed = new Set(['a1', 'a2']);
+vi.mock('@/lib/recruiterSend/access', () => ({ allowedMailboxIds: vi.fn(async () => allowed) }));
 vi.mock('@/lib/storage/files', () => ({ readRef: vi.fn(), BUCKET: 'b', storageEnabled: () => false }));
 
 const core = await import('@/lib/recruiterSend/core');
@@ -109,6 +112,46 @@ describe('sending', () => {
     db.recruiterBlastGroup.groupBy.mockResolvedValue([{ accountId: 'a1', _sum: { recipientCount: 299 } }] as never);
     await runRecruiterWorker({ budgetMs: 20_000 });
     expect(sent[0].from).toBe('two@masaischool.com');
+  });
+
+  it('claims with a timestamp, one message per send at a time, and clears the old error', async () => {
+    await runRecruiterWorker({ budgetMs: 20_000 });
+    const claim = (db.recruiterBlastGroup.updateMany.mock.calls as any[][]).find((c) => c[0].data.status === 'SENDING')?.[0] as any;
+    expect(claim.where).toMatchObject({ status: 'PENDING', blast: { status: 'SENDING', groups: { none: { status: 'SENDING' } } } });
+    expect(claim.data.sentAt).toBeInstanceOf(Date);
+    expect(claim.data).toMatchObject({ errorCode: null, error: null });
+  });
+
+  it('never re-queues a message Gmail accepted, even if recording it fails', async () => {
+    db.$transaction.mockRejectedValue(new Error('database unreachable'));
+    const r = await runRecruiterWorker({ budgetMs: 20_000 });
+    expect(sent).toHaveLength(1);
+    expect(r.sent).toBe(1);
+    const requeued = db.recruiterBlastGroup.update.mock.calls.some((c: any[]) => c[0].data.status === 'PENDING');
+    expect(requeued).toBe(false);
+    db.$transaction.mockReset().mockImplementation(async (ops: unknown[]) => ops);
+  }, 15_000);
+
+  it('drops recruiters who unsubscribed or bounced after the send started', async () => {
+    db.emailSuppression.findMany.mockResolvedValueOnce([{ email: 'b@corp.com' }]);
+    await runRecruiterWorker({ budgetMs: 20_000 });
+    expect(sent[0].bcc).toEqual(['a@corp.com']);
+    expect(db.recruiterBlastRecipient.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ['r2'] } }, data: expect.objectContaining({ status: 'SKIPPED' }) }));
+  });
+
+  it("skips a teammate's mailbox once they stop sharing it", async () => {
+    allowed.delete('a1');
+    await runRecruiterWorker({ budgetMs: 20_000 });
+    allowed.add('a1');
+    expect(sent[0].from).toBe('two@masaischool.com');
+  });
+
+  it('a failure after the send was cancelled is not left queued', async () => {
+    db.recruiterBlast.findUnique.mockResolvedValue({ status: 'CANCELLED' });
+    await runRecruiterWorker({ budgetMs: 20_000, send: async () => { throw new Error('socket hang up'); } });
+    db.recruiterBlast.findUnique.mockResolvedValue({ status: 'SENDING' });
+    const failure = db.recruiterBlastGroup.update.mock.calls.find((c: any[]) => c[0].data.errorCode)?.[0];
+    expect(failure.data.status).toBe('FAILED');
   });
 
   it('waits (and says why) when every chosen mailbox is at its limit', async () => {

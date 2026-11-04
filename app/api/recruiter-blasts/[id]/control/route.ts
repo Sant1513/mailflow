@@ -25,8 +25,9 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   } else {
     const res = await prisma.recruiterBlast.updateMany({ where: { id: blast.id, status: { in: ['SENDING', 'SCHEDULED', 'PAUSED'] } }, data: { status: 'CANCELLED', completedAt: new Date() } });
     if (!res.count) return NextResponse.json({ error: 'This send can no longer be cancelled.' }, { status: 409 });
+    // Only messages not yet picked up; one being sent right now finishes and is recorded as sent.
+    await prisma.recruiterBlastRecipient.updateMany({ where: { blastId: blast.id, status: 'QUEUED', group: { status: 'PENDING' } }, data: { status: 'SKIPPED', skipReason: 'Cancelled before sending' } });
     await prisma.recruiterBlastGroup.updateMany({ where: { blastId: blast.id, status: 'PENDING' }, data: { status: 'FAILED', error: 'Cancelled before sending' } });
-    await prisma.recruiterBlastRecipient.updateMany({ where: { blastId: blast.id, status: 'QUEUED' }, data: { status: 'SKIPPED', skipReason: 'Cancelled before sending' } });
   }
   await audit(session, `RECRUITER_SEND_${action.toUpperCase()}`, { targetType: 'RecruiterBlast', targetId: blast.id });
   return NextResponse.json({ ok: true });

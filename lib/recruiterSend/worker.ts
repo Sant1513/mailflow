@@ -9,6 +9,7 @@ import { decorate, type BlastMode } from '@/lib/recruiterSend/core';
 import { readVideo } from '@/lib/recruiterSend/video';
 import { sendViaUpload, UPLOAD_THRESHOLD_BYTES } from '@/lib/recruiterSend/gmailUpload';
 import { readRef } from '@/lib/storage/files';
+import { allowedMailboxIds } from '@/lib/recruiterSend/access';
 
 /**
  * Sends Recruiter Bulk Send messages, one Gmail message at a time (a BCC group or one
@@ -45,6 +46,7 @@ export function kickRecruiterWorker(reason = 'kick'): void {
 }
 
 async function recoverStuck() {
+  // A claim stamps sentAt with the claim time, so only claims older than STUCK_MS count as stuck.
   const stuck = await prisma.recruiterBlastGroup.findMany({
     where: { status: 'SENDING', createdAt: { lt: new Date(Date.now() - STUCK_MS) }, OR: [{ sentAt: null }, { sentAt: { lt: new Date(Date.now() - STUCK_MS) } }] },
     select: { id: true },
@@ -65,26 +67,31 @@ async function finishIfDone(blastId: string): Promise<boolean> {
   return true;
 }
 
-/** Recruiters each mailbox has already sent to in this send. */
+/** Recruiters each mailbox has already sent to (or is sending to right now) in this send. */
 async function sentPerAccount(blastId: string): Promise<Map<string, number>> {
-  const rows = await prisma.recruiterBlastGroup.groupBy({ by: ['accountId'], where: { blastId, status: 'SENT' }, _sum: { recipientCount: true } });
+  const rows = await prisma.recruiterBlastGroup.groupBy({ by: ['accountId'], where: { blastId, status: { in: ['SENT', 'SENDING'] } }, _sum: { recipientCount: true } });
   return new Map(rows.filter((r) => r.accountId).map((r) => [r.accountId!, r._sum.recipientCount ?? 0]));
 }
 
 /**
  * Picks the mailbox for a message, or explains why none can send right now: in the chosen
- * order, skipping mailboxes that are disconnected, paused by Gmail, at Google's daily limits,
- * or at the limit the admin set for this send.
+ * order, skipping mailboxes that are disconnected, no longer shared as a backup (the
+ * teammate withdrew it or left), paused by Gmail, at Google's daily limits, or at the limit
+ * the admin set for this send.
  */
-async function chooseMailbox(blast: { id: string; accountIds: string[]; accountLimits: unknown }, to: string, bcc: string[]) {
+async function chooseMailbox(blast: { id: string; organizationId: string; createdById: string; accountIds: string[]; accountLimits: unknown }, to: string, bcc: string[]) {
   const reasons: string[] = [];
   const limits = (blast.accountLimits && typeof blast.accountLimits === 'object' ? blast.accountLimits : {}) as Record<string, number>;
-  const used = await sentPerAccount(blast.id);
+  const [used, allowed] = await Promise.all([sentPerAccount(blast.id), allowedMailboxIds(blast.organizationId, blast.createdById)]);
   const size = bcc.length || 1;
   for (const id of blast.accountIds) {
     const account = await prisma.emailProviderAccount.findUnique({ where: { id } });
     if (!account || account.status !== 'CONNECTED' || !account.refreshTokenEnc) {
       reasons.push(`${account?.emailAddress ?? 'a mailbox'} is disconnected`);
+      continue;
+    }
+    if (!allowed.has(id)) {
+      reasons.push(`${account.emailAddress} is no longer shared as a backup mailbox`);
       continue;
     }
     const cap = Number(limits[id]);
@@ -113,36 +120,56 @@ const gmailSender: RecruiterSender = (account, input, large) => (large ? sendVia
 export async function runRecruiterWorker(opts: { budgetMs?: number; send?: RecruiterSender } = {}): Promise<{ sent: number; failed: number; waiting: string | null }> {
   const send = opts.send ?? gmailSender;
   const deadline = Date.now() + (opts.budgetMs ?? 45_000);
+  const timeLeft = () => deadline - 5_000 - Date.now();
   let sent = 0;
   let failed = 0;
   let waiting: string | null = null;
+  const waitingIds = new Set<string>();
   await recoverStuck();
 
   // Scheduled sends whose time has come.
   await prisma.recruiterBlast.updateMany({ where: { status: 'SCHEDULED', scheduledAt: { lte: new Date() } }, data: { status: 'SENDING', startedAt: new Date() } });
 
-  while (Date.now() < deadline - 5_000) {
+  while (timeLeft() > 0) {
     const blasts = await prisma.recruiterBlast.findMany({ where: { status: 'SENDING' }, orderBy: { startedAt: 'asc' }, take: 20 });
     if (!blasts.length) break;
     let progressed = false;
+    let nextGap = Infinity; // shortest pause still to run, when every send is between messages
 
     for (const blast of blasts) {
-      if (Date.now() >= deadline - 5_000) break;
+      if (timeLeft() <= 0) break;
       if (await finishIfDone(blast.id)) continue;
 
-      // Pause between messages of the same send.
-      const last = await prisma.recruiterBlastGroup.findFirst({ where: { blastId: blast.id, status: 'SENT' }, orderBy: { sentAt: 'desc' }, select: { sentAt: true } });
+      // Pause between messages of the same send (counting one being sent right now).
+      const last = await prisma.recruiterBlastGroup.findFirst({ where: { blastId: blast.id, status: { in: ['SENT', 'SENDING'] }, sentAt: { not: null } }, orderBy: { sentAt: 'desc' }, select: { sentAt: true } });
       const wait = last?.sentAt ? last.sentAt.getTime() + blast.gapSeconds * 1000 - Date.now() : 0;
       if (wait > 0) {
-        if (wait > deadline - Date.now() - 5_000) continue;
+        if (wait > timeLeft()) {
+          nextGap = Math.min(nextGap, wait);
+          continue;
+        }
         await sleep(wait);
+        // Paused or cancelled while we waited?
+        const current = await prisma.recruiterBlast.findUnique({ where: { id: blast.id }, select: { status: true } });
+        if (current?.status !== 'SENDING') continue;
       }
 
       const group = await prisma.recruiterBlastGroup.findFirst({ where: { blastId: blast.id, status: 'PENDING' }, orderBy: { seq: 'asc' } });
       if (!group) continue;
-      const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, select: { id: true, email: true } });
+      let recipients = await prisma.recruiterBlastRecipient.findMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, select: { id: true, email: true } });
+      // Unsubscribed or bounced since the send started (a long send runs for days): drop them.
+      if (recipients.length) {
+        const suppressed = await prisma.emailSuppression.findMany({ where: { workspaceId: blast.workspaceId, email: { in: recipients.map((r) => r.email) } }, select: { email: true } });
+        if (suppressed.length) {
+          const gone = new Set(suppressed.map((s) => s.email.toLowerCase()));
+          const drop = recipients.filter((r) => gone.has(r.email.toLowerCase()));
+          await prisma.recruiterBlastRecipient.updateMany({ where: { id: { in: drop.map((r) => r.id) } }, data: { status: 'SKIPPED', skipReason: 'Unsubscribed or bounced after the send started' } });
+          recipients = recipients.filter((r) => !gone.has(r.email.toLowerCase()));
+        }
+      }
       if (!recipients.length) {
-        await prisma.recruiterBlastGroup.update({ where: { id: group.id }, data: { status: 'SENT', sentAt: new Date(), recipientCount: 0 } });
+        await prisma.recruiterBlastGroup.updateMany({ where: { id: group.id, status: 'PENDING' }, data: { status: 'SENT', recipientCount: 0 } });
+        progressed = true;
         continue;
       }
 
@@ -152,20 +179,27 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
       const { account, reasons } = await chooseMailbox(blast, to, bcc);
       if (!account) {
         waiting = `Waiting: ${reasons.join('; ') || 'no sending mailbox chosen'}. Sending carries on by itself when one is free.`;
+        waitingIds.add(blast.id);
         if (blast.note !== waiting) await prisma.recruiterBlast.update({ where: { id: blast.id }, data: { note: waiting } });
         continue;
       }
 
-      // Claim it: only one run may send this message.
-      const claimed = await prisma.recruiterBlastGroup.updateMany({ where: { id: group.id, status: 'PENDING' }, data: { status: 'SENDING', accountId: account.id, fromEmail: account.emailAddress, attempts: { increment: 1 } } });
+      // Claim it: only one run may send this message, and only one message of a send is out at
+      // a time (so two runs can't skip the pause). sentAt = claim time keeps recoverStuck off
+      // fresh claims; the old error is cleared so it can't hold the mailbox (backoffUntil).
+      const claimed = await prisma.recruiterBlastGroup.updateMany({
+        where: { id: group.id, status: 'PENDING', blast: { status: 'SENDING', groups: { none: { status: 'SENDING' } } } },
+        data: { status: 'SENDING', sentAt: new Date(), accountId: account.id, fromEmail: account.emailAddress, attempts: { increment: 1 }, errorCode: null, error: null },
+      });
       if (!claimed.count) continue;
       progressed = true;
 
       const decorated = decorate(blast.html, { groupId: group.id, mode, workspaceId: blast.workspaceId, blastId: blast.id, recipientEmail: mode === 'INDIVIDUAL' ? to : undefined });
-      const docs = blast.attachmentDocumentIds.length
-        ? await prisma.documentTemplate.findMany({ where: { id: { in: blast.attachmentDocumentIds } }, select: { id: true, fileNamePattern: true, file: { select: { data: true } } } })
-        : [];
+      let result: Awaited<ReturnType<RecruiterSender>>;
       try {
+        const docs = blast.attachmentDocumentIds.length
+          ? await prisma.documentTemplate.findMany({ where: { id: { in: blast.attachmentDocumentIds }, workspaceId: blast.workspaceId }, select: { id: true, fileNamePattern: true, file: { select: { data: true } } } })
+          : [];
         const attachments: EmailAttachment[] = blast.attachmentDocumentIds
           .map((id) => docs.find((d) => d.id === id))
           .filter((d): d is NonNullable<typeof d> => !!d)
@@ -196,41 +230,72 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
         };
         // Big messages (a video) go through Gmail's upload endpoint, which takes up to 35 MB.
         const bytes = attachments.reduce((n, a) => n + a.content.length, 0);
-        const result = await send(account, input, bytes > UPLOAD_THRESHOLD_BYTES);
-        const now = new Date();
-        await prisma.$transaction([
-          // The Message-ID and thread let Gmail sync recognise recruiters' replies (lib/gmail/ingest.ts).
-          prisma.recruiterBlastGroup.update({ where: { id: group.id }, data: { status: 'SENT', sentAt: now, gmailMessageId: result.providerMessageId, messageIdHeader: result.messageIdHeader ?? null, gmailThreadId: result.threadId ?? null, errorCode: null, error: null, recipientCount: recipients.length } }),
-          prisma.recruiterBlastRecipient.updateMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, data: { status: 'SENT', sentAt: now } }),
-          prisma.recruiterBlast.update({ where: { id: blast.id }, data: { note: null } }),
-        ]);
-        sent++;
+        result = await send(account, input, bytes > UPLOAD_THRESHOLD_BYTES);
       } catch (err) {
-        const e = err instanceof SendEmailError ? err : new SendEmailError((err as Error).message ?? 'Unknown error', 'UNKNOWN');
-        const message = e.message.slice(0, 500);
-        // Gmail pushed back / quota / auth: put it back for another mailbox or later; the error
-        // (with sentAt = now) makes backoffUntil hold this mailbox (lib/queue/drain.ts).
-        const retry = e.kind !== 'INVALID_RECIPIENT' && group.attempts + 1 < MAX_ATTEMPTS;
-        if (e.kind === 'AUTH') await prisma.emailProviderAccount.update({ where: { id: account.id }, data: { status: 'EXPIRED' } }).catch(() => undefined);
-        await prisma.recruiterBlastGroup.update({
-          where: { id: group.id },
-          data: {
-            status: retry || e.kind === 'RATE_LIMIT' || e.kind === 'QUOTA' || e.kind === 'AUTH' ? 'PENDING' : 'FAILED',
-            errorCode: e.kind,
-            error: message,
-            sentAt: new Date(),
-          },
-        });
-        if (!(retry || e.kind === 'RATE_LIMIT' || e.kind === 'QUOTA' || e.kind === 'AUTH')) {
-          await prisma.recruiterBlastRecipient.updateMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, data: { status: 'FAILED', skipReason: message.slice(0, 200) } });
-          failed++;
+        if (await recordFailure(blast.id, group, account.id, err)) failed++;
+        continue;
+      }
+
+      // Gmail has it. From here nothing may put the message back in the queue: if recording
+      // fails every time, it stays SENDING and recoverStuck marks it "check the Sent folder".
+      const sentAt = new Date();
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await prisma.$transaction([
+            // The Message-ID and thread let Gmail sync recognise recruiters' replies (lib/gmail/ingest.ts).
+            prisma.recruiterBlastGroup.update({ where: { id: group.id }, data: { status: 'SENT', sentAt, gmailMessageId: result.providerMessageId, messageIdHeader: result.messageIdHeader ?? null, gmailThreadId: result.threadId ?? null, errorCode: null, error: null, recipientCount: recipients.length } }),
+            prisma.recruiterBlastRecipient.updateMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, data: { status: 'SENT', sentAt } }),
+            prisma.recruiterBlast.update({ where: { id: blast.id }, data: { note: null } }),
+          ]);
+          break;
+        } catch (err) {
+          console.error(`[recruiter-send] group ${group.id} was sent but could not be recorded (attempt ${attempt})`, err);
+          if (attempt < 3) await sleep(1_000 * attempt);
         }
       }
+      sent++;
     }
-    if (!progressed) break;
+
+    if (!progressed) {
+      // Every send is between messages: wait here rather than hand over to a new run that
+      // would only find the same pause.
+      if (Number.isFinite(nextGap) && timeLeft() > 1_000) {
+        await sleep(Math.min(nextGap, timeLeft()));
+        continue;
+      }
+      break;
+    }
   }
 
-  const more = await prisma.recruiterBlast.count({ where: { status: 'SENDING' } });
-  if (more && !waiting) kickRecruiterWorker('continue');
+  // Hand over while any send can still move; sends waiting for a mailbox resume on the schedule.
+  const more = await prisma.recruiterBlast.count({ where: { status: 'SENDING', id: { notIn: [...waitingIds] } } });
+  if (more) kickRecruiterWorker('continue');
   return { sent, failed, waiting };
+}
+
+/**
+ * A message Gmail did not take. Pushed back / quota / auth / transient: back in the queue for
+ * another mailbox or later (the error with sentAt = now makes backoffUntil hold this mailbox,
+ * lib/queue/drain.ts). Otherwise, or after MAX_ATTEMPTS, failed. Returns true when it failed.
+ */
+async function recordFailure(blastId: string, group: { id: string; attempts: number }, accountId: string, err: unknown): Promise<boolean> {
+  const e = err instanceof SendEmailError ? err : new SendEmailError((err as Error)?.message ?? 'Unknown error', 'UNKNOWN');
+  const message = e.message.slice(0, 500);
+  const retry = e.kind !== 'INVALID_RECIPIENT' && group.attempts + 1 < MAX_ATTEMPTS;
+  const requeue = retry || e.kind === 'RATE_LIMIT' || e.kind === 'QUOTA' || e.kind === 'AUTH';
+  if (e.kind === 'AUTH') await prisma.emailProviderAccount.update({ where: { id: accountId }, data: { status: 'EXPIRED' } }).catch(() => undefined);
+  // Cancelled meanwhile: don't leave it queued for good.
+  const blast = await prisma.recruiterBlast.findUnique({ where: { id: blastId }, select: { status: true } });
+  const cancelled = blast?.status === 'CANCELLED';
+  await prisma.recruiterBlastGroup.update({
+    where: { id: group.id },
+    data: { status: requeue && !cancelled ? 'PENDING' : 'FAILED', errorCode: e.kind, error: cancelled ? 'Cancelled before sending' : message, sentAt: new Date() },
+  });
+  if (cancelled) {
+    await prisma.recruiterBlastRecipient.updateMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, data: { status: 'SKIPPED', skipReason: 'Cancelled before sending' } });
+    return false;
+  }
+  if (requeue) return false;
+  await prisma.recruiterBlastRecipient.updateMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, data: { status: 'FAILED', skipReason: message.slice(0, 200) } });
+  return true;
 }

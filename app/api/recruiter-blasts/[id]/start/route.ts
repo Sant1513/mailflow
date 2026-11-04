@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
-import { loadBlast, requireBlastAdmin } from '@/lib/recruiterSend/access';
+import { allowedMailboxIds, loadBlast, requireBlastAdmin } from '@/lib/recruiterSend/access';
 import { planBlast } from '@/lib/recruiterSend/plan';
 import { planGroups, type BlastMode } from '@/lib/recruiterSend/core';
 import { readVideo, VIDEO_INDIVIDUAL_MAX } from '@/lib/recruiterSend/video';
@@ -37,6 +37,9 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     ? await prisma.emailProviderAccount.count({ where: { id: { in: blast.accountIds }, status: 'CONNECTED' } })
     : 0;
   if (blast.accountIds.length && !connected) problems.push('None of the chosen mailboxes is connected.');
+  // A teammate may have withdrawn their backup mailbox since the draft was saved.
+  const allowed = await allowedMailboxIds(blast.organizationId, blast.createdById);
+  if (blast.accountIds.some((id) => !allowed.has(id))) problems.push('A chosen mailbox is no longer shared as a backup; choose the mailboxes again.');
 
   const docs = blast.attachmentDocumentIds.length
     ? await prisma.documentTemplate.findMany({ where: { id: { in: blast.attachmentDocumentIds }, workspaceId: blast.workspaceId, archived: false }, select: { id: true, file: { select: { size: true } } } })

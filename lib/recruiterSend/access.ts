@@ -19,6 +19,13 @@ export async function loadBlast(session: AppSession, id: string) {
   return blast;
 }
 
+/** Ids of the mailboxes this user may send recruiter email from (checked again at start and before every message). */
+export async function allowedMailboxIds(organizationId: string, userId: string): Promise<Set<string>> {
+  const own = await ownMailbox(userId);
+  const others = await availableFallbackMailboxes(organizationId, own?.id);
+  return new Set([...(own ? [own.id] : []), ...others.map((m) => m.id)]);
+}
+
 /** Mailboxes the admin may send from: their own, plus teammates' opted-in backup mailboxes. */
 export async function sendableMailboxes(session: AppSession) {
   const own = await ownMailbox(session.userId);
