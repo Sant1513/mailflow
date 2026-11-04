@@ -68,6 +68,9 @@ export default function HistoryPage() {
     if (seq !== requestSeq.current) return; // a newer request (other tab, new search) wins
     if (!res?.ok) {
       toast.error('Could not load history');
+      // Leave the loading state for this tab even on failure (an empty list, not a spinner forever).
+      setItems([]);
+      setItemsFor(direction);
       setLoading(false);
       return;
     }
