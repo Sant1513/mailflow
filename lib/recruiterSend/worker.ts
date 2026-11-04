@@ -194,7 +194,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
       if (!claimed.count) continue;
       progressed = true;
 
-      const decorated = decorate(blast.html, { groupId: group.id, mode, workspaceId: blast.workspaceId, blastId: blast.id, recipientEmail: mode === 'INDIVIDUAL' ? to : undefined });
+      const decorated = decorate(blast.html, { groupId: group.id, mode, workspaceId: blast.workspaceId, blastId: blast.id, recipientEmail: mode === 'INDIVIDUAL' ? to : undefined, pixel: mode === 'INDIVIDUAL' });
       let result: Awaited<ReturnType<RecruiterSender>>;
       try {
         const docs = blast.attachmentDocumentIds.length

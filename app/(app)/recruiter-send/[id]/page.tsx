@@ -1,11 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
-import { LivePreview, SendSummary, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
+import { LivePreview, Pager, SendSummary, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
 
 type Mode = 'BCC' | 'INDIVIDUAL';
 interface Video { mode: 'attach'; ref: string; fileName: string; size: number; contentType: string }
@@ -33,12 +33,26 @@ const SKIP_LABEL: Record<string, string> = {
   NO_REPLY_ADDRESS: 'no-reply address', DISPOSABLE: 'throwaway inbox', INVALID: 'not a valid address',
 };
 
-function Section({ n, title, hint, children }: { n: number; title: string; hint?: string; children: React.ReactNode }) {
+/** Which steps are open. Every step folds to a one-line summary so the page stays short. */
+const StepsContext = createContext<{ open: Set<number>; toggle: (n: number) => void }>({ open: new Set(), toggle: () => undefined });
+
+function Section({ n, title, hint, summary, done, children }: { n: number; title: string; hint?: string; summary?: React.ReactNode; done?: boolean; children: React.ReactNode }) {
+  const { open, toggle } = useContext(StepsContext);
+  const isOpen = open.has(n);
   return (
-    <section className="rounded-lg border bg-card p-4">
-      <h2 className="text-sm font-semibold">{n}. {title}</h2>
-      {hint && <p className="mb-3 mt-0.5 text-xs text-muted-foreground">{hint}</p>}
-      <div className={hint ? '' : 'mt-3'}>{children}</div>
+    <section className="rounded-lg border bg-card">
+      <button type="button" onClick={() => toggle(n)} aria-expanded={isOpen} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
+        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${done ? 'bg-green-600 text-white' : 'bg-muted text-muted-foreground'}`} aria-hidden>{done ? '✓' : n}</span>
+        <span className="shrink-0 text-sm font-semibold">{title}</span>
+        {!isOpen && summary ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{summary}</span> : <span className="flex-1" />}
+        <span className={`shrink-0 text-xs text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} aria-hidden>▾</span>
+      </button>
+      {isOpen && (
+        <div className="border-t px-3 pb-3 pt-2">
+          {hint && <p className="mb-2 text-xs text-muted-foreground">{hint}</p>}
+          {children}
+        </div>
+      )}
     </section>
   );
 }
@@ -72,8 +86,9 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const [ccText, setCcText] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [recipientPage, setRecipientPage] = useState(1);
   const load = useCallback(async () => {
-    const res = await fetch(`/api/recruiter-blasts/${params.id}`, { cache: 'no-store' }).catch(() => null);
+    const res = await fetch(`/api/recruiter-blasts/${params.id}?page=${recipientPage}`, { cache: 'no-store' }).catch(() => null);
     const j = await res?.json().catch(() => ({}));
     if (!res?.ok) return setError(j?.error ?? 'Could not load this send.');
     setDetail(j);
@@ -84,7 +99,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       setVideoTab('link');
       setVideoLink({ url: j.blast.video.url, title: j.blast.video.title });
     }
-  }, [params.id]);
+  }, [params.id, recipientPage]);
 
   useEffect(() => {
     load();
@@ -144,6 +159,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       setPasted('');
       load();
       runCheck();
+      setOpenSteps((prev) => new Set([...(prev ?? []), 6]));
     }
   }
 
@@ -168,6 +184,26 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     runCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail]);
+
+  // Steps start open only where something is still needed (plus the plan and send); the rest
+  // fold to a one-line summary and open with a click.
+  const [openSteps, setOpenSteps] = useState<Set<number> | null>(null);
+  useEffect(() => {
+    if (openSteps || !detail || !form || detail.blast.status !== 'DRAFT') return;
+    const open = new Set<number>([7]);
+    if (!(detail.counts.total ?? 0)) open.add(1);
+    else open.add(6);
+    if (form.mode === 'BCC' && !form.toAddress) open.add(2);
+    if (!form.subject.trim() || !form.body.trim()) open.add(3);
+    if (!form.accountIds.length) open.add(5);
+    setOpenSteps(open);
+  }, [detail, form, openSteps]);
+  const toggleStep = useCallback((n: number) => setOpenSteps((prev) => {
+    const next = new Set(prev ?? []);
+    if (next.has(n)) next.delete(n);
+    else next.add(n);
+    return next;
+  }), []);
 
   async function uploadVideo(file: File) {
     setBusy('video');
@@ -224,8 +260,36 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const chosen = form.accountIds;
   const mailboxOrder = [...chosen.map((id) => detail.mailboxes.find((m) => m.id === id)).filter((m): m is Mailbox => !!m), ...detail.mailboxes.filter((m) => !chosen.includes(m.id))];
 
+  // One-line summaries shown on folded steps.
+  const total = detail.counts.total ?? 0;
+  const ccList = splitEmails(ccText ?? '').valid;
+  const attachedNames = [
+    ...library.filter((d) => form.attachmentDocumentIds.includes(d.id)).map((d) => d.name),
+    ...(b.video ? [b.video.mode === 'attach' ? `${b.video.fileName} (video)` : `${b.video.title} (video link)`] : []),
+  ];
+  const stepSummary: Record<number, string> = {
+    1: total ? `${total.toLocaleString()} recruiter${total === 1 ? '' : 's'}` : 'No recruiters yet',
+    2: form.mode === 'BCC' ? `BCC groups of ${form.groupSize} · To ${form.toAddress || '— not set'} · ${form.gapSeconds}s pause` : `Individual copies · ${form.gapSeconds}s pause`,
+    3: form.subject.trim() ? `“${form.subject}”${ccList.length ? ` · CC ${ccList.length}` : ''}${form.replyTo ? ` · Reply-To ${form.replyTo}` : ''}` : 'No subject yet',
+    4: attachedNames.length ? attachedNames.join(', ') : 'None (optional)',
+    5: chosen.length ? chosen.map((id) => detail.mailboxes.find((m) => m.id === id)?.emailAddress ?? '').filter(Boolean).join(', ') : 'No mailbox chosen',
+    6: check ? `${check.messages.toLocaleString()} batch${check.messages === 1 ? '' : 'es'} · ${check.eligible.toLocaleString()} will get it${check.total - check.eligible ? ` · ${(check.total - check.eligible).toLocaleString()} skipped` : ''}` : '',
+    7: check ? 'Ready to send' : '',
+  };
+  const stepDone: Record<number, boolean> = {
+    1: total > 0,
+    2: form.mode === 'INDIVIDUAL' || !!form.toAddress,
+    3: !!form.subject.trim() && !!form.body.trim(),
+    4: attachedNames.length > 0,
+    5: chosen.length > 0,
+    6: !!check && check.eligible > 0,
+    7: false,
+  };
+  const steps = { open: openSteps ?? new Set<number>(), toggle: toggleStep };
+
   return (
-    <div className={`space-y-5 p-6 ${draft ? 'max-w-7xl' : 'max-w-5xl'}`}>
+    <StepsContext.Provider value={steps}>
+    <div className={`space-y-3 p-4 sm:p-6 ${draft ? 'max-w-7xl' : 'max-w-5xl'}`}>
       <Link href="/recruiter-send" className="text-sm text-muted-foreground hover:underline">← Recruiter Bulk Send</Link>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -251,13 +315,17 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
       {b.note && <p className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">{b.note}</p>}
 
-      {!draft && <Progress detail={detail} />}
+      {!draft && <Progress detail={detail} page={recipientPage} onPage={setRecipientPage} />}
 
       {draft && (
         <>
-        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)]">
-        <div className="min-w-0 space-y-5">
-          <Section n={1} title="Recruiters" hint="Paste addresses (one per line, or “Name <email>”), upload a CSV/Excel file, or use saved data. Duplicates are removed; unsubscribed, bounced and bad addresses are skipped at the check.">
+        <div className="flex items-center justify-end gap-3 text-xs">
+          <button type="button" onClick={() => setOpenSteps(new Set([1, 2, 3, 4, 5, 6, 7]))} className="text-primary hover:underline">Open all steps</button>
+          <button type="button" onClick={() => setOpenSteps(new Set([7]))} className="text-primary hover:underline">Close all</button>
+        </div>
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+        <div className="min-w-0 space-y-3">
+          <Section n={1} title="Recruiters" summary={stepSummary[1]} done={stepDone[1]} hint="Paste addresses (one per line, or “Name <email>”), upload a CSV/Excel file, or use saved data. Duplicates are removed; unsubscribed, bounced and bad addresses are skipped at the check.">
             <div className="mb-2 flex gap-1 text-xs" role="tablist">
               {(['paste', 'file', 'data'] as const).map((t) => (
                 <button key={t} type="button" role="tab" aria-selected={recipientTab === t} onClick={() => setRecipientTab(t)} className={`rounded px-2.5 py-1 ${recipientTab === t ? 'bg-primary text-primary-foreground' : 'border hover:bg-elevated'}`}>
@@ -289,7 +357,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             )}
           </Section>
 
-          <Section n={2} title="How it goes out">
+          <Section n={2} title="How it goes out" summary={stepSummary[2]} done={stepDone[2]}>
             <div className="grid gap-2 sm:grid-cols-2">
               {(['BCC', 'INDIVIDUAL'] as const).map((m) => (
                 <label key={m} className={`cursor-pointer rounded-lg border p-3 text-sm ${form.mode === m ? 'border-primary ring-1 ring-primary' : ''}`}>
@@ -299,7 +367,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                   </span>
                   <span className="mt-1 block text-xs text-muted-foreground">
                     {m === 'BCC'
-                      ? 'Fastest; fewest Gmail messages. Recruiters see only the “To” address. Opens are counted per group, not per recruiter.'
+                      ? 'Fastest; fewest Gmail messages. Recruiters see only the “To” address. Replies are tracked; opens are not (one email goes to many recruiters).'
                       : 'Each recruiter gets their own email (looks the same). You see exactly which recruiters opened. Uses more of the daily allowance.'}
                   </span>
                 </label>
@@ -319,7 +387,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             </div>
           </Section>
 
-          <Section n={3} title="The email">
+          <Section n={3} title="The email" summary={stepSummary[3]} done={stepDone[3]}>
             <div className="space-y-3">
               <label className="block"><span className={LABEL}>Subject</span><input value={form.subject} onChange={(e) => edit({ subject: e.target.value })} className={FIELD} maxLength={300} /></label>
               <div>
@@ -352,7 +420,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             </div>
           </Section>
 
-          <Section n={4} title="Attachments and video" hint="PDFs from the PDF Library, and optionally a video. Keep attachments under 22 MB in total.">
+          <Section n={4} title="Attachments and video" summary={stepSummary[4]} done={stepDone[4]} hint="PDFs from the PDF Library, and optionally a video. Keep attachments under 22 MB in total.">
             <div className="space-y-4">
               <div>
                 <span className={LABEL}>PDFs (up to 5)</span>
@@ -406,7 +474,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             </div>
           </Section>
 
-          <Section n={5} title="Send from" hint="Tick the mailboxes to use, in order. MailFlow moves to the next one when a mailbox reaches its limit for this send, Google's daily limit, or is paused by Gmail. Leave a limit empty for no extra limit.">
+          <Section n={5} title="Send from" summary={stepSummary[5]} done={stepDone[5]} hint="Tick the mailboxes to use, in order. MailFlow moves to the next one when a mailbox reaches its limit for this send, Google's daily limit, or is paused by Gmail. Leave a limit empty for no extra limit.">
             {detail.mailboxes.length === 0 ? <p className="text-sm text-muted-foreground">Connect your Gmail in Settings first.</p> : (
               <ul className="space-y-2">
                 {mailboxOrder.map((m) => {
@@ -445,7 +513,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           </Section>
 
         </div>
-        <aside className="lg:sticky lg:top-4">
+        <aside className="min-w-0 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-auto">
           <LivePreview
             html={preview}
             envelope={{
@@ -466,7 +534,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
         </aside>
         </div>
 
-          <Section n={6} title="Batches and who receives it" hint="Worked out from the recruiters, batch size, mailboxes and limits above, and updated as you change them. Each batch is one email; it goes from the mailbox shown.">
+          <Section n={6} title="Batches and who receives it" summary={stepSummary[6]} done={stepDone[6]} hint="Worked out from the recruiters, batch size, mailboxes and limits above, and updated as you change them. Each batch is one email; it goes from the mailbox shown.">
             {!(detail.counts.total ?? 0) ? (
               <p className="text-sm text-muted-foreground">Add recruiters in step 1 to see the batches.</p>
             ) : !form.accountIds.length ? (
@@ -481,7 +549,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             )}
           </Section>
 
-          <Section n={7} title="Check and send">
+          <Section n={7} title="Check and send" summary={stepSummary[7]} done={stepDone[7]}>
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={runCheck} disabled={checking || saving === 'saving'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{checking ? 'Checking…' : 'Check again'}</button>
               <button type="button" onClick={async () => { const j = await post('/test', {}, 'test'); if (j) toast.success(`Test sent to ${j.to} from ${j.from}.`); }} disabled={busy === 'test' || saving === 'saving'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'test' ? 'Sending test…' : 'Send a test to me'}</button>
@@ -515,6 +583,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
         </>
       )}
     </div>
+    </StepsContext.Provider>
   );
 }
 
@@ -541,7 +610,7 @@ function summaryItems(form: Blast, check: Check, detail: Detail, library: { id: 
     ['Reply-To', form.replyTo ?? 'the sending account'],
     ['Subject', form.subject],
     ['Attachments', [...docs, ...(video ? [video] : [])].join(', ')],
-    ['Tracking', 'opens only (links are sent as written)'],
+    ['Tracking', form.mode === 'INDIVIDUAL' ? 'opens and replies (links are sent as written)' : 'replies (opens only for individual copies; links are sent as written)'],
   ];
 }
 
@@ -569,32 +638,36 @@ function pickEditable(b: Blast) {
   };
 }
 
-function Progress({ detail }: { detail: Detail }) {
+const RECIPIENTS_PER_PAGE = 200; // matches app/api/recruiter-blasts/[id]/route.ts
+
+function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPage: (p: number) => void }) {
   const b = detail.blast;
-  const { messagesSent: sentMessages, messagesTotal: totalMessages, opens, openedRecruiters } = detail.stats;
+  const { messagesSent: sentMessages, messagesTotal: totalMessages, openedRecruiters } = detail.stats;
+  // Open counts only where they name a recruiter: a BCC email is one message for many people.
+  const showOpens = b.mode === 'INDIVIDUAL';
   const share = totalMessages ? sentMessages / totalMessages : 0;
   return (
     <div className="space-y-4">
       <section className="rounded-lg border bg-card p-4">
-        <div className="grid gap-3 sm:grid-cols-5">
+        <div className={`grid grid-cols-2 gap-3 ${showOpens ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
           <div><div className="text-xs text-muted-foreground">Recruiters sent</div><div className="text-xl font-semibold">{(detail.counts.SENT ?? 0).toLocaleString()} / {((detail.counts.total ?? 0) - (detail.counts.SKIPPED ?? 0)).toLocaleString()}</div></div>
           <div><div className="text-xs text-muted-foreground">Emails sent</div><div className="text-xl font-semibold">{sentMessages} / {totalMessages}</div></div>
-          <div><div className="text-xs text-muted-foreground">{b.mode === 'INDIVIDUAL' ? 'Recruiters who opened' : 'Opens (all groups)'}</div><div className="text-xl font-semibold">{b.mode === 'INDIVIDUAL' ? openedRecruiters : opens}</div></div>
+          {showOpens && <div><div className="text-xs text-muted-foreground">Recruiters who opened</div><div className="text-xl font-semibold">{openedRecruiters}</div></div>}
           <div><div className="text-xs text-muted-foreground">Replied</div><div className="text-xl font-semibold"><a className="hover:underline" href={`/inbox?filter=all&q=${encodeURIComponent(b.subject.trim())}`}>{detail.counts.REPLIED ?? 0}</a></div></div>
           <div><div className="text-xs text-muted-foreground">Skipped / failed</div><div className="text-xl font-semibold">{(detail.counts.SKIPPED ?? 0) + (detail.counts.FAILED ?? 0)}</div></div>
         </div>
         <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={sentMessages} aria-valuemax={totalMessages} aria-label="Emails sent">
           <div className="h-full bg-primary" style={{ width: `${share * 100}%` }} />
         </div>
-        {b.mode === 'BCC' && <p className="mt-2 text-xs text-muted-foreground">BCC emails share one open counter per group, so opens show how much each group was read — not which recruiter. Gmail caches images, so counts run low.</p>}
+        {b.mode === 'BCC' && <p className="mt-2 text-xs text-muted-foreground">Replies show who engaged. Opens aren&apos;t tracked for BCC sends (one email goes to many recruiters, so it can&apos;t say who opened); use individual copies to see opens.</p>}
       </section>
 
       <section className="rounded-lg border bg-card p-4">
         <h2 className="mb-2 text-sm font-semibold">{b.mode === 'BCC' ? 'Groups' : 'Emails'}</h2>
         <div className="max-h-96 overflow-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[520px] text-sm">
             <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
-              <tr><th className="py-1 pr-2 font-medium">#</th><th className="py-1 pr-2 font-medium">Recruiters</th><th className="py-1 pr-2 font-medium">From</th><th className="py-1 pr-2 font-medium">Sent</th><th className="py-1 pr-2 font-medium">Opens</th><th className="py-1 font-medium">Status</th></tr>
+              <tr><th className="py-1 pr-2 font-medium">#</th><th className="py-1 pr-2 font-medium">Recruiters</th><th className="py-1 pr-2 font-medium">From</th><th className="py-1 pr-2 font-medium">Sent</th>{showOpens && <th className="py-1 pr-2 font-medium">Opens</th>}<th className="py-1 font-medium">Status</th></tr>
             </thead>
             <tbody>
               {detail.groups.map((g) => (
@@ -603,7 +676,7 @@ function Progress({ detail }: { detail: Detail }) {
                   <td className="py-1 pr-2">{g.recipientCount}</td>
                   <td className="py-1 pr-2 text-xs">{g.fromEmail ?? '—'}</td>
                   <td className="whitespace-nowrap py-1 pr-2 text-xs">{g.sentAt && g.status === 'SENT' ? new Date(g.sentAt).toLocaleString() : '—'}</td>
-                  <td className="py-1 pr-2">{g.openCount}{g.firstOpenedAt && <span className="block text-xs text-muted-foreground">first {new Date(g.firstOpenedAt).toLocaleString()}</span>}</td>
+                  {showOpens && <td className="py-1 pr-2">{g.openCount}{g.firstOpenedAt && <span className="block text-xs text-muted-foreground">first {new Date(g.firstOpenedAt).toLocaleString()}</span>}</td>}
                   <td className="py-1 text-xs">{g.status.toLowerCase()}{g.error && g.status !== 'SENT' && <span className="block text-red-600">{g.error}</span>}</td>
                 </tr>
               ))}
@@ -615,7 +688,7 @@ function Progress({ detail }: { detail: Detail }) {
       <section className="rounded-lg border bg-card p-4">
         <h2 className="mb-2 text-sm font-semibold">Recruiters</h2>
         <div className="max-h-96 overflow-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[520px] text-sm">
             <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
               <tr><th className="py-1 pr-2 font-medium">Recruiter</th><th className="py-1 pr-2 font-medium">Status</th>{b.mode === 'INDIVIDUAL' && <th className="py-1 pr-2 font-medium">Opened</th>}<th className="py-1 font-medium">Replied</th></tr>
             </thead>
@@ -631,7 +704,10 @@ function Progress({ detail }: { detail: Detail }) {
             </tbody>
           </table>
         </div>
-        {(detail.counts.total ?? 0) > detail.recipients.length && <p className="mt-1 text-xs text-muted-foreground">Showing the first {detail.recipients.length} (replied, then most opened, first).</p>}
+        <div className="mt-2 space-y-1">
+          <Pager page={page} pages={Math.max(1, Math.ceil((detail.counts.total ?? 0) / RECIPIENTS_PER_PAGE))} onPage={onPage} label="Recruiter pages" />
+          <p className="text-center text-xs text-muted-foreground">{(detail.counts.total ?? 0).toLocaleString()} recruiters · replied first{detail.blast.mode === 'INDIVIDUAL' ? ', then most opened' : ''}.</p>
+        </div>
       </section>
     </div>
   );

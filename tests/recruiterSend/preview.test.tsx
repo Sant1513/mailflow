@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { LivePreview, SendSummary, WhoReceives } from '@/components/recruiter-send/RecruiterPreview';
+import { EmailViewer, LivePreview, Pager, SendSummary, WhoReceives } from '@/components/recruiter-send/RecruiterPreview';
 import { assignMailboxes } from '@/lib/recruiterSend/plan';
 import { previewHtml } from '@/lib/recruiterSend/core';
 
@@ -40,6 +40,29 @@ describe('recruiter send previews', () => {
     expect(html).toContain('Batches (2 emails)');
     expect(html).toContain('#1');
     expect(html).toContain('later — allowance used up');
+  });
+
+  it('pages long lists and hides the pager when one page is enough', () => {
+    const html = renderToStaticMarkup(<Pager page={2} pages={5} onPage={() => undefined} />);
+    expect(html).toContain('Page 2 of 5');
+    expect(html).toContain('Next');
+    expect(renderToStaticMarkup(<Pager page={1} pages={1} onPage={() => undefined} />)).toBe('');
+  });
+
+  it('lets the email viewer be sized: Desktop / Phone, a width slider, a draggable height', () => {
+    const html = renderToStaticMarkup(<EmailViewer html="<p>Hi</p>" storageKey="t" />);
+    expect(html).toContain('type="range"');
+    expect(html).toContain('resize:vertical');
+    expect(html).toContain('Phone');
+    expect(html).toContain('Reset');
+  });
+
+  it('pages the recruiter table 50 at a time', () => {
+    const people = Array.from({ length: 120 }, (_, i) => ({ email: `r${i}@corp.com`, name: null, batch: 1, mailbox: 'one@x.com', skipped: null }));
+    const html = renderToStaticMarkup(<WhoReceives people={people} batches={[{ seq: 1, size: 120, mailbox: 'one@x.com' }]} total={120} html="<p>Hi</p>" subject="S" mode="BCC" />);
+    expect(html).toContain('r49@corp.com');
+    expect(html).not.toContain('r50@corp.com');
+    expect(html).toContain('Page 1 of 3');
   });
 
   it('shows the review card with every setting and its warnings', () => {

@@ -11,11 +11,14 @@ export function EmailPreview({
   html,
   mode,
   width: explicitWidth,
+  height,
 }: {
   html: string;
   mode: 'desktop' | 'mobile';
   /** Exact frame width in px (the preview slider); overrides the mode preset. */
   width?: number | null;
+  /** Exact frame height in px (a resizable viewer); defaults to at least 480. */
+  height?: number | null;
 }) {
   const width = explicitWidth ?? (mode === 'mobile' ? 375 : 700);
 
@@ -26,7 +29,7 @@ export function EmailPreview({
         sandbox=""
         srcDoc={html}
         title="Email preview"
-        style={{ width, maxWidth: '100%', height: '100%', minHeight: 480, border: '1px solid hsl(var(--border))', borderRadius: 6, background: '#fff' }}
+        style={{ width, maxWidth: '100%', height: height ?? '100%', minHeight: height ?? 480, border: '1px solid hsl(var(--border))', borderRadius: 6, background: '#fff' }}
       />
     </div>
   );

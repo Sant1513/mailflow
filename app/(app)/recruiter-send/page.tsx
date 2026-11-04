@@ -65,7 +65,7 @@ export default function RecruiterSendList() {
         <div>
           <h1 className="text-xl font-semibold">Recruiter Bulk Send</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            One email to many recruiters — in BCC groups of up to 250, or as individual copies — from the mailboxes you choose. Opens are tracked;
+            One email to many recruiters — in BCC groups of up to 250, or as individual copies — from the mailboxes you choose. Replies come to your inbox; opens are tracked for individual copies;
             links are left as you write them.
           </p>
         </div>
@@ -110,7 +110,7 @@ export default function RecruiterSendList() {
                     {r.skipped > 0 && <div className="text-xs text-muted-foreground">{r.skipped} skipped</div>}
                   </td>
                   <td className="whitespace-nowrap px-3 py-2">
-                    {r.mode === 'INDIVIDUAL' ? `${r.openedRecruiters ?? 0} recruiters` : `${r.opens} opens`}
+                    {r.mode === 'INDIVIDUAL' ? `${r.openedRecruiters ?? 0} recruiters` : <span className="text-muted-foreground" title="Opens aren't tracked for BCC sends">—</span>}
                     <div className="text-xs text-muted-foreground">{r.messagesSent} email{r.messagesSent === 1 ? '' : 's'} sent</div>
                   </td>
                   <td className="px-3 py-2 text-right">

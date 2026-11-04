@@ -64,13 +64,14 @@ describe('the email', () => {
 
   it('adds the open pixel and unsubscribe line but leaves links exactly as written', () => {
     const html = '<html><body><p>Hi, see <a href="https://masaischool.com/jobs">openings</a></p></body></html>';
-    const bcc = core.decorate(html, { groupId: 'g1', mode: 'BCC', workspaceId: 'w1', blastId: 'b1' });
+    const bcc = core.decorate(html, { groupId: 'g1', mode: 'BCC', workspaceId: 'w1', blastId: 'b1', pixel: false });
     expect(bcc.html).toContain('href="https://masaischool.com/jobs"');
     expect(bcc.html).not.toContain('/api/track/click');
-    expect(bcc.html).toContain('/api/track/rb/');
+    expect(bcc.html).not.toContain('/api/track/rb/');
     expect(bcc.unsubscribeUrl).toContain('/unsubscribe/list/');
     const one = core.decorate(html, { groupId: 'g1', mode: 'INDIVIDUAL', workspaceId: 'w1', blastId: 'b1', recipientEmail: 'a@b.com' });
     expect(one.unsubscribeUrl).not.toContain('/unsubscribe/list/');
+    expect(one.html).toContain('/api/track/rb/');
   });
 
   it('puts a link video before the signature, with a YouTube thumbnail', () => {
