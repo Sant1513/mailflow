@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { LivePreview, WhoReceives } from '@/components/recruiter-send/RecruiterPreview';
+import { LivePreview, SendSummary, WhoReceives } from '@/components/recruiter-send/RecruiterPreview';
 import { assignMailboxes } from '@/lib/recruiterSend/plan';
 import { previewHtml } from '@/lib/recruiterSend/core';
 
@@ -37,6 +37,14 @@ describe('recruiter send previews', () => {
     expect(html).toContain('Will get it');
     expect(html).toContain('domain has no mail server');
     expect(html).toContain('Later (daily allowance used up)');
+    expect(html).toContain('Batches (2 emails)');
+    expect(html).toContain('#1');
+    expect(html).toContain('later — allowance used up');
+  });
+
+  it('shows the review card with every setting and its warnings', () => {
+    const html = renderToStaticMarkup(<SendSummary items={[['Batches', '3 emails'], ['CC', 'lead@masaischool.com'], ['Sending accounts (in order)', '1. one@x.com (limit 500)']]} warnings={['Add a subject.']} />);
+    for (const t of ['Review before sending', '3 emails', 'lead@masaischool.com', '1. one@x.com (limit 500)', 'Add a subject.']) expect(html).toContain(t);
   });
 
   it("plans batches onto mailboxes like the sender: in order, within the send's limit and today's allowance", () => {

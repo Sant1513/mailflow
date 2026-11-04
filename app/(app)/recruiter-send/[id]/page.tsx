@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
-import { LivePreview, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
+import { LivePreview, SendSummary, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
 
 type Mode = 'BCC' | 'INDIVIDUAL';
 interface Video { mode: 'attach'; ref: string; fileName: string; size: number; contentType: string }
@@ -105,7 +105,8 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     if (!form) return;
     const next = { ...form, ...patch };
     setForm(next);
-    setCheck(null);
+    // Batches depend on these; the plan refreshes by itself once the change is saved.
+    const affectsPlan = (['accountIds', 'accountLimits', 'groupSize', 'mode'] as const).some((k) => k in patch);
     setSaving('saving');
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -118,6 +119,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       if (res?.ok) {
         setSaving('saved');
         if (typeof j?.previewHtml === 'string') setPreview(j.previewHtml);
+        if (affectsPlan) runCheck();
       }
       else {
         setSaving('idle');
@@ -140,17 +142,32 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     if (j) {
       toast.success(`${j.added.toLocaleString()} recruiter${j.added === 1 ? '' : 's'} from the ${j.source}.${j.unreadableCount ? ` ${j.unreadableCount} line(s) had no email address.` : ''}`);
       setPasted('');
-      setCheck(null);
       load();
+      runCheck();
     }
   }
 
+  // The plan (batches, mailboxes, who gets it). Only the latest answer is kept.
+  const checkSeq = useRef(0);
   async function runCheck() {
+    const seq = ++checkSeq.current;
     setChecking(true);
-    const j = await post('/check', {}, 'check');
+    const res = await fetch(`/api/recruiter-blasts/${params.id}/check`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => null);
+    const j = await res?.json().catch(() => ({}));
+    if (seq !== checkSeq.current) return;
     setChecking(false);
-    if (j) setCheck(j);
+    if (res?.ok) setCheck(j);
+    else toast.error(j?.error ?? 'Could not work out the batches.');
   }
+
+  // Show the plan as soon as a draft with recruiters opens.
+  const planned = useRef(false);
+  useEffect(() => {
+    if (planned.current || !detail || detail.blast.status !== 'DRAFT' || !(detail.counts.total ?? 0)) return;
+    planned.current = true;
+    runCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail]);
 
   async function uploadVideo(file: File) {
     setBusy('video');
@@ -237,6 +254,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       {!draft && <Progress detail={detail} />}
 
       {draft && (
+        <>
         <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)]">
         <div className="min-w-0 space-y-5">
           <Section n={1} title="Recruiters" hint="Paste addresses (one per line, or “Name <email>”), upload a CSV/Excel file, or use saved data. Duplicates are removed; unsubscribed, bounced and bad addresses are skipped at the check.">
@@ -426,37 +444,6 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             {form.mode === 'BCC' && <p className="mt-2 text-xs text-muted-foreground">Limits count whole groups: with groups of {form.groupSize}, a limit of 400 sends one group from that mailbox and moves on.</p>}
           </Section>
 
-          <Section n={6} title="Check and send">
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={runCheck} disabled={checking || saving === 'saving'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{checking ? 'Checking…' : 'Check'}</button>
-              <button type="button" onClick={async () => { const j = await post('/test', {}, 'test'); if (j) toast.success(`Test sent to ${j.to} from ${j.from}.`); }} disabled={busy === 'test' || saving === 'saving'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'test' ? 'Sending test…' : 'Send a test to me'}</button>
-            </div>
-            {check && (
-              <div className="mt-4 space-y-3 text-sm">
-                <p>
-                  <b>{check.eligible.toLocaleString()}</b> of {check.total.toLocaleString()} recruiters will get it, in <b>{check.messages.toLocaleString()}</b> email{check.messages === 1 ? '' : 's'}
-                  {form.mode === 'BCC' ? ` (up to ${check.perMessage} each)` : ''}. About {check.estimatedMinutes} minute{check.estimatedMinutes === 1 ? '' : 's'} with the pause you set.
-                </p>
-                {check.messagesPossibleToday < check.messages && (
-                  <p className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
-                    The chosen mailboxes can send about {check.messagesPossibleToday} of these {check.messages} emails today; the rest go out automatically as their daily limits free up. Tick more mailboxes to finish sooner.
-                  </p>
-                )}
-                {Object.keys(check.skippedByReason).length > 0 && (
-                  <details>
-                    <summary className="cursor-pointer">{Object.values(check.skippedByReason).reduce((a, b2) => a + b2, 0)} skipped: {Object.entries(check.skippedByReason).map(([k, v]) => `${v} ${SKIP_LABEL[k] ?? k}`).join(', ')}</summary>
-                    <ul className="mt-1 max-h-40 overflow-auto text-xs text-muted-foreground">{check.skipped.map((s) => <li key={s.email}>{s.email} — {s.reason}</li>)}</ul>
-                  </details>
-                )}
-                <WhoReceives people={check.people} batches={check.batches} total={check.total} html={check.preview} subject={form.subject} mode={form.mode} />
-                <div className="flex flex-wrap items-end gap-2 border-t pt-3">
-                  <button type="button" onClick={() => start(false)} disabled={busy === 'start' || check.eligible === 0} className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy === 'start' ? 'Starting…' : 'Send now'}</button>
-                  <label className="text-xs">or schedule for <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} className="ml-1 rounded border bg-background px-1 py-0.5" /></label>
-                  <button type="button" onClick={() => start(true)} disabled={!scheduleAt || busy === 'start' || check.eligible === 0} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">Schedule</button>
-                </div>
-              </div>
-            )}
-          </Section>
         </div>
         <aside className="lg:sticky lg:top-4">
           <LivePreview
@@ -478,9 +465,93 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           />
         </aside>
         </div>
+
+          <Section n={6} title="Batches and who receives it" hint="Worked out from the recruiters, batch size, mailboxes and limits above, and updated as you change them. Each batch is one email; it goes from the mailbox shown.">
+            {!(detail.counts.total ?? 0) ? (
+              <p className="text-sm text-muted-foreground">Add recruiters in step 1 to see the batches.</p>
+            ) : !form.accountIds.length ? (
+              <p className="text-sm text-muted-foreground">Choose at least one mailbox in step 5 to see which account sends each batch.</p>
+            ) : !check ? (
+              <p className="text-sm text-muted-foreground">{checking ? 'Working out the batches…' : 'Batches will appear here.'}</p>
+            ) : (
+              <div className={`space-y-3 ${checking ? 'opacity-60 transition-opacity' : ''}`}>
+                <SendSummary items={summaryItems(form, check, detail, library, splitEmails(ccText ?? '').valid)} warnings={summaryWarnings(form, check)} />
+                <WhoReceives people={check.people} batches={check.batches} total={check.total} html={preview} subject={form.subject} mode={form.mode} />
+              </div>
+            )}
+          </Section>
+
+          <Section n={7} title="Check and send">
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={runCheck} disabled={checking || saving === 'saving'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{checking ? 'Checking…' : 'Check again'}</button>
+              <button type="button" onClick={async () => { const j = await post('/test', {}, 'test'); if (j) toast.success(`Test sent to ${j.to} from ${j.from}.`); }} disabled={busy === 'test' || saving === 'saving'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'test' ? 'Sending test…' : 'Send a test to me'}</button>
+            </div>
+            {check && (
+              <div className="mt-4 space-y-3 text-sm">
+                <p>
+                  <b>{check.eligible.toLocaleString()}</b> of {check.total.toLocaleString()} recruiters will get it, in <b>{check.messages.toLocaleString()}</b> email{check.messages === 1 ? '' : 's'}
+                  {form.mode === 'BCC' ? ` (up to ${check.perMessage} each)` : ''}. About {check.estimatedMinutes} minute{check.estimatedMinutes === 1 ? '' : 's'} with the pause you set.
+                </p>
+                {check.messagesPossibleToday < check.messages && (
+                  <p className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+                    The chosen mailboxes can send about {check.messagesPossibleToday} of these {check.messages} emails today; the rest go out automatically as their daily limits free up. Tick more mailboxes to finish sooner.
+                  </p>
+                )}
+                {Object.keys(check.skippedByReason).length > 0 && (
+                  <details>
+                    <summary className="cursor-pointer">{Object.values(check.skippedByReason).reduce((a, b2) => a + b2, 0)} skipped: {Object.entries(check.skippedByReason).map(([k, v]) => `${v} ${SKIP_LABEL[k] ?? k}`).join(', ')}</summary>
+                    <ul className="mt-1 max-h-40 overflow-auto text-xs text-muted-foreground">{check.skipped.map((s) => <li key={s.email}>{s.email} — {s.reason}</li>)}</ul>
+                  </details>
+                )}
+                                <div className="flex flex-wrap items-end gap-2 border-t pt-3">
+                  <button type="button" onClick={() => start(false)} disabled={busy === 'start' || check.eligible === 0} className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy === 'start' ? 'Starting…' : 'Send now'}</button>
+                  <label className="text-xs">or schedule for <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} className="ml-1 rounded border bg-background px-1 py-0.5" /></label>
+                  <button type="button" onClick={() => start(true)} disabled={!scheduleAt || busy === 'start' || check.eligible === 0} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">Schedule</button>
+                </div>
+              </div>
+            )}
+          </Section>
+
+        </>
       )}
     </div>
   );
+}
+
+/** The settings of a send, as the "Review before sending" card lists them. */
+function summaryItems(form: Blast, check: Check, detail: Detail, library: { id: string; name: string }[], cc: string[]): [string, string][] {
+  const mailboxes = form.accountIds
+    .map((id) => detail.mailboxes.find((m) => m.id === id))
+    .filter((m): m is Mailbox => !!m)
+    .map((m, i) => `${i + 1}. ${m.emailAddress}${form.accountLimits?.[m.id] ? ` (limit ${form.accountLimits[m.id]})` : ''}`)
+    .join(', ');
+  const skipped = check.total - check.eligible;
+  const docs = library.filter((d) => form.attachmentDocumentIds.includes(d.id)).map((d) => d.name);
+  const video = detail.blast.video ? (detail.blast.video.mode === 'attach' ? `${detail.blast.video.fileName} (attached)` : `${detail.blast.video.title} (link)`) : '';
+  return [
+    ['Send as', form.mode === 'BCC' ? `BCC groups of up to ${check.perMessage}` : 'Individual copies (one email per recruiter)'],
+    ['Recruiters', `${check.eligible.toLocaleString()} will get it${skipped ? ` · ${skipped.toLocaleString()} skipped` : ''} (of ${check.total.toLocaleString()})`],
+    ['Batches', `${check.messages.toLocaleString()} email${check.messages === 1 ? '' : 's'}`],
+    ['Pause between emails', `${form.gapSeconds}s · about ${check.estimatedMinutes} min in all`],
+    ['From name', form.fromName ?? ''],
+    ['Sending accounts (in order)', mailboxes],
+    ['To', form.mode === 'BCC' ? form.toAddress ?? '' : 'each recruiter'],
+    ['CC', cc.join(', ')],
+    ['BCC', form.mode === 'BCC' ? 'the recruiters of each batch' : ''],
+    ['Reply-To', form.replyTo ?? 'the sending account'],
+    ['Subject', form.subject],
+    ['Attachments', [...docs, ...(video ? [video] : [])].join(', ')],
+    ['Tracking', 'opens only (links are sent as written)'],
+  ];
+}
+
+function summaryWarnings(form: Blast, check: Check): string[] {
+  const w: string[] = [];
+  if (!form.subject.trim()) w.push('Add a subject.');
+  if (form.mode === 'BCC' && !form.toAddress) w.push('BCC sends need a visible “To” address.');
+  if (check.messagesPossibleToday < check.messages) w.push(`The chosen accounts can send about ${check.messagesPossibleToday} of these ${check.messages} emails today; the rest go out as their daily limits free up.`);
+  if (check.batches.some((b) => !b.mailbox)) w.push('Some batches have no account with room today (see “later” below): raise a limit or tick another account to send them today.');
+  return w;
 }
 
 /** Comma / space / newline separated addresses: the valid ones (lower-cased, unique) and the rest. */

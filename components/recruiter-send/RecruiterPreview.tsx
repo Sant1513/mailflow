@@ -75,6 +75,28 @@ export function LivePreview({ html, envelope }: { html: string; envelope: Envelo
   );
 }
 
+/** "Review before sending": every setting of the send at a glance, like a campaign's review. */
+export function SendSummary({ items, warnings }: { items: [string, string][]; warnings: string[] }) {
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Review before sending</div>
+      <dl className="grid gap-x-8 gap-y-1.5 text-sm sm:grid-cols-2">
+        {items.map(([k, v]) => (
+          <div key={k} className="flex min-w-0 gap-1.5">
+            <dt className="shrink-0 text-muted-foreground">{k}:</dt>
+            <dd className="min-w-0 break-words font-medium">{v || '—'}</dd>
+          </div>
+        ))}
+      </dl>
+      {warnings.length > 0 && (
+        <ul className="mt-3 space-y-1 text-xs text-warning">
+          {warnings.map((w) => <li key={w}>⚠ {w}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export interface PlannedPerson { email: string; name: string | null; batch: number | null; mailbox: string | null; skipped: string | null }
 export interface PlannedBatch { seq: number; size: number; mailbox: string | null }
 
@@ -97,8 +119,22 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
     return [...m.entries()];
   }, [batches]);
 
+  const firstIn = useMemo(() => {
+    const m = new Map<number, { first: string; count: number }>();
+    for (const p of people) {
+      if (p.batch == null) continue;
+      const v = m.get(p.batch);
+      if (v) v.count += 1;
+      else m.set(p.batch, { first: p.email, count: 1 });
+    }
+    return m;
+  }, [people]);
+  const [batchFilter, setBatchFilter] = useState<number | null>(null);
+  const visibleRows = batchFilter == null ? shown : rows.filter((p) => p.batch === batchFilter);
+
   return (
     <div className="space-y-3">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       {byMailbox.length > 0 && (
         <div className="rounded-lg border bg-card p-3">
           <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Whose account sends it</div>
@@ -113,11 +149,46 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
           <p className="mt-1 text-[11px] text-muted-foreground">Planned from today&apos;s allowances; if a mailbox fills up or Gmail pauses it while sending, the next chosen one takes over.</p>
         </div>
       )}
+        <div className="flex min-w-0 flex-col rounded-lg border bg-card">
+          <div className="flex items-center justify-between border-b px-3 py-2">
+            <span className="text-xs font-semibold uppercase text-muted-foreground">Batches ({batches.length.toLocaleString()} email{batches.length === 1 ? '' : 's'})</span>
+            {batchFilter != null && <button type="button" onClick={() => setBatchFilter(null)} className="text-xs text-primary hover:underline">Show everyone</button>}
+          </div>
+          <div className="max-h-56 overflow-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-card text-left text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-1.5 font-medium">{sendMode === 'BCC' ? 'Batch' : 'Email'}</th>
+                  <th className="px-2 py-1.5 font-medium">Recruiters</th>
+                  <th className="px-2 py-1.5 font-medium">Sends from</th>
+                  <th className="px-2 py-1.5 font-medium">Starts with</th>
+                </tr>
+              </thead>
+              <tbody>
+                {batches.map((bt) => (
+                  <tr
+                    key={bt.seq}
+                    onClick={() => setBatchFilter(bt.seq)}
+                    className={`cursor-pointer border-t border-border-subtle hover:bg-elevated ${batchFilter === bt.seq ? 'bg-elevated' : ''}`}
+                    title="Show the recruiters in this batch"
+                  >
+                    <td className="px-3 py-1.5 font-medium">#{bt.seq}</td>
+                    <td className="px-2 py-1.5">{bt.size.toLocaleString()}</td>
+                    <td className="max-w-[14rem] truncate px-2 py-1.5" title={bt.mailbox ?? ''}>{bt.mailbox ?? <span className="text-warning">later — allowance used up</span>}</td>
+                    <td className="max-w-[12rem] truncate px-2 py-1.5 text-muted-foreground">{firstIn.get(bt.seq)?.first ?? ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="border-t px-3 py-1.5 text-[11px] text-muted-foreground">Click a batch to list its recruiters below.</p>
+        </div>
+      </div>
 
       <div className="grid gap-3 xl:grid-cols-2">
         <div className="flex min-w-0 flex-col rounded-lg border bg-card">
           <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-            <span className="text-xs font-semibold uppercase text-muted-foreground">Who receives this</span>
+            <span className="text-xs font-semibold uppercase text-muted-foreground">Who receives this{batchFilter != null ? ` — batch #${batchFilter}` : ''}</span>
             <select value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)} className="rounded border bg-background px-1 py-0.5 text-xs" aria-label="Show">
               <option value="all">Everyone ({people.length.toLocaleString()})</option>
               <option value="sending">Will get it</option>
@@ -136,7 +207,7 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
                 </tr>
               </thead>
               <tbody>
-                {shown.map((p) => (
+                {visibleRows.map((p) => (
                   <tr key={p.email} className={`border-t border-border-subtle ${p.skipped ? 'bg-red-50 dark:bg-red-950/30' : ''}`}>
                     <td className="max-w-[14rem] truncate px-3 py-1.5" title={p.email}>{p.email}</td>
                     <td className="max-w-[8rem] truncate px-2 py-1.5">{p.name ?? ''}</td>
@@ -148,7 +219,7 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
               </tbody>
             </table>
           </div>
-          {rows.length > 50 && (
+          {batchFilter == null && rows.length > 50 && (
             <button type="button" onClick={() => setShowAll((s) => !s)} className="border-t px-3 py-2 text-xs text-primary hover:bg-elevated">
               {showAll ? 'Show fewer' : `Show all ${rows.length.toLocaleString()}`}
             </button>
