@@ -413,7 +413,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                     {form.mode === 'BCC' ? 'Copied on every email; recruiters can see CC addresses.' : 'Each CC address gets one copy per recruiter, so CC works with up to 50 recruiters in individual mode.'}
                   </span>
                 </label>
-                <label><span className={LABEL}>Reply-To (optional)</span><input value={form.replyTo ?? ''} onChange={(e) => edit({ replyTo: e.target.value })} className={FIELD} placeholder="Replies go here instead of the sending mailbox" /></label>
+                <label><span className={LABEL}>Reply-To (optional)</span><input value={form.replyTo ?? ''} onChange={(e) => edit({ replyTo: e.target.value })} className={FIELD} placeholder="e.g. hr@masaischool.com" /><span className="mt-0.5 block text-xs text-muted-foreground">Replies go to this address <b>and</b> the sending mailbox, so MailFlow still tracks every reply.</span></label>
               </div>
               {detail.hasSignature && (
                 <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.includeSignature} onChange={(e) => edit({ includeSignature: e.target.checked })} />Add my email signature</label>
@@ -608,7 +608,7 @@ function summaryItems(form: Blast, check: Check, detail: Detail, library: { id: 
     ['To', form.mode === 'BCC' ? form.toAddress ?? '' : 'each recruiter'],
     ['CC', cc.join(', ')],
     ['BCC', form.mode === 'BCC' ? 'the recruiters of each batch' : ''],
-    ['Reply-To', form.replyTo ?? 'the sending account'],
+    ['Reply-To', form.replyTo ? `${form.replyTo} + the sending account (so replies are tracked)` : 'the sending account'],
     ['Subject', form.subject],
     ['Attachments', [...docs, ...(video ? [video] : [])].join(', ')],
     ['Tracking', form.mode === 'INDIVIDUAL' ? 'opens and replies (links are sent as written)' : 'replies (opens only for individual copies; links are sent as written)'],

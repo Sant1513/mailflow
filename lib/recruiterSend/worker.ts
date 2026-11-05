@@ -5,7 +5,7 @@ import { GmailProvider } from '@/lib/email/gmail';
 import { SendEmailError, type EmailAttachment, type SendEmailInput } from '@/lib/email/provider';
 import type { EmailProviderAccount } from '@prisma/client';
 import { backoffUntil, usageLast24h, wouldExceedDaily } from '@/lib/queue/drain';
-import { decorate, type BlastMode } from '@/lib/recruiterSend/core';
+import { decorate, replyToHeader, type BlastMode } from '@/lib/recruiterSend/core';
 import { readVideo } from '@/lib/recruiterSend/video';
 import { sendViaUpload, UPLOAD_THRESHOLD_BYTES } from '@/lib/recruiterSend/gmailUpload';
 import { readRef } from '@/lib/storage/files';
@@ -222,7 +222,8 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
           bcc,
           fromName: blast.fromName || account.displayName || account.emailAddress,
           fromEmail: account.emailAddress,
-          replyTo: blast.replyTo ?? undefined,
+          // Custom Reply-To plus the sending mailbox, so replies reach MailFlow too.
+          replyTo: replyToHeader(blast.replyTo, account.emailAddress),
           subject: blast.subject,
           html: decorated.html,
           plainText: `${blast.plainText}\n\nUnsubscribe: ${decorated.unsubscribeUrl}`,

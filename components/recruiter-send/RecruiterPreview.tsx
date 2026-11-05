@@ -121,7 +121,7 @@ export function LivePreview({ html, envelope }: { html: string; envelope: Envelo
     ['To', e.mode === 'BCC' ? e.toAddress || '— add the visible “To” address' : 'each recruiter, one email each'],
     ...(e.ccAddresses.length ? [['CC', e.ccAddresses.join(', ')] as [string, string]] : []),
     ...(e.mode === 'BCC' ? [['Bcc', `up to ${e.perEmail} recruiters per email (hidden from each other)`] as [string, string]] : []),
-    ...(e.replyTo ? [['Reply-To', e.replyTo] as [string, string]] : []),
+    ...(e.replyTo ? [['Reply-To', `${e.replyTo}, ${e.fromEmail ?? 'the sending mailbox'}`] as [string, string]] : []),
   ];
   return (
     <div className="overflow-hidden rounded-lg border bg-card">

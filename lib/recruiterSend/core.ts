@@ -128,6 +128,18 @@ export function readListUnsubscribeToken(token: string): string | null {
 }
 
 /** Adds the open pixel and an unsubscribe line before </body>. Links are not touched. */
+/**
+ * The Reply-To header for a recruiter email. With a custom Reply-To, a recruiter's reply (and
+ * reply-all) went ONLY there, so the sending mailbox never got it and MailFlow couldn't track
+ * it. Both addresses are listed, so every reply also reaches the sending mailbox.
+ */
+export function replyToHeader(replyTo: string | null | undefined, sendingAddress: string): string | undefined {
+  const custom = replyTo?.trim();
+  if (!custom) return undefined; // replies go to the sender (From) anyway
+  if (custom.toLowerCase() === sendingAddress.trim().toLowerCase()) return custom;
+  return `${custom}, ${sendingAddress.trim()}`;
+}
+
 export function decorate(html: string, opts: { groupId: string; mode: BlastMode; workspaceId: string; blastId: string; recipientEmail?: string; pixel?: boolean }): {
   html: string;
   unsubscribeUrl: string;

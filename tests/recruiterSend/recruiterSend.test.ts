@@ -56,6 +56,13 @@ describe('recruiter lists', () => {
 });
 
 describe('the email', () => {
+  it('lists the sending mailbox in Reply-To too, so replies are tracked', () => {
+    expect(core.replyToHeader('manas@masaischool.com', 'placements@masaischool.com')).toBe('manas@masaischool.com, placements@masaischool.com');
+    expect(core.replyToHeader('Placements@masaischool.com', 'placements@masaischool.com')).toBe('Placements@masaischool.com');
+    expect(core.replyToHeader(null, 'placements@masaischool.com')).toBeUndefined();
+    expect(core.replyToHeader('  ', 'placements@masaischool.com')).toBeUndefined();
+  });
+
   it('signs open and unsubscribe tokens', () => {
     const t = core.openToken('grp1');
     expect(core.readOpenToken(t)).toBe('grp1');
@@ -105,7 +112,7 @@ describe('sending', () => {
   it('BCC: one message to the visible To, recruiters in Bcc, with Reply-To, links untouched', async () => {
     const r = await runRecruiterWorker({ budgetMs: 20_000 });
     expect(r.sent).toBe(1);
-    expect(sent[0]).toMatchObject({ from: 'one@masaischool.com', to: 'placements@masaischool.com', bcc: ['a@corp.com', 'b@corp.com'], replyTo: 'hr@masaischool.com', listUnsubscribeUrl: null });
+    expect(sent[0]).toMatchObject({ from: 'one@masaischool.com', to: 'placements@masaischool.com', bcc: ['a@corp.com', 'b@corp.com'], replyTo: 'hr@masaischool.com, one@masaischool.com', listUnsubscribeUrl: null });
     expect(sent[0].html).toContain('href="https://x.com"');
     // The Message-ID and thread are kept so recruiters' replies find their way to the admin.
     expect(db.recruiterBlastGroup.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'SENT', messageIdHeader: '<x>', gmailThreadId: 't' }) }));

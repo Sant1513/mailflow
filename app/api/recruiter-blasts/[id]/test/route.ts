@@ -5,6 +5,7 @@ import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
 import { loadBlast, requireBlastAdmin } from '@/lib/recruiterSend/access';
 import { readVideo } from '@/lib/recruiterSend/video';
+import { replyToHeader } from '@/lib/recruiterSend/core';
 import { sendViaUpload, UPLOAD_THRESHOLD_BYTES } from '@/lib/recruiterSend/gmailUpload';
 import { readRef } from '@/lib/storage/files';
 import type { EmailAttachment } from '@/lib/email/provider';
@@ -39,7 +40,7 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
     to: session.email,
     fromName: blast.fromName || account.displayName || account.emailAddress,
     fromEmail: account.emailAddress,
-    replyTo: blast.replyTo ?? undefined,
+    replyTo: replyToHeader(blast.replyTo, account.emailAddress),
     subject: `[Test] ${blast.subject}`,
     html: `${note}${blast.html}`,
     plainText: blast.plainText,
