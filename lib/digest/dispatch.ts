@@ -2,6 +2,8 @@ import { Role } from '@prisma/client';
 import { getOrgSettings, updateOrgSettings } from '@/lib/settings/org';
 import { emailsForRoles, postSystemSlack, sendSystemEmail, type ChannelOutcome } from '@/lib/notify/system';
 import { collectNeedsAttention, digestTotal, renderDigestEmail, renderDigestSlack } from '@/lib/digest/needsAttention';
+import { collectDailyActivity, hasActivity, type DailyActivity } from '@/lib/digest/dailyActivity';
+import { renderDailyEmail, renderDailySlackLine } from '@/lib/digest/dailyEmail';
 import { buildWeeklyReport, renderWeeklyReportEmail, renderWeeklyReportSlack } from '@/lib/reports/weekly';
 
 /** Today's date in India (YYYY-MM-DD), the unit for "once a day". */
@@ -35,17 +37,24 @@ export async function dispatchDigest(organizationId: string, opts: { testTo?: st
 
   const data = await collectNeedsAttention(organizationId, settings.digest, now);
   const items = digestTotal(data);
-  if (!opts.testTo && items === 0) {
+  // Yesterday's sending and inbox numbers; the digest still goes out if they can't be worked out.
+  let activity: DailyActivity | null = null;
+  try {
+    activity = await collectDailyActivity(organizationId, now);
+  } catch (err) {
+    console.error('[digest] daily activity failed', err);
+  }
+  if (!opts.testTo && items === 0 && !(activity && hasActivity(activity))) {
     await updateOrgSettings(organizationId, { lastDigestOn: today }, 'system');
     return { organizationId, sent: false, reason: 'nothing needs attention', items };
   }
 
-  const { subject, html } = renderDigestEmail(data);
+  const { subject, html } = activity ? renderDailyEmail(activity, data) : renderDigestEmail(data);
   const to = opts.testTo
     ? [opts.testTo]
     : [...(settings.digest.emailAdmins ? await emailsForRoles(organizationId, [Role.SUPER_ADMIN, Role.ADMIN]) : []), ...settings.digest.extraEmails];
   const email = await sendSystemEmail({ organizationId, senderAccountId: settings.senderAccountId, to, subject: opts.testTo ? `[Test] ${subject}` : subject, html });
-  const slack = !opts.testTo && settings.digest.slack ? await postSystemSlack(organizationId, renderDigestSlack(data)) : undefined;
+  const slack = !opts.testTo && settings.digest.slack ? await postSystemSlack(organizationId, [activity ? renderDailySlackLine(activity) : null, renderDigestSlack(data)].filter(Boolean).join('\n\n')) : undefined;
 
   if (!opts.testTo) await updateOrgSettings(organizationId, { lastDigestOn: today }, 'system');
   return { organizationId, sent: email.startsWith('SENT') || !!slack?.startsWith('SENT'), items, email, slack };

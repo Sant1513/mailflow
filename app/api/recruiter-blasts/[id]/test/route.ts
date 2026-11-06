@@ -6,6 +6,7 @@ import { GmailProvider } from '@/lib/email/gmail';
 import { loadBlast, requireBlastAdmin } from '@/lib/recruiterSend/access';
 import { readVideo } from '@/lib/recruiterSend/video';
 import { replyToHeader } from '@/lib/recruiterSend/core';
+import { personalize, variableCheck } from '@/lib/recruiterSend/personalize';
 import { sendViaUpload, UPLOAD_THRESHOLD_BYTES } from '@/lib/recruiterSend/gmailUpload';
 import { readRef } from '@/lib/storage/files';
 import type { EmailAttachment } from '@/lib/email/provider';
@@ -35,15 +36,18 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
     attachments.push({ filename: video.fileName, mimeType: video.contentType, content: bytes });
   }
 
-  const note = `<p style="font-size:12px;color:#888;border:1px dashed #ccc;padding:6px 8px">Test of a recruiter send (${blast.mode === 'BCC' ? `BCC groups, visible To: ${blast.toAddress ?? '—'}` : 'individual copies'}${blast.ccAddresses.length ? `; CC on the real send: ${blast.ccAddresses.join(', ')} (not copied on this test)` : ''}). Recruiters won't see this note.</p>`;
+  const vars = variableCheck(blast);
+  const sample = vars.used.length ? await prisma.recruiterBlastRecipient.findFirst({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { email: true, name: true, data: true } }) : null;
+  const content = sample ? personalize(blast, sample) : { subject: blast.subject, html: blast.html, plainText: blast.plainText };
+  const note = `<p style="font-size:12px;color:#888;border:1px dashed #ccc;padding:6px 8px">Test of a recruiter send (${blast.mode === 'BCC' ? `BCC groups, visible To: ${blast.toAddress ?? '—'}` : 'individual copies'}${blast.ccAddresses.length ? `; CC on the real send: ${blast.ccAddresses.join(', ')} (not copied on this test)` : ''}). ${sample ? ` Filled in with ${sample.email}'s values.` : ''} Recruiters won't see this note.</p>`;
   const input = {
     to: session.email,
     fromName: blast.fromName || account.displayName || account.emailAddress,
     fromEmail: account.emailAddress,
     replyTo: replyToHeader(blast.replyTo, account.emailAddress),
-    subject: `[Test] ${blast.subject}`,
-    html: `${note}${blast.html}`,
-    plainText: blast.plainText,
+    subject: `[Test] ${content.subject}`,
+    html: `${note}${content.html}`,
+    plainText: content.plainText,
     attachments,
   };
   try {

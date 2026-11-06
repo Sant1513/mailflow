@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { appBaseUrl } from '@/lib/app-url';
 import { buildUnsubscribeUrl } from '@/lib/email/tracking';
-import { parseCsvFile, parseXlsxFile, guessEmailColumn, type ParsedTable } from '@/lib/imports/parse';
+import { parseCsvFile, parseXlsxFile, parsePastedText, guessEmailColumn, type ParsedTable } from '@/lib/imports/parse';
 import { isValidEmail, mostlyEmailColumn, textToHtml } from '@/lib/quickSend/prepare';
 import { inlineEmailCss, looksLikeHtml } from '@/lib/quickSend/html';
 
@@ -24,6 +24,61 @@ export const MIN_GAP: Record<BlastMode, number> = { BCC: 30, INDIVIDUAL: 3 };
 export interface Recipient {
   email: string;
   name: string | null;
+  /** The recruiter's whole row ({ column: value }), when the list had columns. */
+  data?: Record<string, string>;
+}
+
+/** A list with columns: who is in it, every column (in order) and which one holds the address. */
+export interface RecipientList {
+  recipients: Recipient[];
+  columns: string[];
+  emailColumn: string | null;
+  unreadable: string[];
+  error?: string;
+}
+
+const NAME_HEADER = /^(full ?)?name$|recruiter|contact name|^poc/i;
+
+/** A table (pasted from Sheets/Excel, or a file) → recipients with their whole row kept. */
+export function recipientsFromTable(table: ParsedTable, emailColumn?: string | null): RecipientList {
+  const headers = table.headers.map((h) => h.trim()).filter(Boolean).slice(0, 60);
+  const chosen = emailColumn && headers.includes(emailColumn) ? emailColumn : null;
+  const emailHeader = chosen ?? guessEmailColumn(headers) ?? mostlyEmailColumn({ headers, rows: table.rows });
+  if (!emailHeader) return { recipients: [], columns: headers, emailColumn: null, unreadable: [], error: 'No column of email addresses found. Name a column "Email", or choose it.' };
+  const nameHeader = headers.find((h) => h !== emailHeader && NAME_HEADER.test(h)) ?? null;
+  const found = new Map<string, Recipient>();
+  const unreadable: string[] = [];
+  for (const row of table.rows) {
+    const value = String(row[emailHeader] ?? '').trim();
+    const email = (value.match(EMAIL_IN_TEXT)?.[0] ?? '').toLowerCase();
+    if (!email) {
+      const line = headers.map((h) => String(row[h] ?? '').trim()).filter(Boolean).join(' · ');
+      if (line) unreadable.push(line.slice(0, 120));
+      continue;
+    }
+    if (found.has(email)) continue;
+    const data: Record<string, string> = {};
+    for (const h of headers) data[h] = String(row[h] ?? '').trim().slice(0, 2000);
+    found.set(email, { email, name: nameHeader ? data[nameHeader] || null : null, data });
+  }
+  return { recipients: [...found.values()], columns: headers, emailColumn: emailHeader, unreadable };
+}
+
+/** Pasted text with a header row and columns (tab- or comma-separated, no address in the first line). */
+export function looksLikeTable(text: string): boolean {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 2) return false;
+  const first = lines[0]!;
+  if (/[A-Z0-9._%+'-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(first)) return false;
+  const cells = first.split(first.includes('\t') ? '\t' : ',').filter((c) => c.trim());
+  return cells.length >= 2 || /^e-?mail/i.test(first);
+}
+
+/** A pasted list: a table with a header row keeps all its columns; otherwise lines of addresses. */
+export function parseRecipientPaste(text: string, emailColumn?: string | null): RecipientList {
+  if (looksLikeTable(text)) return recipientsFromTable(parsePastedText(text), emailColumn);
+  const { recipients, unreadable } = parseRecipientText(text);
+  return { recipients, columns: [], emailColumn: null, unreadable };
 }
 
 const EMAIL_IN_TEXT = /[A-Z0-9._%+'-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
@@ -53,24 +108,15 @@ export function parseRecipientText(text: string): { recipients: Recipient[]; unr
   return { recipients: [...found.values()], unreadable };
 }
 
-/** A CSV/Excel upload: the email column is found by name, else by its contents. */
-export function parseRecipientFile(buffer: Buffer, fileName: string): { recipients: Recipient[]; error?: string } {
+/** A CSV/Excel upload: every column is kept; the email column is found by name, else by its contents (or as chosen). */
+export function parseRecipientFile(buffer: Buffer, fileName: string, emailColumn?: string | null): RecipientList {
   let table: ParsedTable;
   try {
     table = /\.xlsx?$/i.test(fileName) ? parseXlsxFile(buffer) : parseCsvFile(buffer);
   } catch {
-    return { recipients: [], error: 'That file could not be read. Upload a CSV or Excel file.' };
+    return { recipients: [], columns: [], emailColumn: null, unreadable: [], error: 'That file could not be read. Upload a CSV or Excel file.' };
   }
-  const emailHeader = guessEmailColumn(table.headers) ?? mostlyEmailColumn(table);
-  if (!emailHeader) return { recipients: [], error: 'No email column found. Name a column "Email".' };
-  const nameHeader = table.headers.find((h) => /^(full ?)?name$|recruiter|contact name|^poc/i.test(h.trim())) ?? null;
-  const found = new Map<string, Recipient>();
-  for (const row of table.rows) {
-    const email = String(row[emailHeader] ?? '').trim().toLowerCase();
-    if (!email || found.has(email)) continue;
-    found.set(email, { email, name: nameHeader ? String(row[nameHeader] ?? '').trim() || null : null });
-  }
-  return { recipients: [...found.values()] };
+  return recipientsFromTable(table, emailColumn);
 }
 
 export function validRecipient(r: Recipient): boolean {

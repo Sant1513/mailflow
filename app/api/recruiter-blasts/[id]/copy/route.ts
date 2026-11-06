@@ -34,6 +34,8 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
       fromName: source.fromName,
       replyTo: source.replyTo,
       ccAddresses: source.ccAddresses,
+      columns: source.columns,
+      emailColumn: source.emailColumn,
       accountIds,
       accountLimits: Object.fromEntries(Object.entries(limits).filter(([id]) => accountIds.includes(id))),
       video: source.video === null ? Prisma.JsonNull : (source.video as Prisma.InputJsonValue),
@@ -43,9 +45,9 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
       copiedFromId: source.id,
     },
   });
-  const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: source.id }, select: { email: true, name: true } });
+  const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: source.id }, select: { email: true, name: true, data: true } });
   for (let i = 0; i < recipients.length; i += 1000) {
-    await prisma.recruiterBlastRecipient.createMany({ data: recipients.slice(i, i + 1000).map((r) => ({ blastId: copy.id, email: r.email, name: r.name })), skipDuplicates: true });
+    await prisma.recruiterBlastRecipient.createMany({ data: recipients.slice(i, i + 1000).map((r) => ({ blastId: copy.id, email: r.email, name: r.name, data: r.data ?? Prisma.JsonNull })), skipDuplicates: true });
   }
   await audit(session, 'RECRUITER_SEND_COPY', { targetType: 'RecruiterBlast', targetId: copy.id, metadata: { from: source.id } });
   return NextResponse.json({ id: copy.id });

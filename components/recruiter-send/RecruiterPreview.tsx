@@ -109,6 +109,8 @@ export interface EnvelopeInfo {
   ccAddresses: string[];
   replyTo: string | null;
   subject: string;
+  /** Individual copies: the recruiter whose {{Column}} values fill this preview. */
+  previewAs?: string | null;
   perEmail: number;
   attachments: string[];
 }
@@ -137,6 +139,7 @@ export function LivePreview({ html, envelope }: { html: string; envelope: Envelo
           <dd className="min-w-0 break-words font-semibold">{e.subject || <span className="font-normal text-muted-foreground">— no subject yet</span>}</dd>
         </div>
       </dl>
+      {e.previewAs && <div className="border-b bg-primary/5 px-3 py-1.5 text-[11px] text-muted-foreground">Shown with <b className="text-foreground">{e.previewAs}</b>&rsquo;s values; every recruiter gets their own.</div>}
       <EmailViewer html={html} storageKey="recruiter-live" defaultHeight={480} empty="Write the message to see the preview." />
       {e.attachments.length > 0 && (
         <div className="border-t px-3 py-2 text-xs">

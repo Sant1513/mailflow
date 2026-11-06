@@ -9,6 +9,7 @@ import { planGroups, type BlastMode } from '@/lib/recruiterSend/core';
 import { readVideo, VIDEO_INDIVIDUAL_MAX } from '@/lib/recruiterSend/video';
 import { kickRecruiterWorker } from '@/lib/recruiterSend/worker';
 import { isValidEmail } from '@/lib/quickSend/prepare';
+import { variableCheck } from '@/lib/recruiterSend/personalize';
 
 /**
  * Starts (or schedules) a draft recruiter send: final checks, skipped recruiters marked with
@@ -32,6 +33,10 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   const problems: string[] = [];
   if (!blast.subject.trim()) problems.push('Add a subject.');
   if (!blast.body.trim()) problems.push('Write the message.');
+  // {{Column}} personalisation: every variable must be a column, and only individual copies can carry it.
+  const vars = variableCheck(blast);
+  if (vars.unknown.length) problems.push(`${vars.unknown.map((v) => `{{${v}}}`).join(', ')} ${vars.unknown.length === 1 ? 'is not a column' : 'are not columns'} in your recruiter list (columns: ${blast.columns.length ? blast.columns.join(', ') : 'none; paste the list with its header row'}).`);
+  if (vars.bccConflict) problems.push(`The email uses ${vars.used.map((v) => `{{${v}}}`).join(', ')}, which needs each recruiter's own copy. Choose "Individual copies", or remove the variables.`);
   if (mode === 'BCC' && (!blast.toAddress || !isValidEmail(blast.toAddress))) problems.push('BCC sends need a visible "To" address.');
   if (!blast.accountIds.length) problems.push('Choose at least one mailbox to send from.');
   const connected = blast.accountIds.length

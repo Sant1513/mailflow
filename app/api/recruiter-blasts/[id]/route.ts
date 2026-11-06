@@ -5,6 +5,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { loadBlast, requireBlastAdmin, sendableMailboxes } from '@/lib/recruiterSend/access';
 import { buildBody, MAX_GROUP_SIZE, MIN_GAP, previewHtml, type BlastMode } from '@/lib/recruiterSend/core';
+import { personalisedPreview } from '@/lib/recruiterSend/plan';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 import { usageLast24h, dailyLimit } from '@/lib/queue/drain';
 import { isValidEmail } from '@/lib/quickSend/prepare';
@@ -66,7 +67,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
     groups,
     mailboxes: mailboxes.map((m) => ({ ...m, sentLast24h: usage.find((u) => u.id === m.id)?.sentLast24h ?? 0, dailyLimit: dailyLimit() })),
     hasSignature: !!me?.emailSignature?.trim(),
-    previewHtml: sanitizeEmailHtml(previewHtml(blast)),
+    ...(await previewFields(blast)),
   });
 });
 
@@ -155,7 +156,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       plainText: built.plainText,
     },
   });
-  return NextResponse.json({ blast: updated, previewHtml: sanitizeEmailHtml(previewHtml(updated)) });
+  return NextResponse.json({ blast: updated, ...(await previewFields(updated)) });
 });
 
 export const DELETE = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
@@ -167,3 +168,9 @@ export const DELETE = withErrorHandling(async (_req, { params }: { params: { id:
   await audit(session, 'RECRUITER_SEND_DELETE', { targetType: 'RecruiterBlast', targetId: blast.id });
   return NextResponse.json({ ok: true });
 });
+
+/** The preview as the first recruiter will see it ({{Column}} filled in for individual copies). */
+async function previewFields(blast: Parameters<typeof personalisedPreview>[0]) {
+  const p = await personalisedPreview(blast);
+  return { previewHtml: sanitizeEmailHtml(p.html), previewSubject: p.subject, previewRecipient: p.recipient };
+}

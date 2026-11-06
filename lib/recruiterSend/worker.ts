@@ -7,6 +7,7 @@ import type { EmailProviderAccount } from '@prisma/client';
 import { backoffUntil, usageLast24h, wouldExceedDaily } from '@/lib/queue/drain';
 import { decorate, replyToHeader, type BlastMode } from '@/lib/recruiterSend/core';
 import { readVideo } from '@/lib/recruiterSend/video';
+import { personalize } from '@/lib/recruiterSend/personalize';
 import { sendViaUpload, UPLOAD_THRESHOLD_BYTES } from '@/lib/recruiterSend/gmailUpload';
 import { readRef } from '@/lib/storage/files';
 import { allowedMailboxIds } from '@/lib/recruiterSend/access';
@@ -191,7 +192,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
 
       const group = await prisma.recruiterBlastGroup.findFirst({ where: { blastId: blast.id, status: 'PENDING' }, orderBy: { seq: 'asc' } });
       if (!group) continue;
-      let recipients = await prisma.recruiterBlastRecipient.findMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, select: { id: true, email: true } });
+      let recipients = await prisma.recruiterBlastRecipient.findMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, select: { id: true, email: true, name: true, data: true } });
       // Unsubscribed or bounced since the send started (a long send runs for days): drop them.
       if (recipients.length) {
         const suppressed = await prisma.emailSuppression.findMany({ where: { workspaceId: blast.workspaceId, email: { in: recipients.map((r) => r.email) } }, select: { email: true } });
@@ -234,7 +235,9 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
       if (!claimed.count) continue;
       progressed = true;
 
-      const decorated = decorate(blast.html, { groupId: group.id, mode, workspaceId: blast.workspaceId, blastId: blast.id, recipientEmail: mode === 'INDIVIDUAL' ? to : undefined, pixel: mode === 'INDIVIDUAL' });
+      // Individual copies carry the recruiter's own {{Column}} values (name, company, UTM link).
+      const content = mode === 'INDIVIDUAL' ? personalize({ subject: blast.subject, html: blast.html, plainText: blast.plainText }, recipients[0]!) : { subject: blast.subject, html: blast.html, plainText: blast.plainText };
+      const decorated = decorate(content.html, { groupId: group.id, mode, workspaceId: blast.workspaceId, blastId: blast.id, recipientEmail: mode === 'INDIVIDUAL' ? to : undefined, pixel: mode === 'INDIVIDUAL' });
       let result: Awaited<ReturnType<RecruiterSender>>;
       try {
         const docs = blast.attachmentDocumentIds.length
@@ -263,9 +266,9 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
           fromEmail: account.emailAddress,
           // Custom Reply-To plus the sending mailbox, so replies reach MailFlow too.
           replyTo: replyToHeader(blast.replyTo, account.emailAddress),
-          subject: blast.subject,
+          subject: content.subject,
           html: decorated.html,
-          plainText: `${blast.plainText}\n\nUnsubscribe: ${decorated.unsubscribeUrl}`,
+          plainText: `${content.plainText}\n\nUnsubscribe: ${decorated.unsubscribeUrl}`,
           // One-click unsubscribe only where it can name the person (individual copies).
           listUnsubscribeUrl: mode === 'INDIVIDUAL' ? decorated.unsubscribeUrl : null,
           attachments,

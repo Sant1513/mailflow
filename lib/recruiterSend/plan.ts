@@ -2,7 +2,8 @@ import { prisma } from '@/lib/db/client';
 import { checkAddresses } from '@/lib/email/addressCheck';
 import { dailyLimit, DAILY_UNIQUE_RECIPIENT_LIMIT, usageLast24h } from '@/lib/queue/drain';
 import { isValidEmail } from '@/lib/quickSend/prepare';
-import { MAX_GROUP_SIZE, planGroups, type BlastMode } from '@/lib/recruiterSend/core';
+import { MAX_GROUP_SIZE, planGroups, previewHtml, type BlastMode } from '@/lib/recruiterSend/core';
+import { missingValues, personalize, variableCheck } from '@/lib/recruiterSend/personalize';
 
 /**
  * The pre-send check for a recruiter send: who will get it, who is skipped and why (same
@@ -27,6 +28,8 @@ export interface BlastPlan {
   batches: { seq: number; size: number; mailbox: string | null }[];
   /** Everyone with what will happen to them (first 2,000): their batch and mailbox, or why they're skipped. */
   people: { email: string; name: string | null; batch: number | null; mailbox: string | null; skipped: string | null }[];
+  /** {{Column}} use: which variables, which match no column, and one recruiter's values (the preview uses them). */
+  personalization: { columns: string[]; emailColumn: string | null; used: string[]; unknown: string[]; bccConflict: boolean; sample: { email: string; values: Record<string, string> } | null };
 }
 
 /**
@@ -49,16 +52,24 @@ export function assignMailboxes(
   });
 }
 
-export async function planBlast(blast: { id: string; workspaceId: string; mode: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown }): Promise<BlastPlan> {
+export async function planBlast(blast: { id: string; workspaceId: string; mode: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null }): Promise<BlastPlan> {
   // A stable order: the batches the check shows are the batches start creates.
-  const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { id: true, email: true, name: true } });
+  const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { id: true, email: true, name: true, data: true } });
   const problems = await checkAddresses(recipients.map((r) => r.email), blast.workspaceId);
   const eligibleIds: string[] = [];
   const skipped: { email: string; reason: string }[] = [];
   const skippedReasons = new Map<string, string>();
   const skippedByReason: Record<string, number> = {};
+  const content = { subject: blast.subject ?? '', html: blast.html ?? '', plainText: blast.plainText ?? '' };
+  const vars = variableCheck({ ...content, mode: blast.mode, columns: blast.columns });
+  // Only individual copies are personalised (BCC is blocked at start when variables are used).
+  const personalised = blast.mode === 'INDIVIDUAL' && vars.used.length > 0;
   for (const r of recipients) {
-    const problem = !isValidEmail(r.email) ? { kind: 'INVALID', detail: `"${r.email}" is not a valid email address.` } : problems.get(r.email.toLowerCase());
+    const missing = personalised ? missingValues(content, r) : [];
+    const problem = !isValidEmail(r.email)
+      ? { kind: 'INVALID', detail: `"${r.email}" is not a valid email address.` }
+      : problems.get(r.email.toLowerCase()) ??
+        (missing.length ? { kind: 'MISSING_VALUE', detail: `No value for ${missing.map((m) => `{{${m}}}`).join(', ')} (fill it in the list, or write {{${missing[0]} | fallback}}).` } : undefined);
     if (problem) {
       skipped.push({ email: r.email, reason: problem.detail });
       skippedReasons.set(r.id, problem.detail);
@@ -99,5 +110,25 @@ export async function planBlast(blast: { id: string; workspaceId: string; mode: 
   });
   const batches = groups.slice(0, 500).map((g, i) => ({ seq: i + 1, size: g.length, mailbox: planned[i] ?? null }));
 
-  return { total: recipients.length, eligibleIds, skippedReasons, skipped: skipped.slice(0, 200), skippedByReason, messages, perMessage, capacity, messagesPossibleToday, estimatedMinutes, batches, people };
+  const first = recipients.find((r) => eligibleIds[0] === r.id) ?? recipients[0];
+  const personalization = {
+    columns: blast.columns ?? [],
+    emailColumn: blast.emailColumn ?? null,
+    ...vars,
+    sample: first && vars.used.length ? { email: first.email, values: personalize(content, first).resolved } : null,
+  };
+
+  return { personalization, total: recipients.length, eligibleIds, skippedReasons, skipped: skipped.slice(0, 200), skippedByReason, messages, perMessage, capacity, messagesPossibleToday, estimatedMinutes, batches, people };
+}
+
+/**
+ * The preview the page shows: individual copies use the first recruiter's own values, so
+ * {{Name}} and {{UTM link}} appear as that recruiter will see them. No tracking pixel.
+ */
+export async function personalisedPreview(blast: { id: string; html: string; subject: string; plainText: string; mode: string; workspaceId: string }): Promise<{ html: string; subject: string; recipient: string | null }> {
+  if (blast.mode !== 'INDIVIDUAL' || !variableCheck({ ...blast, columns: [] }).used.length) return { html: previewHtml(blast), subject: blast.subject, recipient: null };
+  const row = await prisma.recruiterBlastRecipient.findFirst({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { email: true, name: true, data: true } });
+  if (!row) return { html: previewHtml(blast), subject: blast.subject, recipient: null };
+  const p = personalize(blast, row);
+  return { html: previewHtml({ ...blast, html: p.html }), subject: p.subject, recipient: row.email };
 }

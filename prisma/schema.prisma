@@ -1460,6 +1460,10 @@ model RecruiterBlast {
   replyTo         String?
   /// Copied on every email of the send (visible to recruiters in BCC mode).
   ccAddresses     String[]  @default([])
+  /// Every column of the pasted/uploaded list, in order (for {{Column}} personalisation).
+  columns         String[]  @default([])
+  /// The column that holds the email address (chosen or guessed).
+  emailColumn     String?
   /// Sending mailboxes (EmailProviderAccount ids), used in this order; the next one takes
   /// over when a mailbox is near its daily limit, paused by Gmail or disconnected.
   accountIds      String[]  @default([])
@@ -1498,6 +1502,8 @@ model RecruiterBlastRecipient {
   blastId   String
   email     String
   name      String?
+  /// The recruiter's row from the list ({ column: value }), for {{Column}} personalisation.
+  data      Json?
   /// PENDING | QUEUED | SENT | SKIPPED | FAILED
   status    String    @default("PENDING")
   skipReason String?

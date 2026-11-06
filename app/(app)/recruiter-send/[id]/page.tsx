@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
 import { Avatar } from '@/components/ui/Avatar';
 import { LivePreview, Pager, SendSummary, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
+import { VariablePicker, variableProblems } from '@/components/recruiter-send/Variables';
 
 type Mode = 'BCC' | 'INDIVIDUAL';
 interface Video { mode: 'attach'; ref: string; fileName: string; size: number; contentType: string }
@@ -16,14 +17,15 @@ interface Blast {
   includeSignature: boolean; fromName: string | null; replyTo: string | null; ccAddresses: string[]; accountIds: string[]; accountLimits: Record<string, number>;
   video: Video | VideoLink | null; attachmentDocumentIds: string[]; groupSize: number; gapSeconds: number; status: string;
   scheduledAt: string | null; note: string | null; startedAt: string | null; completedAt: string | null; html: string;
+  columns: string[]; emailColumn: string | null;
 }
 interface Mailbox { id: string; emailAddress: string; ownerName: string | null; status: string; own: boolean; sentLast24h: number; dailyLimit: number }
 interface Group { id: string; seq: number; status: string; recipientCount: number; fromEmail: string | null; sentAt: string | null; openCount: number; firstOpenedAt: string | null; lastOpenedAt: string | null; error: string | null }
 interface RecipientRow { email: string; name: string | null; status: string; skipReason: string | null; sentAt: string | null; openedAt: string | null; openCount: number; repliedAt: string | null }
-interface Detail { blast: Blast; counts: Record<string, number>; stats: { messagesSent: number; messagesTotal: number; opens: number; openedRecruiters: number }; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; hasSignature: boolean; previewHtml: string }
+interface Detail { blast: Blast; counts: Record<string, number>; stats: { messagesSent: number; messagesTotal: number; opens: number; openedRecruiters: number }; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; hasSignature: boolean; previewHtml: string; previewSubject?: string; previewRecipient?: string | null }
 interface Check {
   total: number; eligible: number; skipped: { email: string; reason: string }[]; skippedByReason: Record<string, number>; messages: number; perMessage: number;
-  capacity: { accountId: string; emailAddress: string; messagesLeft: number; peopleLeft: number }[]; messagesPossibleToday: number; estimatedMinutes: number; preview: string;
+  capacity: { accountId: string; emailAddress: string; messagesLeft: number; peopleLeft: number }[]; messagesPossibleToday: number; estimatedMinutes: number; preview: string; previewSubject?: string; previewRecipient?: string | null;
   batches: PlannedBatch[]; people: PlannedPerson[];
 }
 
@@ -31,7 +33,7 @@ const FIELD = 'w-full rounded border bg-background px-2 py-1.5 text-sm';
 const LABEL = 'mb-1 block text-xs font-medium';
 const SKIP_LABEL: Record<string, string> = {
   SUPPRESSED: 'unsubscribed or bounced before', NO_MAIL_SERVER: 'domain has no mail server', LIKELY_TYPO: 'looks like a typo',
-  NO_REPLY_ADDRESS: 'no-reply address', DISPOSABLE: 'throwaway inbox', INVALID: 'not a valid address',
+  NO_REPLY_ADDRESS: 'no-reply address', DISPOSABLE: 'throwaway inbox', INVALID: 'not a valid address', MISSING_VALUE: 'empty value for a {{variable}}',
 };
 
 /** Which steps are open. Every step folds to a one-line summary so the page stays short. */
@@ -84,6 +86,13 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const [videoLink, setVideoLink] = useState({ url: '', title: 'Watch the video' });
   const [scheduleAt, setScheduleAt] = useState('');
   const [preview, setPreview] = useState('');
+  // The preview's subject and whose values fill its {{variables}} (individual copies).
+  const [previewAs, setPreviewAs] = useState<{ subject: string | null; recipient: string | null }>({ subject: null, recipient: null });
+  // The last list sent, so the email column can be chosen again without pasting again.
+  const lastSource = useRef<Record<string, unknown> | null>(null);
+  const subjectRef = useRef<HTMLInputElement | null>(null);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const lastField = useRef<'subject' | 'body'>('body');
   const [ccText, setCcText] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -94,6 +103,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     if (!res?.ok) return setError(j?.error ?? 'Could not load this send.');
     setDetail(j);
     setPreview(j.previewHtml ?? '');
+    setPreviewAs({ subject: j.previewSubject ?? null, recipient: j.previewRecipient ?? null });
     setCcText((t) => t ?? (j.blast.ccAddresses ?? []).join(', '));
     setForm((f) => (f && j.blast.status === 'DRAFT' ? { ...j.blast, ...pickEditable(f) } : j.blast));
     if (j.blast.video?.mode === 'link') {
@@ -123,6 +133,8 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     setForm(next);
     // Batches depend on these; the plan refreshes by itself once the change is saved.
     const affectsPlan = (['accountIds', 'accountLimits', 'groupSize', 'mode'] as const).some((k) => k in patch);
+    // Variables decide who has every value they need, so the plan follows the text too.
+    const affectsVariables = ('subject' in patch || 'body' in patch) && /\{\{/.test(`${patch.subject ?? ''}${patch.body ?? ''}${form.subject}${form.body}`);
     setSaving('saving');
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -135,7 +147,8 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       if (res?.ok) {
         setSaving('saved');
         if (typeof j?.previewHtml === 'string') setPreview(j.previewHtml);
-        if (affectsPlan) runCheck();
+        if (j && 'previewRecipient' in j) setPreviewAs({ subject: j.previewSubject ?? null, recipient: j.previewRecipient ?? null });
+        if (affectsPlan || affectsVariables) runCheck();
       }
       else {
         setSaving('idle');
@@ -153,10 +166,12 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     return res?.ok ? j : null;
   }
 
-  async function setRecipients(body: unknown) {
+  async function setRecipients(body: Record<string, unknown>) {
     const j = await post('/recipients', body, 'recipients');
     if (j) {
-      toast.success(`${j.added.toLocaleString()} recruiter${j.added === 1 ? '' : 's'} from the ${j.source}.${j.unreadableCount ? ` ${j.unreadableCount} line(s) had no email address.` : ''}`);
+      lastSource.current = body;
+      const cols = (j.columns ?? []) as string[];
+      toast.success(`${j.added.toLocaleString()} recruiter${j.added === 1 ? '' : 's'} from the ${j.source}.${cols.length ? ` ${cols.length} columns kept; email from “${j.emailColumn}”.` : ''}${j.unreadableCount ? ` ${j.unreadableCount} line(s) had no email address.` : ''}`);
       setPasted('');
       load();
       runCheck();
@@ -173,7 +188,13 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     const j = await res?.json().catch(() => ({}));
     if (seq !== checkSeq.current) return;
     setChecking(false);
-    if (res?.ok) setCheck(j);
+    if (res?.ok) {
+      setCheck(j);
+      if (typeof j.preview === 'string') {
+        setPreview(j.preview);
+        setPreviewAs({ subject: j.previewSubject ?? null, recipient: j.previewRecipient ?? null });
+      }
+    }
     else toast.error(j?.error ?? 'Could not work out the batches.');
   }
 
@@ -326,7 +347,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
         </div>
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
         <div className="min-w-0 space-y-3">
-          <Section n={1} title="Recruiters" summary={stepSummary[1]} done={stepDone[1]} hint="Paste addresses (one per line, or “Name <email>”), upload a CSV/Excel file, or use saved data. Duplicates are removed; unsubscribed, bounced and bad addresses are skipped at the check.">
+          <Section n={1} title="Recruiters" summary={stepSummary[1]} done={stepDone[1]} hint="Paste from Google Sheets/Excel with the header row (every column is kept for {{Column}} in the email, e.g. a UTM link per recruiter), paste plain addresses, upload a CSV/Excel file, or use saved data. Duplicates are removed; unsubscribed, bounced and bad addresses are skipped at the check.">
             <div className="mb-2 flex gap-1 text-xs" role="tablist">
               {(['paste', 'file', 'data'] as const).map((t) => (
                 <button key={t} type="button" role="tab" aria-selected={recipientTab === t} onClick={() => setRecipientTab(t)} className={`rounded px-2.5 py-1 ${recipientTab === t ? 'bg-primary text-primary-foreground' : 'border hover:bg-elevated'}`}>
@@ -336,7 +357,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             </div>
             {recipientTab === 'paste' && (
               <div className="space-y-2">
-                <textarea value={pasted} onChange={(e) => setPasted(e.target.value)} rows={6} className={`${FIELD} font-mono`} placeholder={'priya@company.com\nRahul Mehta <rahul@corp.in>\nhr@startup.io, talent@agency.com'} />
+                <textarea value={pasted} onChange={(e) => setPasted(e.target.value)} rows={6} className={`${FIELD} font-mono`} placeholder={'Paste from a sheet, header row first:\nName\tEmail\tCompany\tUTM link\nPriya\tpriya@company.com\tAcme\thttps://masai.link/?utm_source=acme\n\n…or just addresses:\npriya@company.com\nRahul Mehta <rahul@corp.in>'} />
                 <button type="button" disabled={!pasted.trim() || busy === 'recipients'} onClick={() => setRecipients({ source: 'paste', text: pasted })} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">Use this list</button>
               </div>
             )}
@@ -348,6 +369,29 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                 <option value="">Choose saved data…</option>
                 {datasets.map((d) => <option key={d.id} value={d.id}>{d.name}{d._count ? ` (${d._count.records})` : ''}</option>)}
               </select>
+            )}
+            {b.columns.length > 0 && (
+              <div className="mt-3 space-y-2 rounded-md border bg-muted/30 p-2.5 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">Email address column</span>
+                  <select
+                    value={b.emailColumn ?? ''}
+                    disabled={!lastSource.current || busy === 'recipients'}
+                    onChange={(e) => lastSource.current && setRecipients({ ...lastSource.current, emailColumn: e.target.value })}
+                    className="rounded border bg-background px-2 py-1 text-xs"
+                    title={lastSource.current ? 'Which column holds the address' : 'Add the list again to choose a different column'}
+                  >
+                    {b.columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  {!lastSource.current && <span className="text-muted-foreground">(add the list again to change it)</span>}
+                </div>
+                <div>
+                  <span className="font-medium">Columns you can use in the email</span>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {b.columns.filter((c) => c !== b.emailColumn).map((c) => <code key={c} className="rounded bg-background px-1.5 py-0.5 ring-1 ring-border">{`{{${c}}}`}</code>)}
+                  </div>
+                </div>
+              </div>
             )}
             <p className="mt-3 text-sm"><b>{(detail.counts.total ?? 0).toLocaleString()}</b> recruiter{detail.counts.total === 1 ? '' : 's'} in this send{detail.counts.total ? ' (adding a list replaces it)' : ''}.</p>
             {detail.recipients.length > 0 && (
@@ -390,7 +434,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
           <Section n={3} title="The email" summary={stepSummary[3]} done={stepDone[3]}>
             <div className="space-y-3">
-              <label className="block"><span className={LABEL}>Subject</span><input value={form.subject} onChange={(e) => edit({ subject: e.target.value })} className={FIELD} maxLength={300} /></label>
+              <label className="block"><span className={LABEL}>Subject</span><input ref={subjectRef} onFocus={() => (lastField.current = 'subject')} value={form.subject} onChange={(e) => edit({ subject: e.target.value })} className={FIELD} maxLength={300} /></label>
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <span className="text-xs font-medium">Message</span>
@@ -400,8 +444,26 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                     ))}
                   </span>
                 </div>
-                <textarea value={form.body} onChange={(e) => edit({ body: e.target.value })} rows={10} className={`${FIELD} ${form.format === 'html' ? 'font-mono text-xs' : ''}`} placeholder={form.format === 'html' ? 'Paste your HTML email…' : 'Dear Hiring Team,\n\n…'} />
+                <textarea ref={bodyRef} onFocus={() => (lastField.current = 'body')} value={form.body} onChange={(e) => edit({ body: e.target.value })} rows={10} className={`${FIELD} ${form.format === 'html' ? 'font-mono text-xs' : ''}`} placeholder={form.format === 'html' ? 'Paste your HTML email…' : 'Dear Hiring Team,\n\n…'} />
                 <p className="mt-1 text-xs text-muted-foreground">Links are sent exactly as written (no click tracking). An unsubscribe line is added at the bottom.</p>
+                <VariablePicker
+                  columns={b.columns}
+                  emailColumn={b.emailColumn}
+                  format={form.format}
+                  mode={form.mode}
+                  subject={form.subject}
+                  body={form.body}
+                  onInsert={(token) => {
+                    const field = lastField.current;
+                    const el = field === 'subject' ? subjectRef.current : bodyRef.current;
+                    const text = field === 'subject' ? form.subject : form.body;
+                    const at = el?.selectionStart ?? text.length;
+                    const end = el?.selectionEnd ?? at;
+                    edit(field === 'subject' ? { subject: text.slice(0, at) + token + text.slice(end) } : { body: text.slice(0, at) + token + text.slice(end) });
+                    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(at + token.length, at + token.length); });
+                  }}
+                  onIndividual={() => edit({ mode: 'INDIVIDUAL', gapSeconds: 3 })}
+                />
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label><span className={LABEL}>From name</span><input value={form.fromName ?? ''} onChange={(e) => edit({ fromName: e.target.value })} className={FIELD} placeholder="Masai Placements" /></label>
@@ -524,7 +586,8 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
               toAddress: form.toAddress,
               ccAddresses: splitEmails(ccText ?? '').valid,
               replyTo: form.replyTo,
-              subject: form.subject,
+              subject: previewAs.recipient && previewAs.subject !== null && form.mode === 'INDIVIDUAL' ? previewAs.subject : form.subject,
+              previewAs: form.mode === 'INDIVIDUAL' ? previewAs.recipient : null,
               perEmail: form.groupSize,
               attachments: [
                 ...library.filter((d) => form.attachmentDocumentIds.includes(d.id)).map((d) => d.name),
@@ -618,6 +681,8 @@ function summaryItems(form: Blast, check: Check, detail: Detail, library: { id: 
 function summaryWarnings(form: Blast, check: Check): string[] {
   const w: string[] = [];
   if (!form.subject.trim()) w.push('Add a subject.');
+  w.push(...variableProblems({ columns: form.columns ?? [], mode: form.mode, subject: form.subject, body: form.body }));
+  if (check.skippedByReason.MISSING_VALUE) w.push(`${check.skippedByReason.MISSING_VALUE} recruiter(s) have an empty value for a {{variable}} and will be skipped; fill the list in, or give it a fallback like {{Name | there}}.`);
   if (form.mode === 'BCC' && !form.toAddress) w.push('BCC sends need a visible “To” address.');
   if (check.messagesPossibleToday < check.messages) w.push(`The chosen accounts can send about ${check.messagesPossibleToday} of these ${check.messages} emails today; the rest go out as their daily limits free up.`);
   if (check.batches.some((b) => !b.mailbox)) w.push('Some batches have no account with room today (see “later” below): raise a limit or tick another account to send them today.');
