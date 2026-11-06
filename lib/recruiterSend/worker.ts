@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db/client';
 import { appBaseUrl } from '@/lib/app-url';
 import { GmailProvider } from '@/lib/email/gmail';
 import { SendEmailError, type EmailAttachment, type SendEmailInput } from '@/lib/email/provider';
-import type { EmailProviderAccount } from '@prisma/client';
+import type { EmailProviderAccount, Prisma } from '@prisma/client';
 import { backoffUntil, usageLast24h, wouldExceedDaily } from '@/lib/queue/drain';
 import { decorate, replyToHeader, type BlastMode } from '@/lib/recruiterSend/core';
 import { readVideo } from '@/lib/recruiterSend/video';
@@ -14,11 +14,14 @@ import { allowedMailboxIds } from '@/lib/recruiterSend/access';
 import { markRecruiterBounced, suppressRejectedRecruiter } from '@/lib/recruiterSend/replies';
 
 /**
- * Sends Recruiter Bulk Send messages, one Gmail message at a time (a BCC group or one
- * individual copy), with the blast's pause between messages. Each message goes from the first
- * chosen mailbox that is connected, not paused by Gmail and still under its daily limits
- * (shared with campaigns, lib/queue/drain.ts) — so the next mailbox takes over when one is
- * full. Runs ~45 s per call and hands over to a fresh call (kickRecruiterWorker) while work
+ * Sends Recruiter Bulk Send messages (a BCC group or one individual copy each).
+ *  PARALLEL (default): every chosen mailbox sends at once, in rounds — round 1 from all of them,
+ *    then each waits its own pause, then round 2 — up to MAX_PARALLEL messages out together.
+ *    Each batch has a planned mailbox (start); a mailbox that can't send hands its batches on.
+ *  SEQUENTIAL: one message at a time with the send's pause, from the first chosen mailbox that
+ *    can send, so the next mailbox takes over when one is full.
+ * Mailboxes must be connected, not paused by Gmail and under their daily limits (shared with
+ * campaigns, lib/queue/drain.ts) and the limit set for the send. Runs ~45 s per call and hands over to a fresh call (kickRecruiterWorker) while work
  * remains; the 15-minute schedule is the backstop.
  *
  * Safety: a message is claimed (PENDING → SENDING) before it is sent, so two runs can't send
@@ -105,41 +108,44 @@ async function sentPerAccount(blastId: string): Promise<Map<string, number>> {
 }
 
 /**
- * Picks the mailbox for a message, or explains why none can send right now: in the chosen
- * order, skipping mailboxes that are disconnected, no longer shared as a backup (the
- * teammate withdrew it or left), paused by Gmail, at Google's daily limits, or at the limit
- * the admin set for this send.
+ * Can this mailbox send a message of `size` recruiters for this send right now? Disconnected,
+ * no longer shared as a backup (the teammate withdrew it or left), paused by Gmail, at the
+ * limit the admin set for this send, or at Google's daily limits → the reason why not.
+ * Without the real addresses (planning a round), every recruiter counts as a new person for
+ * the daily limit, which is the safe side.
+ */
+async function checkMailbox(
+  blast: { accountLimits: unknown; ccAddresses?: string[] },
+  id: string,
+  size: number,
+  ctx: { used: Map<string, number>; allowed: Set<string> },
+  exact?: { to: string; bcc: string[] },
+): Promise<{ account: EmailProviderAccount | null; reason: string | null }> {
+  const limits = (blast.accountLimits && typeof blast.accountLimits === 'object' ? blast.accountLimits : {}) as Record<string, number>;
+  const account = await prisma.emailProviderAccount.findUnique({ where: { id } });
+  if (!account || account.status !== 'CONNECTED' || !account.refreshTokenEnc) return { account: null, reason: `${account?.emailAddress ?? 'a mailbox'} is disconnected` };
+  if (!ctx.allowed.has(id)) return { account: null, reason: `${account.emailAddress} is no longer shared as a backup mailbox` };
+  const cap = Number(limits[id]);
+  if (Number.isFinite(cap) && cap > 0 && (ctx.used.get(id) ?? 0) + size > cap) return { account: null, reason: `${account.emailAddress} reached the limit you set (${cap})` };
+  if ((await backoffUntil(id)) > 0) return { account: null, reason: `${account.emailAddress} is paused by Gmail for a while` };
+  const usage = await usageLast24h(id);
+  const to = exact?.to ?? 'next-recruiter@planning.invalid';
+  const bcc = exact?.bcc ?? Array.from({ length: Math.max(0, size - 1) }, (_, i) => `recruiter-${i}@planning.invalid`);
+  if (wouldExceedDaily(usage, { toEmail: to, ccEmails: blast.ccAddresses ?? [], bccEmails: bcc })) return { account: null, reason: `${account.emailAddress} has reached its daily limit` };
+  return { account, reason: null };
+}
+
+/**
+ * One mailbox after another (SEQUENTIAL sends): the first chosen mailbox that can send this
+ * message, or every reason none can.
  */
 async function chooseMailbox(blast: { id: string; organizationId: string; createdById: string; accountIds: string[]; accountLimits: unknown; ccAddresses?: string[] }, to: string, bcc: string[]) {
   const reasons: string[] = [];
-  const limits = (blast.accountLimits && typeof blast.accountLimits === 'object' ? blast.accountLimits : {}) as Record<string, number>;
   const [used, allowed] = await Promise.all([sentPerAccount(blast.id), allowedMailboxIds(blast.organizationId, blast.createdById)]);
-  const size = bcc.length || 1;
   for (const id of blast.accountIds) {
-    const account = await prisma.emailProviderAccount.findUnique({ where: { id } });
-    if (!account || account.status !== 'CONNECTED' || !account.refreshTokenEnc) {
-      reasons.push(`${account?.emailAddress ?? 'a mailbox'} is disconnected`);
-      continue;
-    }
-    if (!allowed.has(id)) {
-      reasons.push(`${account.emailAddress} is no longer shared as a backup mailbox`);
-      continue;
-    }
-    const cap = Number(limits[id]);
-    if (Number.isFinite(cap) && cap > 0 && (used.get(id) ?? 0) + size > cap) {
-      reasons.push(`${account.emailAddress} reached the limit you set (${cap})`);
-      continue;
-    }
-    if ((await backoffUntil(id)) > 0) {
-      reasons.push(`${account.emailAddress} is paused by Gmail for a while`);
-      continue;
-    }
-    const usage = await usageLast24h(id);
-    if (wouldExceedDaily(usage, { toEmail: to, ccEmails: blast.ccAddresses ?? [], bccEmails: bcc })) {
-      reasons.push(`${account.emailAddress} has reached its daily limit`);
-      continue;
-    }
-    return { account, reasons };
+    const r = await checkMailbox(blast, id, bcc.length || 1, { used, allowed }, { to, bcc });
+    if (r.account) return { account: r.account, reasons };
+    reasons.push(r.reason!);
   }
   return { account: null, reasons };
 }
@@ -148,8 +154,196 @@ async function chooseMailbox(blast: { id: string; organizationId: string; create
 export type RecruiterSender = (account: EmailProviderAccount, input: SendEmailInput, large: boolean) => Promise<{ providerMessageId: string; threadId?: string | null; messageIdHeader?: string | null }>;
 const gmailSender: RecruiterSender = (account, input, large) => (large ? sendViaUpload(account, input) : new GmailProvider(account).sendEmail(input));
 
-export async function runRecruiterWorker(opts: { budgetMs?: number; send?: RecruiterSender } = {}): Promise<{ sent: number; failed: number; waiting: string | null }> {
+type BlastRow = Awaited<ReturnType<typeof prisma.recruiterBlast.findMany>>[number];
+type GroupRow = { id: string; seq: number; attempts: number; recipientCount: number; plannedAccountId: string | null };
+type Person = { id: string; email: string; name: string | null; data: Prisma.JsonValue };
+type Outcome = 'sent' | 'failed' | 'retry';
+
+/** At most this many Gmail messages are out at once in one run (a run has under 60 s). */
+export const MAX_PARALLEL = 5;
+
+/**
+ * Who in this message still gets it: anyone unsubscribed or bounced since the send started
+ * (a long send runs for days) is dropped. A message left with nobody is closed.
+ */
+async function liveRecipients(blast: BlastRow, groupId: string): Promise<Person[]> {
+  let recipients = await prisma.recruiterBlastRecipient.findMany({ where: { groupId, status: { in: ['PENDING', 'QUEUED'] } }, select: { id: true, email: true, name: true, data: true } });
+  if (recipients.length) {
+    const suppressed = await prisma.emailSuppression.findMany({ where: { workspaceId: blast.workspaceId, email: { in: recipients.map((r) => r.email) } }, select: { email: true } });
+    if (suppressed.length) {
+      const gone = new Set(suppressed.map((s) => s.email.toLowerCase()));
+      const drop = recipients.filter((r) => gone.has(r.email.toLowerCase()));
+      await prisma.recruiterBlastRecipient.updateMany({ where: { id: { in: drop.map((r) => r.id) } }, data: { status: 'SKIPPED', skipReason: 'Unsubscribed or bounced after the send started' } });
+      recipients = recipients.filter((r) => !gone.has(r.email.toLowerCase()));
+    }
+  }
+  if (!recipients.length) await prisma.recruiterBlastGroup.updateMany({ where: { id: groupId, status: 'PENDING' }, data: { status: 'SENT', recipientCount: 0 } });
+  return recipients;
+}
+
+/**
+ * Claims a message for one run (PENDING → SENDING) so it can't be sent twice. SEQUENTIAL: only
+ * one message of the send is out at a time. PARALLEL: one per mailbox (so a mailbox can't skip
+ * its pause). sentAt = claim time keeps recoverStuck off fresh claims; the old error is cleared
+ * so it can't hold the mailbox (backoffUntil).
+ */
+async function claim(blast: BlastRow, groupId: string, account: EmailProviderAccount, perMailbox: boolean): Promise<boolean> {
+  const busy = perMailbox ? { none: { status: 'SENDING', accountId: account.id } } : { none: { status: 'SENDING' } };
+  const claimed = await prisma.recruiterBlastGroup.updateMany({
+    where: { id: groupId, status: 'PENDING', blast: { status: 'SENDING', groups: busy } },
+    data: { status: 'SENDING', sentAt: new Date(), accountId: account.id, fromEmail: account.emailAddress, attempts: { increment: 1 }, errorCode: null, error: null },
+  });
+  return claimed.count > 0;
+}
+
+/** Sends one claimed message from `account` and records what happened. */
+async function deliver(blast: BlastRow, group: { id: string; attempts: number }, recipients: Person[], account: EmailProviderAccount, send: RecruiterSender): Promise<Outcome> {
+  const mode = blast.mode as BlastMode;
+  const to = mode === 'BCC' ? blast.toAddress! : recipients[0]!.email;
+  const bcc = mode === 'BCC' ? recipients.map((r) => r.email) : [];
+  // Individual copies carry the recruiter's own {{Column}} values (name, company, UTM link).
+  const content = mode === 'INDIVIDUAL' ? personalize({ subject: blast.subject, html: blast.html, plainText: blast.plainText }, recipients[0]!) : { subject: blast.subject, html: blast.html, plainText: blast.plainText };
+  const decorated = decorate(content.html, { groupId: group.id, mode, workspaceId: blast.workspaceId, blastId: blast.id, recipientEmail: mode === 'INDIVIDUAL' ? to : undefined, pixel: mode === 'INDIVIDUAL' });
+  let result: Awaited<ReturnType<RecruiterSender>>;
+  try {
+    const docs = blast.attachmentDocumentIds.length
+      ? await prisma.documentTemplate.findMany({ where: { id: { in: blast.attachmentDocumentIds }, workspaceId: blast.workspaceId }, select: { id: true, fileNamePattern: true, file: { select: { data: true } } } })
+      : [];
+    const attachments: EmailAttachment[] = blast.attachmentDocumentIds
+      .map((id) => docs.find((d) => d.id === id))
+      .filter((d): d is NonNullable<typeof d> => !!d)
+      .map((d) => ({ filename: /\.pdf$/i.test(d.fileNamePattern) ? d.fileNamePattern : `${d.fileNamePattern}.pdf`, mimeType: 'application/pdf', content: Buffer.from(d.file.data) }));
+    const video = readVideo(blast.video);
+    if (video?.mode === 'attach') {
+      // Downloaded once per run, not once per message.
+      let bytes = videoCache.get(video.ref);
+      if (!bytes) {
+        bytes = (await readRef(video.ref)) ?? undefined;
+        if (!bytes) throw new SendEmailError('The video could not be read from storage.', 'TRANSIENT');
+        videoCache.set(video.ref, bytes);
+      }
+      attachments.push({ filename: video.fileName, mimeType: video.contentType, content: bytes });
+    }
+    const input = {
+      to,
+      cc: blast.ccAddresses,
+      bcc,
+      fromName: blast.fromName || account.displayName || account.emailAddress,
+      fromEmail: account.emailAddress,
+      // Custom Reply-To plus the sending mailbox, so replies reach MailFlow too.
+      replyTo: replyToHeader(blast.replyTo, account.emailAddress),
+      subject: content.subject,
+      html: decorated.html,
+      plainText: `${content.plainText}\n\nUnsubscribe: ${decorated.unsubscribeUrl}`,
+      // One-click unsubscribe only where it can name the person (individual copies).
+      listUnsubscribeUrl: mode === 'INDIVIDUAL' ? decorated.unsubscribeUrl : null,
+      attachments,
+    };
+    // Big messages (a video) go through Gmail's upload endpoint, which takes up to 35 MB.
+    const bytes = attachments.reduce((n, a) => n + a.content.length, 0);
+    result = await send(account, input, bytes > UPLOAD_THRESHOLD_BYTES);
+  } catch (err) {
+    const failedForGood = await recordFailure(blast.id, group, account.id, err);
+    // Gmail refused the recruiter's address itself (individual copies name one person): it
+    // goes on the suppression list everywhere, with the reason, and shows "bounced" here.
+    if (mode === 'INDIVIDUAL' && err instanceof SendEmailError && err.kind === 'INVALID_RECIPIENT') {
+      const detail = `Gmail rejected the address when sending (Recruiter Bulk Send “${blast.name}”): ${err.message}`;
+      await suppressRejectedRecruiter(blast.workspaceId, to, detail).catch((e) => console.error('[recruiter-send] suppress failed', e));
+      await markRecruiterBounced(blast.id, [to], detail).catch(() => undefined);
+    }
+    return failedForGood ? 'failed' : 'retry';
+  }
+
+  // Gmail has it. From here nothing may put the message back in the queue: if recording
+  // fails every time, it stays SENDING and recoverStuck marks it "check the Sent folder".
+  const sentAt = new Date();
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await prisma.$transaction([
+        // The Message-ID and thread let Gmail sync recognise recruiters' replies (lib/gmail/ingest.ts).
+        prisma.recruiterBlastGroup.update({ where: { id: group.id }, data: { status: 'SENT', sentAt, gmailMessageId: result.providerMessageId, messageIdHeader: result.messageIdHeader ?? null, gmailThreadId: result.threadId ?? null, errorCode: null, error: null, recipientCount: recipients.length } }),
+        prisma.recruiterBlastRecipient.updateMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, data: { status: 'SENT', sentAt } }),
+        prisma.recruiterBlast.update({ where: { id: blast.id }, data: { note: null } }),
+      ]);
+      break;
+    } catch (err) {
+      console.error(`[recruiter-send] group ${group.id} was sent but could not be recorded (attempt ${attempt})`, err);
+      if (attempt < 3) await sleep(1_000 * attempt);
+    }
+  }
+  return 'sent';
+}
+
+/**
+ * The batches every mailbox should send now (PARALLEL sends): each mailbox's next planned
+ * batch, once its own pause since its last email has passed and nothing of its is still going
+ * out. A mailbox that can't send (disconnected, withdrawn, paused by Gmail, at a limit) hands
+ * its batches to the mailboxes that can, fewest-left first, so nothing waits on it.
+ */
+export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ ready: { group: GroupRow; accountId: string }[]; nextGap: number; waiting: string | null }> {
+  const pending = await prisma.recruiterBlastGroup.findMany({
+    where: { blastId: blast.id, status: 'PENDING' },
+    orderBy: { seq: 'asc' },
+    take: 5000,
+    select: { id: true, seq: true, attempts: true, recipientCount: true, plannedAccountId: true },
+  });
+  if (!pending.length) return { ready: [], nextGap: Infinity, waiting: null };
+  const [used, allowed, lastSent, busyRows] = await Promise.all([
+    sentPerAccount(blast.id),
+    allowedMailboxIds(blast.organizationId, blast.createdById),
+    prisma.recruiterBlastGroup.groupBy({ by: ['accountId'], where: { blastId: blast.id, status: { in: ['SENT', 'SENDING'] }, sentAt: { not: null } }, _max: { sentAt: true } }),
+    prisma.recruiterBlastGroup.findMany({ where: { blastId: blast.id, status: 'SENDING' }, select: { accountId: true } }),
+  ]);
+  const last = new Map(lastSent.filter((r) => r.accountId).map((r) => [r.accountId!, r._max.sentAt?.getTime() ?? 0]));
+  const busy = new Set(busyRows.map((r) => r.accountId).filter(Boolean) as string[]);
+
+  // Which mailboxes can send at all right now.
+  const usable: string[] = [];
+  const reasons: string[] = [];
+  for (const id of blast.accountIds) {
+    const size = pending.find((g) => g.plannedAccountId === id)?.recipientCount ?? pending[0]!.recipientCount;
+    const r = await checkMailbox(blast, id, size, { used, allowed });
+    if (r.account) usable.push(id);
+    else reasons.push(r.reason!);
+  }
+  if (!usable.length) return { ready: [], nextGap: Infinity, waiting: `Waiting: ${reasons.join('; ') || 'no sending mailbox chosen'}. Sending carries on by itself when one is free.` };
+
+  // Batches planned for a mailbox that can't send (or for none) move to ones that can.
+  const left = new Map(usable.map((id) => [id, pending.filter((g) => g.plannedAccountId === id).length]));
+  const moves = new Map<string, string[]>();
+  for (const g of pending) {
+    if (g.plannedAccountId && left.has(g.plannedAccountId)) continue;
+    const target = usable.reduce((best, id) => (left.get(id)! < left.get(best)! ? id : best), usable[0]!);
+    left.set(target, left.get(target)! + 1);
+    moves.set(target, [...(moves.get(target) ?? []), g.id]);
+    g.plannedAccountId = target;
+  }
+  for (const [target, ids] of moves) {
+    await prisma.recruiterBlastGroup.updateMany({ where: { id: { in: ids }, status: 'PENDING' }, data: { plannedAccountId: target } });
+  }
+  if (moves.size) console.log(`[recruiter-send] ${blast.id}: moved ${[...moves.values()].flat().length} batch(es) to mailboxes that can send (${reasons.join('; ')})`);
+
+  // Each usable mailbox's next batch, once its own pause is over.
+  const ready: { group: GroupRow; accountId: string }[] = [];
+  let nextGap = Infinity;
+  for (const id of usable) {
+    if (busy.has(id)) continue;
+    const wait = (last.get(id) ?? 0) + blast.gapSeconds * 1000 - now;
+    if (wait > 0) {
+      nextGap = Math.min(nextGap, wait);
+      continue;
+    }
+    const group = pending.find((g) => g.plannedAccountId === id);
+    if (group) ready.push({ group, accountId: id });
+  }
+  return { ready, nextGap, waiting: null };
+}
+
+export async function runRecruiterWorker(opts: { budgetMs?: number; send?: RecruiterSender; staggerMs?: () => number; sleep?: (ms: number) => Promise<unknown> } = {}): Promise<{ sent: number; failed: number; waiting: string | null }> {
   const send = opts.send ?? gmailSender;
+  const pause = opts.sleep ?? sleep; // tests pass their own clock
+  // Messages of one round leave a little apart (0.7–1.5 s each), not in the same instant.
+  const stagger = opts.staggerMs ?? (() => 700 + Math.random() * 800);
   const deadline = Date.now() + (opts.budgetMs ?? 45_000);
   const timeLeft = () => deadline - 5_000 - Date.now();
   // A Gmail send (150 Bcc, maybe a video) can take 10-20 s. Never start one this close to the end:
@@ -161,6 +355,15 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
   let failed = 0;
   let waiting: string | null = null;
   const waitingIds = new Set<string>();
+  const count = (o: Outcome) => {
+    if (o === 'sent') sent++;
+    else if (o === 'failed') failed++;
+  };
+  const setWaiting = async (blast: BlastRow, note: string) => {
+    waiting = note;
+    waitingIds.add(blast.id);
+    if (blast.note !== note) await prisma.recruiterBlast.update({ where: { id: blast.id }, data: { note } });
+  };
   await recoverStuck();
 
   // Scheduled sends whose time has come.
@@ -170,13 +373,43 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
     const blasts = await prisma.recruiterBlast.findMany({ where: { status: 'SENDING' }, orderBy: { startedAt: 'asc' }, take: 20 });
     if (!blasts.length) break;
     let progressed = false;
-    let nextGap = Infinity; // shortest pause still to run, when every send is between messages
+    let nextGap = Infinity; // shortest pause still to run, when everything is between messages
+    // PARALLEL: this round's messages, from every send, sent together below.
+    const round: { blast: BlastRow; group: GroupRow; account: EmailProviderAccount; recipients: Person[] }[] = [];
 
     for (const blast of blasts) {
       if (timeLeft() <= 0) break;
       if (await finishIfDone(blast.id)) continue;
 
-      // Pause between messages of the same send (counting one being sent right now).
+      if (blast.sendOrder !== 'SEQUENTIAL') {
+        if (round.length >= MAX_PARALLEL) continue;
+        const plan = await planRound(blast);
+        if (plan.waiting) {
+          await setWaiting(blast, plan.waiting);
+          continue;
+        }
+        nextGap = Math.min(nextGap, plan.nextGap);
+        for (const { group, accountId } of plan.ready) {
+          if (round.length >= MAX_PARALLEL) break;
+          const recipients = await liveRecipients(blast, group.id);
+          if (!recipients.length) {
+            progressed = true;
+            continue;
+          }
+          if (timeLeft() < SEND_RESERVE_MS + (round.length + 1) * 1_500) {
+            handOver = true;
+            break;
+          }
+          const account = await prisma.emailProviderAccount.findUnique({ where: { id: accountId } });
+          if (!account || !(await claim(blast, group.id, account, true))) continue;
+          progressed = true;
+          round.push({ blast, group, account, recipients });
+        }
+        if (handOver) break;
+        continue;
+      }
+
+      // SEQUENTIAL: one message at a time, with the send's pause between messages.
       const last = await prisma.recruiterBlastGroup.findFirst({ where: { blastId: blast.id, status: { in: ['SENT', 'SENDING'] }, sentAt: { not: null } }, orderBy: { sentAt: 'desc' }, select: { sentAt: true } });
       const wait = last?.sentAt ? last.sentAt.getTime() + blast.gapSeconds * 1000 - Date.now() : 0;
       if (wait > 0) {
@@ -184,137 +417,54 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
           nextGap = Math.min(nextGap, wait);
           continue;
         }
-        await sleep(wait);
+        await pause(wait);
         // Paused or cancelled while we waited?
         const current = await prisma.recruiterBlast.findUnique({ where: { id: blast.id }, select: { status: true } });
         if (current?.status !== 'SENDING') continue;
       }
-
       const group = await prisma.recruiterBlastGroup.findFirst({ where: { blastId: blast.id, status: 'PENDING' }, orderBy: { seq: 'asc' } });
       if (!group) continue;
-      let recipients = await prisma.recruiterBlastRecipient.findMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, select: { id: true, email: true, name: true, data: true } });
-      // Unsubscribed or bounced since the send started (a long send runs for days): drop them.
-      if (recipients.length) {
-        const suppressed = await prisma.emailSuppression.findMany({ where: { workspaceId: blast.workspaceId, email: { in: recipients.map((r) => r.email) } }, select: { email: true } });
-        if (suppressed.length) {
-          const gone = new Set(suppressed.map((s) => s.email.toLowerCase()));
-          const drop = recipients.filter((r) => gone.has(r.email.toLowerCase()));
-          await prisma.recruiterBlastRecipient.updateMany({ where: { id: { in: drop.map((r) => r.id) } }, data: { status: 'SKIPPED', skipReason: 'Unsubscribed or bounced after the send started' } });
-          recipients = recipients.filter((r) => !gone.has(r.email.toLowerCase()));
-        }
-      }
+      const recipients = await liveRecipients(blast, group.id);
       if (!recipients.length) {
-        await prisma.recruiterBlastGroup.updateMany({ where: { id: group.id, status: 'PENDING' }, data: { status: 'SENT', recipientCount: 0 } });
         progressed = true;
         continue;
       }
-
       const mode = blast.mode as BlastMode;
       const to = mode === 'BCC' ? blast.toAddress! : recipients[0]!.email;
-      const bcc = mode === 'BCC' ? recipients.map((r) => r.email) : [];
-      const { account, reasons } = await chooseMailbox(blast, to, bcc);
+      const { account, reasons } = await chooseMailbox(blast, to, mode === 'BCC' ? recipients.map((r) => r.email) : []);
       if (!account) {
-        waiting = `Waiting: ${reasons.join('; ') || 'no sending mailbox chosen'}. Sending carries on by itself when one is free.`;
-        waitingIds.add(blast.id);
-        if (blast.note !== waiting) await prisma.recruiterBlast.update({ where: { id: blast.id }, data: { note: waiting } });
+        await setWaiting(blast, `Waiting: ${reasons.join('; ') || 'no sending mailbox chosen'}. Sending carries on by itself when one is free.`);
         continue;
       }
-
       if (timeLeft() < SEND_RESERVE_MS) {
         handOver = true; // not enough time left to send safely: let the next run do it
         break;
       }
-
-      // Claim it: only one run may send this message, and only one message of a send is out at
-      // a time (so two runs can't skip the pause). sentAt = claim time keeps recoverStuck off
-      // fresh claims; the old error is cleared so it can't hold the mailbox (backoffUntil).
-      const claimed = await prisma.recruiterBlastGroup.updateMany({
-        where: { id: group.id, status: 'PENDING', blast: { status: 'SENDING', groups: { none: { status: 'SENDING' } } } },
-        data: { status: 'SENDING', sentAt: new Date(), accountId: account.id, fromEmail: account.emailAddress, attempts: { increment: 1 }, errorCode: null, error: null },
-      });
-      if (!claimed.count) continue;
+      if (!(await claim(blast, group.id, account, false))) continue;
       progressed = true;
+      count(await deliver(blast, group, recipients, account, send));
+    }
 
-      // Individual copies carry the recruiter's own {{Column}} values (name, company, UTM link).
-      const content = mode === 'INDIVIDUAL' ? personalize({ subject: blast.subject, html: blast.html, plainText: blast.plainText }, recipients[0]!) : { subject: blast.subject, html: blast.html, plainText: blast.plainText };
-      const decorated = decorate(content.html, { groupId: group.id, mode, workspaceId: blast.workspaceId, blastId: blast.id, recipientEmail: mode === 'INDIVIDUAL' ? to : undefined, pixel: mode === 'INDIVIDUAL' });
-      let result: Awaited<ReturnType<RecruiterSender>>;
-      try {
-        const docs = blast.attachmentDocumentIds.length
-          ? await prisma.documentTemplate.findMany({ where: { id: { in: blast.attachmentDocumentIds }, workspaceId: blast.workspaceId }, select: { id: true, fileNamePattern: true, file: { select: { data: true } } } })
-          : [];
-        const attachments: EmailAttachment[] = blast.attachmentDocumentIds
-          .map((id) => docs.find((d) => d.id === id))
-          .filter((d): d is NonNullable<typeof d> => !!d)
-          .map((d) => ({ filename: /\.pdf$/i.test(d.fileNamePattern) ? d.fileNamePattern : `${d.fileNamePattern}.pdf`, mimeType: 'application/pdf', content: Buffer.from(d.file.data) }));
-        const video = readVideo(blast.video);
-        if (video?.mode === 'attach') {
-          // Downloaded once per run, not once per message.
-          let bytes = videoCache.get(video.ref);
-          if (!bytes) {
-            bytes = (await readRef(video.ref)) ?? undefined;
-            if (!bytes) throw new SendEmailError('The video could not be read from storage.', 'TRANSIENT');
-            videoCache.set(video.ref, bytes);
-          }
-          attachments.push({ filename: video.fileName, mimeType: video.contentType, content: bytes });
-        }
-        const input = {
-          to,
-          cc: blast.ccAddresses,
-          bcc,
-          fromName: blast.fromName || account.displayName || account.emailAddress,
-          fromEmail: account.emailAddress,
-          // Custom Reply-To plus the sending mailbox, so replies reach MailFlow too.
-          replyTo: replyToHeader(blast.replyTo, account.emailAddress),
-          subject: content.subject,
-          html: decorated.html,
-          plainText: `${content.plainText}\n\nUnsubscribe: ${decorated.unsubscribeUrl}`,
-          // One-click unsubscribe only where it can name the person (individual copies).
-          listUnsubscribeUrl: mode === 'INDIVIDUAL' ? decorated.unsubscribeUrl : null,
-          attachments,
-        };
-        // Big messages (a video) go through Gmail's upload endpoint, which takes up to 35 MB.
-        const bytes = attachments.reduce((n, a) => n + a.content.length, 0);
-        result = await send(account, input, bytes > UPLOAD_THRESHOLD_BYTES);
-      } catch (err) {
-        if (await recordFailure(blast.id, group, account.id, err)) failed++;
-        // Gmail refused the recruiter's address itself (individual copies name one person): it
-        // goes on the suppression list everywhere, with the reason, and shows "bounced" here.
-        if (mode === 'INDIVIDUAL' && err instanceof SendEmailError && err.kind === 'INVALID_RECIPIENT') {
-          const detail = `Gmail rejected the address when sending (Recruiter Bulk Send “${blast.name}”): ${err.message}`;
-          await suppressRejectedRecruiter(blast.workspaceId, to, detail).catch((e) => console.error('[recruiter-send] suppress failed', e));
-          await markRecruiterBounced(blast.id, [to], detail).catch(() => undefined);
-        }
-        continue;
-      }
-
-      // Gmail has it. From here nothing may put the message back in the queue: if recording
-      // fails every time, it stays SENDING and recoverStuck marks it "check the Sent folder".
-      const sentAt = new Date();
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          await prisma.$transaction([
-            // The Message-ID and thread let Gmail sync recognise recruiters' replies (lib/gmail/ingest.ts).
-            prisma.recruiterBlastGroup.update({ where: { id: group.id }, data: { status: 'SENT', sentAt, gmailMessageId: result.providerMessageId, messageIdHeader: result.messageIdHeader ?? null, gmailThreadId: result.threadId ?? null, errorCode: null, error: null, recipientCount: recipients.length } }),
-            prisma.recruiterBlastRecipient.updateMany({ where: { groupId: group.id, status: { in: ['PENDING', 'QUEUED'] } }, data: { status: 'SENT', sentAt } }),
-            prisma.recruiterBlast.update({ where: { id: blast.id }, data: { note: null } }),
-          ]);
-          break;
-        } catch (err) {
-          console.error(`[recruiter-send] group ${group.id} was sent but could not be recorded (attempt ${attempt})`, err);
-          if (attempt < 3) await sleep(1_000 * attempt);
-        }
-      }
-      sent++;
+    // The round: every mailbox's message at once, a moment apart.
+    if (round.length) {
+      let offset = 0;
+      const outcomes = await Promise.all(
+        round.map((m, i) => {
+          if (i > 0) offset += stagger();
+          const delay = offset;
+          return pause(delay).then(() => deliver(m.blast, m.group, m.recipients, m.account, send));
+        }),
+      );
+      outcomes.forEach(count);
     }
 
     if (handOver) break;
     if (!progressed) {
-      // Every send is between messages: wait here rather than hand over to a new run that
+      // Everything is between messages: wait here rather than hand over to a new run that
       // would only find the same pause, but keep enough time to send and hand over.
       const usable = timeLeft() - SEND_RESERVE_MS;
       if (Number.isFinite(nextGap) && usable > 1_000) {
-        await sleep(Math.min(nextGap, usable));
+        await pause(Math.min(nextGap, usable));
         continue;
       }
       break;

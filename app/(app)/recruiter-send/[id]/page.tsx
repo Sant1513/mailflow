@@ -8,6 +8,7 @@ import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
 import { Avatar } from '@/components/ui/Avatar';
 import { LivePreview, Pager, SendSummary, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
 import { VariablePicker, variableProblems } from '@/components/recruiter-send/Variables';
+import { RecipientPanel } from '@/components/recruiter-send/RecipientPanel';
 
 type Mode = 'BCC' | 'INDIVIDUAL';
 interface Video { mode: 'attach'; ref: string; fileName: string; size: number; contentType: string }
@@ -17,7 +18,7 @@ interface Blast {
   includeSignature: boolean; fromName: string | null; replyTo: string | null; ccAddresses: string[]; accountIds: string[]; accountLimits: Record<string, number>;
   video: Video | VideoLink | null; attachmentDocumentIds: string[]; groupSize: number; gapSeconds: number; status: string;
   scheduledAt: string | null; note: string | null; startedAt: string | null; completedAt: string | null; html: string;
-  columns: string[]; emailColumn: string | null;
+  columns: string[]; emailColumn: string | null; sendOrder: 'PARALLEL' | 'SEQUENTIAL';
 }
 interface Mailbox { id: string; emailAddress: string; ownerName: string | null; status: string; own: boolean; sentLast24h: number; dailyLimit: number }
 interface Group { id: string; seq: number; status: string; recipientCount: number; fromEmail: string | null; sentAt: string | null; openCount: number; firstOpenedAt: string | null; lastOpenedAt: string | null; error: string | null }
@@ -26,7 +27,7 @@ interface Detail { blast: Blast; counts: Record<string, number>; stats: { messag
 interface Check {
   total: number; eligible: number; skipped: { email: string; reason: string }[]; skippedByReason: Record<string, number>; messages: number; perMessage: number;
   capacity: { accountId: string; emailAddress: string; messagesLeft: number; peopleLeft: number }[]; messagesPossibleToday: number; estimatedMinutes: number; preview: string; previewSubject?: string; previewRecipient?: string | null;
-  batches: PlannedBatch[]; people: PlannedPerson[];
+  batches: PlannedBatch[]; people: PlannedPerson[]; rounds?: number; sendOrder?: 'PARALLEL' | 'SEQUENTIAL';
 }
 
 const FIELD = 'w-full rounded border bg-background px-2 py-1.5 text-sm';
@@ -132,7 +133,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     const next = { ...form, ...patch };
     setForm(next);
     // Batches depend on these; the plan refreshes by itself once the change is saved.
-    const affectsPlan = (['accountIds', 'accountLimits', 'groupSize', 'mode'] as const).some((k) => k in patch);
+    const affectsPlan = (['accountIds', 'accountLimits', 'groupSize', 'mode', 'sendOrder'] as const).some((k) => k in patch);
     // Variables decide who has every value they need, so the plan follows the text too.
     const affectsVariables = ('subject' in patch || 'body' in patch) && /\{\{/.test(`${patch.subject ?? ''}${patch.body ?? ''}${form.subject}${form.body}`);
     setSaving('saving');
@@ -291,7 +292,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   ];
   const stepSummary: Record<number, string> = {
     1: total ? `${total.toLocaleString()} recruiter${total === 1 ? '' : 's'}` : 'No recruiters yet',
-    2: form.mode === 'BCC' ? `BCC groups of ${form.groupSize} · To ${form.toAddress || '— not set'} · ${form.gapSeconds}s pause` : `Individual copies · ${form.gapSeconds}s pause`,
+    2: `${form.mode === 'BCC' ? `BCC groups of ${form.groupSize} · To ${form.toAddress || '— not set'}` : 'Individual copies'} · ${form.gapSeconds}s pause · ${form.sendOrder === 'SEQUENTIAL' ? 'one mailbox after another' : 'all mailboxes together'}`,
     3: form.subject.trim() ? `“${form.subject}”${ccList.length ? ` · CC ${ccList.length}` : ''}${form.replyTo ? ` · Reply-To ${form.replyTo}` : ''}` : 'No subject yet',
     4: attachedNames.length ? attachedNames.join(', ') : 'None (optional)',
     5: chosen.length ? chosen.map((id) => detail.mailboxes.find((m) => m.id === id)?.emailAddress ?? '').filter(Boolean).join(', ') : 'No mailbox chosen',
@@ -426,10 +427,29 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                 </>
               )}
               <label>
-                <span className={LABEL}>Pause between emails (seconds)</span>
+                <span className={LABEL}>Pause between emails from the same mailbox (seconds)</span>
                 <input type="number" min={form.mode === 'BCC' ? 30 : 3} max={3600} value={form.gapSeconds} onChange={(e) => edit({ gapSeconds: Math.max(form.mode === 'BCC' ? 30 : 3, Number(e.target.value) || 0) })} className={FIELD} />
               </label>
             </div>
+            <fieldset className="mt-3">
+              <legend className={LABEL}>With more than one mailbox</legend>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(['PARALLEL', 'SEQUENTIAL'] as const).map((o) => (
+                  <label key={o} className={`cursor-pointer rounded-lg border p-2.5 text-sm ${(form.sendOrder ?? 'PARALLEL') === o ? 'border-primary ring-1 ring-primary' : ''}`}>
+                    <span className="flex items-center gap-2 font-medium">
+                      <input type="radio" name="sendOrder" checked={(form.sendOrder ?? 'PARALLEL') === o} onChange={() => edit({ sendOrder: o })} />
+                      {o === 'PARALLEL' ? 'All mailboxes together (faster)' : 'One mailbox after another'}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {o === 'PARALLEL'
+                        ? 'Batch 1 of every mailbox goes at once, then each mailbox waits its own pause before its next email. 10 mailboxes ≈ 10× faster.'
+                        : 'The first mailbox sends until its limit, then the next takes over; the pause is between every email of the send.'}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">The pause is always between two emails from the <b>same</b> mailbox, so each Gmail account sends at the pace you set.</p>
+            </fieldset>
           </Section>
 
           <Section n={3} title="The email" summary={stepSummary[3]} done={stepDone[3]}>
@@ -608,7 +628,18 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             ) : (
               <div className={`space-y-3 ${checking ? 'opacity-60 transition-opacity' : ''}`}>
                 <SendSummary items={summaryItems(form, check, detail, library, splitEmails(ccText ?? '').valid)} warnings={summaryWarnings(form, check)} />
-                <WhoReceives people={check.people} batches={check.batches} total={check.total} html={preview} subject={form.subject} mode={form.mode} />
+                <WhoReceives
+                  people={check.people}
+                  batches={check.batches}
+                  total={check.total}
+                  html={preview}
+                  subject={form.subject}
+                  mode={form.mode}
+                  parallel={(check.sendOrder ?? form.sendOrder) !== 'SEQUENTIAL'}
+                  blastId={b.id}
+                  version={`${form.mode}|${form.subject}|${preview.length}|${hashText(preview)}`}
+                  envelope={{ mode: form.mode, fromName: form.fromName, toAddress: form.toAddress, ccAddresses: splitEmails(ccText ?? '').valid, replyTo: form.replyTo }}
+                />
               </div>
             )}
           </Section>
@@ -664,10 +695,10 @@ function summaryItems(form: Blast, check: Check, detail: Detail, library: { id: 
   return [
     ['Send as', form.mode === 'BCC' ? `BCC groups of up to ${check.perMessage}` : 'Individual copies (one email per recruiter)'],
     ['Recruiters', `${check.eligible.toLocaleString()} will get it${skipped ? ` · ${skipped.toLocaleString()} skipped` : ''} (of ${check.total.toLocaleString()})`],
-    ['Batches', `${check.messages.toLocaleString()} email${check.messages === 1 ? '' : 's'}`],
-    ['Pause between emails', `${form.gapSeconds}s · about ${check.estimatedMinutes} min in all`],
+    ['Batches', `${check.messages.toLocaleString()} email${check.messages === 1 ? '' : 's'}${check.sendOrder !== 'SEQUENTIAL' && check.rounds ? ` in ${check.rounds.toLocaleString()} round${check.rounds === 1 ? '' : 's'} (all mailboxes together)` : ''}`],
+    ['Pause', `${form.gapSeconds}s between emails from the same mailbox · about ${check.estimatedMinutes} min in all`],
     ['From name', form.fromName ?? ''],
-    ['Sending accounts (in order)', mailboxes],
+    [form.sendOrder === 'SEQUENTIAL' ? 'Sending accounts (in order)' : 'Sending accounts (together)', mailboxes],
     ['To', form.mode === 'BCC' ? form.toAddress ?? '' : 'each recruiter'],
     ['CC', cc.join(', ')],
     ['BCC', form.mode === 'BCC' ? 'the recruiters of each batch' : ''],
@@ -700,7 +731,7 @@ function pickEditable(b: Blast) {
   return {
     name: b.name, mode: b.mode, toAddress: b.toAddress, subject: b.subject, body: b.body, format: b.format, includeSignature: b.includeSignature,
     fromName: b.fromName, replyTo: b.replyTo, ccAddresses: b.ccAddresses ?? [], accountIds: b.accountIds, accountLimits: b.accountLimits ?? {}, attachmentDocumentIds: b.attachmentDocumentIds,
-    groupSize: b.groupSize, gapSeconds: b.gapSeconds,
+    groupSize: b.groupSize, gapSeconds: b.gapSeconds, sendOrder: b.sendOrder ?? 'PARALLEL',
   };
 }
 
@@ -708,6 +739,8 @@ const RECIPIENTS_PER_PAGE = 200; // matches app/api/recruiter-blasts/[id]/route.
 
 function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPage: (p: number) => void }) {
   const b = detail.blast;
+  const [open, setOpen] = useState<string | null>(null);
+  const openIndex = open ? detail.recipients.findIndex((r) => r.email === open) : -1;
   const { messagesSent: sentMessages, messagesTotal: totalMessages, openedRecruiters } = detail.stats;
   // Open counts only where they name a recruiter: a BCC email is one message for many people.
   const showOpens = b.mode === 'INDIVIDUAL';
@@ -760,11 +793,11 @@ function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPa
             </thead>
             <tbody>
               {detail.recipients.map((r) => (
-                <tr key={r.email} className="border-t border-border-subtle align-top">
+                <tr key={r.email} onClick={() => setOpen(r.email)} title="Show the email this recruiter got" className={`cursor-pointer border-t border-border-subtle align-top hover:bg-elevated ${open === r.email ? 'bg-primary/10' : ''}`}>
                   <td className="py-1 pr-2"><span className="flex items-center gap-2"><Avatar email={r.email} name={r.name} size={24} /><span className="min-w-0">{r.name ? <>{r.name} <span className="text-xs text-muted-foreground">{r.email}</span></> : r.email}</span></span></td>
                   <td className="py-1 pr-2 text-xs">{r.status.toLowerCase()}{r.skipReason && <span className="block text-muted-foreground">{r.skipReason}</span>}</td>
                   {b.mode === 'INDIVIDUAL' && <td className="py-1 pr-2 text-xs">{r.openCount > 0 ? `✓ ${r.openCount}× · ${r.openedAt ? new Date(r.openedAt).toLocaleString() : ''}` : '—'}</td>}
-                  <td className="py-1 text-xs">{r.repliedAt ? <a className="text-primary hover:underline" href={`/inbox?filter=all&q=${encodeURIComponent(r.email)}`}>✓ {new Date(r.repliedAt).toLocaleString()}</a> : '—'}</td>
+                  <td className="py-1 text-xs">{r.repliedAt ? <a onClick={(ev) => ev.stopPropagation()} className="text-primary hover:underline" href={`/inbox?filter=all&q=${encodeURIComponent(r.email)}`}>✓ {new Date(r.repliedAt).toLocaleString()}</a> : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -772,9 +805,31 @@ function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPa
         </div>
         <div className="mt-2 space-y-1">
           <Pager page={page} pages={Math.max(1, Math.ceil((detail.counts.total ?? 0) / RECIPIENTS_PER_PAGE))} onPage={onPage} label="Recruiter pages" />
-          <p className="text-center text-xs text-muted-foreground">{(detail.counts.total ?? 0).toLocaleString()} recruiters · replied first{detail.blast.mode === 'INDIVIDUAL' ? ', then most opened' : ''}.</p>
+          <p className="text-center text-xs text-muted-foreground">{(detail.counts.total ?? 0).toLocaleString()} recruiters · replied first{detail.blast.mode === 'INDIVIDUAL' ? ', then most opened' : ''}. Click one to see the email they got.</p>
         </div>
       </section>
+      {open && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={() => setOpen(null)} role="dialog" aria-label="The email this recruiter got">
+          <div className="h-full w-full max-w-2xl overflow-auto bg-background p-3 shadow-2xl" onClick={(ev) => ev.stopPropagation()}>
+            <RecipientPanel
+              blastId={b.id}
+              email={open}
+              version={b.status}
+              envelope={{ mode: b.mode, fromName: b.fromName, toAddress: b.toAddress, ccAddresses: b.ccAddresses ?? [], replyTo: b.replyTo }}
+              position={openIndex >= 0 ? { index: openIndex, total: detail.recipients.length } : undefined}
+              onStep={(d) => { const next = detail.recipients[openIndex + d]; if (next) setOpen(next.email); }}
+              onClose={() => setOpen(null)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+/** A short fingerprint of the email, so a recruiter's cached preview is refreshed when it changes. */
+function hashText(text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
 }

@@ -76,7 +76,8 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
         await tx.recruiterBlastRecipient.update({ where: { id }, data: { status: 'SKIPPED', skipReason: reason.slice(0, 300) } });
       }
       const created = await tx.recruiterBlastGroup.createManyAndReturn({
-        data: groups.map((g, i) => ({ blastId: blast.id, seq: i + 1, recipientCount: g.length })),
+        // Each batch keeps the mailbox the check showed (PARALLEL: round robin across mailboxes).
+        data: groups.map((g, i) => ({ blastId: blast.id, seq: i + 1, recipientCount: g.length, plannedAccountId: plan.plannedAccountIds[i] ?? null })),
         select: { id: true, seq: true },
       });
       const bySeq = new Map(created.map((c) => [c.seq, c.id]));
@@ -100,7 +101,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   await audit(session, 'RECRUITER_SEND_START', {
     targetType: 'RecruiterBlast',
     targetId: blast.id,
-    metadata: { mode, recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, messages: groups.length, accounts: blast.accountIds, scheduledAt: when?.toISOString() ?? null },
+    metadata: { mode, sendOrder: plan.sendOrder, rounds: plan.rounds, recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, messages: groups.length, accounts: blast.accountIds, scheduledAt: when?.toISOString() ?? null },
   });
   if (!when) kickRecruiterWorker('start');
   return NextResponse.json({ ok: true, status: when ? 'SCHEDULED' : 'SENDING', recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, messages: groups.length });

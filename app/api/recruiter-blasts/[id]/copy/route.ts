@@ -41,6 +41,7 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
       video: source.video === null ? Prisma.JsonNull : (source.video as Prisma.InputJsonValue),
       attachmentDocumentIds: source.attachmentDocumentIds,
       groupSize: source.groupSize,
+      sendOrder: source.sendOrder,
       gapSeconds: source.gapSeconds,
       copiedFromId: source.id,
     },

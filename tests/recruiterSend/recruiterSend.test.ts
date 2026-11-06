@@ -97,7 +97,7 @@ describe('sending', () => {
   const acc = (id: string, email: string) => ({ id, emailAddress: email, displayName: null, status: 'CONNECTED', refreshTokenEnc: 'x' });
   const blast = (over: Record<string, unknown> = {}) => ({
     id: 'b1', workspaceId: 'w1', mode: 'BCC', toAddress: 'placements@masaischool.com', subject: 'Hiring partners', html: '<p>Hi <a href="https://x.com">x</a></p>',
-    plainText: 'Hi', fromName: 'Masai', replyTo: 'hr@masaischool.com', accountIds: ['a1', 'a2'], accountLimits: {}, video: null, attachmentDocumentIds: [], gapSeconds: 0, note: null, ...over,
+    plainText: 'Hi', fromName: 'Masai', replyTo: 'hr@masaischool.com', accountIds: ['a1', 'a2'], accountLimits: {}, video: null, attachmentDocumentIds: [], gapSeconds: 0, note: null, sendOrder: 'SEQUENTIAL', ...over,
   });
 
   beforeEach(() => {

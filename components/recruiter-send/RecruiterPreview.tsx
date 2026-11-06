@@ -1,17 +1,17 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { EmailPreview } from '@/components/email-preview/EmailPreview';
+import { EmailViewer } from '@/components/recruiter-send/EmailViewer';
 import { Avatar } from '@/components/ui/Avatar';
+import { RecipientPanel, type PanelEnvelope } from '@/components/recruiter-send/RecipientPanel';
+
+export { EmailViewer };
 
 /**
  * Recruiter Bulk Send previews: the live email preview beside the form (like Quick Send), and
  * after the check, who receives it — each recruiter's batch and the mailbox it goes from — next
  * to the email (like a campaign's review).
  */
-
-type PreviewMode = 'desktop' | 'mobile';
-const PRESET_WIDTH: Record<PreviewMode, number> = { desktop: 700, mobile: 375 };
 
 /** Page through a list: « ‹ page x of y › ». Hidden when everything fits on one page. */
 export function Pager({ page, pages, onPage, label }: { page: number; pages: number; onPage: (p: number) => void; label?: string }) {
@@ -28,78 +28,6 @@ export function Pager({ page, pages, onPage, label }: { page: number; pages: num
   );
 }
 
-/**
- * The email in a frame you can size: Desktop / Phone presets, a width slider, and a drag handle
- * (bottom edge) for the height. Remembers the size per viewer (this browser only).
- */
-export function EmailViewer({ html, storageKey, defaultHeight = 520, header, empty }: { html: string; storageKey: string; defaultHeight?: number; header?: React.ReactNode; empty?: string }) {
-  const [mode, setMode] = useState<PreviewMode>('desktop');
-  const [width, setWidth] = useState<number>(PRESET_WIDTH.desktop);
-  const [height, setHeight] = useState<number>(defaultHeight);
-  const frame = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(`email-viewer:${storageKey}`) ?? 'null') as { width?: number; height?: number; mode?: PreviewMode } | null;
-      if (saved?.mode) setMode(saved.mode);
-      if (saved?.width) setWidth(saved.width);
-      if (saved?.height) setHeight(saved.height);
-    } catch {
-      /* private window or blocked storage: defaults are fine */
-    }
-  }, [storageKey]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(`email-viewer:${storageKey}`, JSON.stringify({ width, height, mode }));
-    } catch {
-      /* ignore */
-    }
-  }, [storageKey, width, height, mode]);
-
-  // The frame's bottom edge can be dragged (CSS resize); follow it.
-  useEffect(() => {
-    const el = frame.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => {
-      const h = Math.round(el.clientHeight);
-      if (h > 0) setHeight((prev) => (Math.abs(prev - h) > 2 ? h : prev));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const pick = (m: PreviewMode) => {
-    setMode(m);
-    setWidth(PRESET_WIDTH[m]);
-  };
-
-  return (
-    <div className="flex min-w-0 flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
-        <div className="min-w-0 flex-1">{header}</div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex shrink-0 rounded-full border p-0.5 text-[11px]" role="group" aria-label="Preview size">
-            {(['desktop', 'mobile'] as const).map((m) => (
-              <button key={m} type="button" aria-pressed={mode === m && width === PRESET_WIDTH[m]} onClick={() => pick(m)} className={`rounded-full px-2 py-0.5 ${mode === m && width === PRESET_WIDTH[m] ? 'bg-foreground text-background' : 'text-muted-foreground'}`}>
-                {m === 'desktop' ? 'Desktop' : 'Phone'}
-              </button>
-            ))}
-          </div>
-          <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            Width
-            <input type="range" min={320} max={1000} step={10} value={width} onChange={(e) => setWidth(Number(e.target.value))} className="w-20 sm:w-24" aria-label="Preview width" />
-            <span className="w-10 tabular-nums">{width}px</span>
-          </label>
-          <button type="button" onClick={() => { pick('desktop'); setHeight(defaultHeight); }} className="text-[11px] text-primary hover:underline">Reset</button>
-        </div>
-      </div>
-      <div ref={frame} className="overflow-auto" style={{ height, minHeight: 260, maxHeight: 1600, resize: 'vertical' }} title="Drag the bottom edge to make the preview taller or shorter">
-        {html ? <EmailPreview html={html} mode={mode} width={width} height={Math.max(220, height - 40)} /> : <p className="p-6 text-center text-sm text-muted-foreground">{empty ?? 'Nothing to preview yet.'}</p>}
-      </div>
-      <div className="border-t px-3 py-1 text-center text-[10px] text-muted-foreground">⇕ drag the edge above to resize</div>
-    </div>
-  );
-}
 
 export interface EnvelopeInfo {
   mode: 'BCC' | 'INDIVIDUAL';
@@ -172,14 +100,23 @@ export function SendSummary({ items, warnings }: { items: [string, string][]; wa
   );
 }
 
-export interface PlannedPerson { email: string; name: string | null; batch: number | null; mailbox: string | null; skipped: string | null }
-export interface PlannedBatch { seq: number; size: number; mailbox: string | null }
+export interface PlannedPerson { email: string; name: string | null; batch: number | null; round?: number | null; mailbox: string | null; skipped: string | null }
+export interface PlannedBatch { seq: number; size: number; mailbox: string | null; round?: number | null }
 
 const PEOPLE_PER_PAGE = 50;
 const BATCHES_PER_PAGE = 20;
 
 /** After the check: who receives it, in which batch, from which mailbox — beside the email. */
-export function WhoReceives({ people, batches, total, html, subject, mode: sendMode }: { people: PlannedPerson[]; batches: PlannedBatch[]; total: number; html: string; subject: string; mode: 'BCC' | 'INDIVIDUAL' }) {
+export function WhoReceives({
+  people, batches, total, html, subject, mode: sendMode, blastId, version, envelope, parallel = false,
+}: {
+  people: PlannedPerson[]; batches: PlannedBatch[]; total: number; html: string; subject: string; mode: 'BCC' | 'INDIVIDUAL';
+  /** With these, clicking a recruiter shows their own email in the side panel. */
+  blastId?: string; version?: string; envelope?: Omit<PanelEnvelope, 'batch' | 'round' | 'mailbox' | 'batchSize' | 'skipped'>;
+  /** All mailboxes send together, in rounds. */
+  parallel?: boolean;
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'sending' | 'skipped'>('all');
   const [batchFilter, setBatchFilter] = useState<number | null>(null);
   const [page, setPage] = useState(1);
@@ -192,9 +129,22 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
   const pages = Math.max(1, Math.ceil(rows.length / PEOPLE_PER_PAGE));
   const batchPages = Math.max(1, Math.ceil(batches.length / BATCHES_PER_PAGE));
   // A new plan or filter starts again at page 1 (and never points past the end).
-  useEffect(() => setPage(1), [filter, batchFilter, people]);
+  useEffect(() => setPage(1), [filter, batchFilter]);
+  useEffect(() => setPage((p) => Math.min(p, Math.max(1, Math.ceil(rows.length / PEOPLE_PER_PAGE)))), [rows.length]);
   useEffect(() => setBatchPage((p) => Math.min(p, batchPages)), [batchPages]);
   const shownRows = rows.slice((page - 1) * PEOPLE_PER_PAGE, page * PEOPLE_PER_PAGE);
+  const selectedIndex = selected ? rows.findIndex((r) => r.email === selected) : -1;
+  const person = selectedIndex >= 0 ? rows[selectedIndex]! : null;
+  const sizeOf = useMemo(() => new Map(batches.map((b) => [b.seq, b.size])), [batches]);
+  // Step through recruiters (‹ › or ↑ ↓), following onto the right page.
+  const step = (delta: number) => {
+    const i = Math.min(rows.length - 1, Math.max(0, (selectedIndex < 0 ? -1 : selectedIndex) + delta));
+    const next = rows[i];
+    if (!next) return;
+    setSelected(next.email);
+    setPage(Math.floor(i / PEOPLE_PER_PAGE) + 1);
+  };
+  const canPreview = !!(blastId && envelope);
   const shownBatches = batches.slice((batchPage - 1) * BATCHES_PER_PAGE, batchPage * BATCHES_PER_PAGE);
 
   const byMailbox = useMemo(() => {
@@ -228,7 +178,7 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
                 </li>
               ))}
             </ul>
-            <p className="mt-1 text-[11px] text-muted-foreground">Planned from today&apos;s allowances; if a mailbox fills up or Gmail pauses it while sending, the next chosen one takes over.</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{parallel ? 'All of these send together: round 1 from every mailbox, then each waits its own pause before its next email. If a mailbox fills up, disconnects or Gmail pauses it, its batches move to the others.' : 'One after another: the first mailbox until its limit, then the next. If a mailbox fills up or Gmail pauses it while sending, the next chosen one takes over.'}</p>
           </div>
         )}
 
@@ -242,6 +192,7 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
               <thead className="bg-card text-left text-muted-foreground">
                 <tr>
                   <th className="px-3 py-1.5 font-medium">{sendMode === 'BCC' ? 'Batch' : 'Email'}</th>
+                  {parallel && <th className="px-2 py-1.5 font-medium">Round</th>}
                   <th className="px-2 py-1.5 font-medium">Recruiters</th>
                   <th className="px-2 py-1.5 font-medium">Sends from</th>
                   <th className="px-2 py-1.5 font-medium">Starts with</th>
@@ -256,6 +207,7 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
                     title="Show the recruiters in this batch"
                   >
                     <td className="px-3 py-1.5 font-medium">#{bt.seq}</td>
+                    {parallel && <td className="px-2 py-1.5 text-muted-foreground">{bt.round ?? '—'}</td>}
                     <td className="px-2 py-1.5">{bt.size.toLocaleString()}</td>
                     <td className="max-w-[14rem] truncate px-2 py-1.5" title={bt.mailbox ?? ''}>{bt.mailbox ?? <span className="text-warning">later — allowance used up</span>}</td>
                     <td className="max-w-[12rem] truncate px-2 py-1.5 text-muted-foreground">{firstIn.get(bt.seq) ?? ''}</td>
@@ -283,29 +235,45 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
               <option value="skipped">Skipped</option>
             </select>
           </div>
-          <div className="overflow-x-auto">
+          <div
+            className="overflow-x-auto outline-none"
+            tabIndex={canPreview ? 0 : undefined}
+            onKeyDown={(ev) => {
+              if (!canPreview) return;
+              if (ev.key === 'ArrowDown') { ev.preventDefault(); step(1); }
+              if (ev.key === 'ArrowUp') { ev.preventDefault(); step(-1); }
+            }}
+          >
             <table className="w-full min-w-[560px] text-xs">
               <thead className="bg-card text-left text-muted-foreground">
                 <tr>
                   <th className="px-3 py-1.5 font-medium">Email</th>
                   <th className="px-2 py-1.5 font-medium">Name</th>
                   <th className="px-2 py-1.5 font-medium">{sendMode === 'BCC' ? 'Batch' : 'Email #'}</th>
+                  {parallel && <th className="px-2 py-1.5 font-medium">Round</th>}
                   <th className="px-2 py-1.5 font-medium">Sends from</th>
                   <th className="px-2 py-1.5 font-medium">Outcome</th>
                 </tr>
               </thead>
               <tbody>
                 {shownRows.map((p) => (
-                  <tr key={p.email} className={`border-t border-border-subtle ${p.skipped ? 'bg-red-50 dark:bg-red-950/30' : ''}`}>
+                  <tr
+                    key={p.email}
+                    onClick={canPreview ? () => setSelected(p.email) : undefined}
+                    aria-selected={selected === p.email}
+                    title={canPreview ? 'Show the email this recruiter gets' : undefined}
+                    className={`border-t border-border-subtle ${canPreview ? 'cursor-pointer hover:bg-elevated' : ''} ${selected === p.email ? 'bg-primary/10 ring-1 ring-inset ring-primary/40' : p.skipped ? 'bg-red-50 dark:bg-red-950/30' : ''}`}
+                  >
                     <td className="max-w-[16rem] px-3 py-1.5" title={p.email}><span className="flex min-w-0 items-center gap-2"><Avatar email={p.email} name={p.name} size={22} /><span className="truncate">{p.email}</span></span></td>
                     <td className="max-w-[8rem] truncate px-2 py-1.5">{p.name ?? ''}</td>
                     <td className="px-2 py-1.5">{p.batch ?? '—'}</td>
+                    {parallel && <td className="px-2 py-1.5 text-muted-foreground">{p.round ?? '—'}</td>}
                     <td className="max-w-[12rem] truncate px-2 py-1.5" title={p.mailbox ?? ''}>{p.skipped ? '—' : p.mailbox ?? <span className="text-warning">later</span>}</td>
                     <td className={`px-2 py-1.5 ${p.skipped ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>{p.skipped ?? 'Will get it'}</td>
                   </tr>
                 ))}
                 {!shownRows.length && (
-                  <tr><td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">Nobody here.</td></tr>
+                  <tr><td colSpan={parallel ? 6 : 5} className="px-3 py-4 text-center text-muted-foreground">Nobody here.</td></tr>
                 )}
               </tbody>
             </table>
@@ -316,14 +284,27 @@ export function WhoReceives({ people, batches, total, html, subject, mode: sendM
           </div>
         </div>
 
+        {canPreview && person ? (
+          <RecipientPanel
+            blastId={blastId!}
+            email={person.email}
+            version={version ?? ''}
+            envelope={{ ...envelope!, batch: person.batch, round: person.round ?? null, mailbox: person.mailbox, batchSize: person.batch != null ? sizeOf.get(person.batch) ?? null : null, skipped: person.skipped }}
+            position={{ index: selectedIndex, total: rows.length }}
+            onStep={step}
+            onClose={() => setSelected(null)}
+          />
+        ) : (
         <div className="min-w-0 overflow-hidden rounded-lg border bg-card">
+          {canPreview && <p className="border-b bg-primary/5 px-3 py-1.5 text-[11px] text-muted-foreground">Click any recruiter to see the email <b className="text-foreground">they</b> get: their values, batch and mailbox.</p>}
           <EmailViewer
             html={html}
             storageKey="recruiter-review"
             header={<div className="min-w-0 truncate text-xs"><span className="text-muted-foreground">Subject: </span><span className="font-medium">{subject || '—'}</span></div>}
           />
-          <p className="border-t px-3 py-1.5 text-[11px] text-muted-foreground">Every recruiter gets this same email{sendMode === 'BCC' ? ', with their address hidden in Bcc' : ''}.</p>
+          <p className="border-t px-3 py-1.5 text-[11px] text-muted-foreground">{canPreview ? 'The email as written.' : `Every recruiter gets this same email${sendMode === 'BCC' ? ', with their address hidden in Bcc' : ''}.`}</p>
         </div>
+        )}
       </div>
     </div>
   );

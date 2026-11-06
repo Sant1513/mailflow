@@ -74,6 +74,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
 const patchSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   mode: z.enum(['BCC', 'INDIVIDUAL']).optional(),
+  sendOrder: z.enum(['PARALLEL', 'SEQUENTIAL']).optional(),
   toAddress: z.string().trim().max(320).nullable().optional(),
   ccAddresses: z.array(z.string().trim().max(320)).max(10).optional(),
   subject: z.string().max(300).optional(),
@@ -138,6 +139,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     data: {
       ...(body.name !== undefined ? { name: body.name } : {}),
       ...(body.mode !== undefined ? { mode: body.mode } : {}),
+      ...(body.sendOrder !== undefined ? { sendOrder: body.sendOrder } : {}),
       ...(body.toAddress !== undefined ? { toAddress: body.toAddress || null } : {}),
       ...(body.subject !== undefined ? { subject: body.subject } : {}),
       ...(body.fromName !== undefined ? { fromName: body.fromName || null } : {}),

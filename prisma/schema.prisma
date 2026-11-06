@@ -1477,6 +1477,9 @@ model RecruiterBlast {
   /// PDF Library documents attached to every email.
   attachmentDocumentIds String[] @default([])
   groupSize       Int       @default(250)
+  /// PARALLEL: every chosen mailbox sends at once, each with its own pause (round 1 from all,
+  /// then round 2…). SEQUENTIAL: one message at a time, the first mailbox until its limit.
+  sendOrder       String    @default("PARALLEL")
   /// Pause between emails (BCC groups or individual copies), seconds.
   gapSeconds      Int       @default(60)
   /// DRAFT | SCHEDULED | SENDING | PAUSED | COMPLETED | CANCELLED
@@ -1531,6 +1534,9 @@ model RecruiterBlastGroup {
   /// PENDING | SENDING | SENT | FAILED
   status         String    @default("PENDING")
   recipientCount Int
+  /// The mailbox this message is planned to go from (PARALLEL sends); moved to another mailbox
+  /// when this one can't send (disconnected, paused by Gmail, at a limit).
+  plannedAccountId String?
   accountId      String?
   fromEmail      String?
   gmailMessageId String?
