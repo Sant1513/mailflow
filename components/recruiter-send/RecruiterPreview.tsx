@@ -269,7 +269,7 @@ export function WhoReceives({
                     <td className="px-2 py-1.5">{p.batch ?? '—'}</td>
                     {parallel && <td className="px-2 py-1.5 text-muted-foreground">{p.round ?? '—'}</td>}
                     <td className="max-w-[12rem] truncate px-2 py-1.5" title={p.mailbox ?? ''}>{p.skipped ? '—' : p.mailbox ?? <span className="text-warning">later</span>}</td>
-                    <td className={`px-2 py-1.5 ${p.skipped ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>{p.skipped ?? 'Will get it'}</td>
+                    <td title={p.skipped ?? undefined} className={`max-w-[14rem] truncate px-2 py-1.5 ${p.skipped ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>{p.skipped ? `Skipped: ${p.skipped}` : 'Will get it'}</td>
                   </tr>
                 ))}
                 {!shownRows.length && (
