@@ -14,10 +14,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const sendMock = vi.fn();
 const getMock = vi.fn();
 
-vi.mock('googleapis', () => ({
-  google: {
-    gmail: () => ({ users: { messages: { send: sendMock, get: getMock } } }),
-  },
+vi.mock('@googleapis/gmail', () => ({
+  gmail: () => ({ users: { messages: { send: sendMock, get: getMock } } }),
 }));
 
 vi.mock('@/lib/gmail/oauth', () => ({

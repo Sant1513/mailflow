@@ -1,5 +1,4 @@
-import { google } from 'googleapis';
-import type { OAuth2Client } from 'google-auth-library';
+import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '@/lib/db/client';
 import { encryptSecret, decryptSecret } from '@/lib/crypto/secretBox';
 import type { EmailProviderAccount } from '@prisma/client';
@@ -38,7 +37,7 @@ export function createOAuthClient(): OAuth2Client {
   if (!clientId || !clientSecret) {
     throw new Error('GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not configured.');
   }
-  return new google.auth.OAuth2(clientId, clientSecret, gmailRedirectUri());
+  return new OAuth2Client({ clientId, clientSecret, redirectUri: gmailRedirectUri() });
 }
 
 /** Where to land after the consent callback (a same-site path), e.g. back on a dataset. */

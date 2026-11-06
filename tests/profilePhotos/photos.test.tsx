@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
  * Google's generated letter avatars are skipped, and failures say what to do in plain words.
  */
 const list = vi.fn();
-vi.mock('googleapis', () => ({ google: { people: () => ({ otherContacts: { list } }) } }));
+vi.mock('@googleapis/people', () => ({ people: () => ({ otherContacts: { list } }) }));
 vi.mock('@/lib/gmail/oauth', async () => {
   const actual = await vi.importActual<typeof import('@/lib/gmail/oauth')>('@/lib/gmail/oauth');
   return { ...actual, authorizedClientFor: vi.fn(async () => ({})) };

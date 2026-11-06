@@ -1,4 +1,4 @@
-import { google, type sheets_v4 } from 'googleapis';
+import { sheets as sheetsApi, type sheets_v4 } from '@googleapis/sheets';
 import { z } from 'zod';
 import { ColumnType, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
@@ -74,7 +74,7 @@ export async function sheetsClientFor(accountId: string): Promise<sheets_v4.Shee
   if (!account || account.status !== 'CONNECTED') throw new SheetsError('The Google account used for this sheet is not connected. Reconnect it in Settings.');
   if (!hasSheetsScope(account.scope)) throw new SheetsError('That Google account has not granted Sheets access. Use "Connect Google Sheets".');
   const auth = await authorizedClientFor(account);
-  return google.sheets({ version: 'v4', auth });
+  return sheetsApi({ version: 'v4', auth });
 }
 
 export class SheetsError extends Error {}

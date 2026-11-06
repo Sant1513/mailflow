@@ -1,4 +1,4 @@
-import { google, type gmail_v1 } from 'googleapis';
+import { gmail as gmailApi, type gmail_v1 } from '@googleapis/gmail';
 import { prisma } from '@/lib/db/client';
 import { authorizedClientFor, markAccountExpired } from '@/lib/gmail/oauth';
 import { parseAddressList, parseGmailMessage, type GmailMessage } from '@/lib/gmail/parseMessage';
@@ -84,7 +84,7 @@ function headerValue(headers: gmail_v1.Schema$MessagePartHeader[] | undefined, n
 export function gmailSourceFor(account: EmailProviderAccount): GmailSource {
   let client: gmail_v1.Gmail | null = null;
   const api = async () => {
-    if (!client) client = google.gmail({ version: 'v1', auth: await authorizedClientFor(account) });
+    if (!client) client = gmailApi({ version: 'v1', auth: await authorizedClientFor(account) });
     return client;
   };
 

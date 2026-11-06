@@ -1,4 +1,4 @@
-import { google } from 'googleapis';
+import { gmail as gmailApi } from '@googleapis/gmail';
 import { waitUntil } from '@vercel/functions';
 import { BatchStatus, CampaignStatus, EmailJobStatus } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
@@ -41,7 +41,7 @@ export async function recoverStuckJobs(limit = 20): Promise<{ markedSent: number
     if (job.emailProviderAccount && job.emailProviderAccount.status === 'CONNECTED') {
       try {
         const auth = await authorizedClientFor(job.emailProviderAccount);
-        const gmail = google.gmail({ version: 'v1', auth });
+        const gmail = gmailApi({ version: 'v1', auth });
         const after = Math.floor(((job.lastAttemptAt ?? job.createdAt).getTime() - 120_000) / 1000);
         const subject = job.subject.replace(/"/g, '').slice(0, 120);
         const res = await gmail.users.messages.list({ userId: 'me', q: `in:sent to:${job.toEmail} after:${after} subject:"${subject}"`, maxResults: 1 });

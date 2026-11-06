@@ -1,4 +1,4 @@
-import { google } from 'googleapis';
+import { gmail as gmailApi } from '@googleapis/gmail';
 import type { EmailProviderAccount } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { authorizedClientFor } from '@/lib/gmail/oauth';
@@ -26,7 +26,7 @@ export function watchDue(account: Pick<EmailProviderAccount, 'watchExpiresAt'>, 
 export async function ensureWatch(account: EmailProviderAccount): Promise<Date | null> {
   const topicName = process.env.GMAIL_PUBSUB_TOPIC?.trim();
   if (!topicName || account.status !== 'CONNECTED' || !account.refreshTokenEnc || !watchDue(account)) return null;
-  const gmail = google.gmail({ version: 'v1', auth: await authorizedClientFor(account) });
+  const gmail = gmailApi({ version: 'v1', auth: await authorizedClientFor(account) });
   // Inbox (replies) and Sent (replies the team sends straight from Gmail).
   const res = await gmail.users.watch({
     userId: 'me',

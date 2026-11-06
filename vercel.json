@@ -2,6 +2,7 @@
   "regions": [
     "bom1"
   ],
+  "ignoreCommand": "git diff --quiet ${VERCEL_GIT_PREVIOUS_SHA:-HEAD^} HEAD -- . ':(exclude)tests' ':(exclude)laptop-server' ':(exclude).github' ':(exclude)*.md' ':(exclude)docs'",
   "crons": [
     {
       "path": "/api/cron/follow-ups",

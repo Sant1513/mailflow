@@ -309,15 +309,31 @@ async function runJob(job) {
   }
 }
 
-// Backstop for the cloud while this laptop is on standby: every 2 minutes, ask the cloud to
-// restart any Recruiter Bulk Send that stopped moving (a dropped hand-over between sender runs).
-// The cloud's watchdog only acts when a send is stuck, so this costs next to nothing.
+// Backstop for the cloud while this laptop is on standby: every 2 minutes, look in the cloud
+// database for a Recruiter Bulk Send that stopped moving (a dropped hand-over between sender
+// runs) and only then ask the cloud to restart it. Checking the database directly means no
+// Vercel call at all while nothing is stuck (Vercel Hobby CPU limits).
 const CLOUD_APP = (APP_ENV.CLOUD_APP_URL || 'https://mailflow-six-sooty.vercel.app').replace(/\/+$/, '');
 let lastCloudWatch = 0;
+async function stuckCloudSends() {
+  if (!control) return 1; // can't look: ask the cloud, as before
+  // Times are stored in UTC without a time zone, so compare in SQL. Stuck = nothing sent or
+  // claimed for longer than the send's pause plus 75 s (the cloud's own rule).
+  const res = await control.query(`
+    SELECT count(*)::int AS n FROM (
+      SELECT b.id
+      FROM "RecruiterBlast" b LEFT JOIN "RecruiterBlastGroup" g ON g."blastId" = b.id AND g."sentAt" IS NOT NULL
+      WHERE b.status = 'SENDING'
+      GROUP BY b.id, b."gapSeconds", b."startedAt"
+      HAVING EXTRACT(EPOCH FROM ((now() AT TIME ZONE 'UTC') - COALESCE(MAX(g."sentAt"), b."startedAt", 'epoch'::timestamp))) > b."gapSeconds" + 75
+    ) s`);
+  return res.rows[0]?.n ?? 0;
+}
 async function tickCloudWatchdog() {
   if (role !== 'standby' || !APP_ENV.CRON_SECRET || Date.now() - lastCloudWatch < 115_000) return;
   lastCloudWatch = Date.now();
   try {
+    if ((await stuckCloudSends()) === 0) return;
     const res = await fetch(`${CLOUD_APP}/api/cron/recruiter-watchdog`, { headers: { Authorization: `Bearer ${APP_ENV.CRON_SECRET}` }, signal: AbortSignal.timeout(20_000) });
     const body = (await res.text()).slice(0, 200).replace(/\s+/g, ' ');
     if (!res.ok || /"restarted":[1-9]/.test(body)) log(`[watchdog] cloud recruiter sends: ${res.status} ${body}`);

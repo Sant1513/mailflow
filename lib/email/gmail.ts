@@ -1,4 +1,4 @@
-import { google } from 'googleapis';
+import { gmail as gmailApi } from '@googleapis/gmail';
 import type { EmailProviderAccount } from '@prisma/client';
 import { authorizedClientFor, markAccountExpired } from '@/lib/gmail/oauth';
 import { buildMimeMessage, toGmailRaw } from './mime';
@@ -49,7 +49,7 @@ export class GmailProvider implements EmailProvider {
 
     try {
       const auth = await authorizedClientFor(this.account);
-      const gmail = google.gmail({ version: 'v1', auth });
+      const gmail = gmailApi({ version: 'v1', auth });
 
       const response = await gmail.users.messages.send({
         userId: 'me',

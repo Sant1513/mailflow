@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { google } from 'googleapis';
+import { gmail as gmailApi } from '@googleapis/gmail';
 import { prisma } from '@/lib/db/client';
 import { requireSession, ForbiddenError } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
@@ -64,7 +64,7 @@ export const GET = withErrorHandling(async (req) => {
 
   // Identify the mailbox we were actually granted access to.
   client.setCredentials(tokens);
-  const gmail = google.gmail({ version: 'v1', auth: client });
+  const gmail = gmailApi({ version: 'v1', auth: client });
   let emailAddress = '';
   try {
     const profile = await gmail.users.getProfile({ userId: 'me' });

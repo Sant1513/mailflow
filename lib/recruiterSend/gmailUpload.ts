@@ -1,4 +1,4 @@
-import { google } from 'googleapis';
+import { gmail as gmailApi } from '@googleapis/gmail';
 import type { EmailProviderAccount } from '@prisma/client';
 import { authorizedClientFor } from '@/lib/gmail/oauth';
 import { buildMimeMessage } from '@/lib/email/mime';
@@ -40,7 +40,7 @@ export async function sendViaUpload(account: EmailProviderAccount, input: SendEm
     listUnsubscribeUrl: input.listUnsubscribeUrl,
   });
   try {
-    const gmail = google.gmail({ version: 'v1', auth: await authorizedClientFor(account) });
+    const gmail = gmailApi({ version: 'v1', auth: await authorizedClientFor(account) });
     const res = await gmail.users.messages.send({ userId: 'me', requestBody: {}, media: { mimeType: 'message/rfc822', body: raw } });
     if (!res.data.id) throw new SendEmailError('Gmail accepted the message but returned no id.', 'UNKNOWN');
     return { providerMessageId: res.data.id, threadId: res.data.threadId ?? null, messageIdHeader: messageIdHeader ?? null };

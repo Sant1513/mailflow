@@ -1,4 +1,4 @@
-import { google } from 'googleapis';
+import { people as peopleApi } from '@googleapis/people';
 import { randomBytes } from 'node:crypto';
 import type { EmailProviderAccount } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
@@ -46,7 +46,7 @@ export async function syncProfilePhotos(account: EmailProviderAccount): Promise<
   const result: PhotoSyncResult = { account: account.emailAddress, contacts: 0, photos: 0 };
   if (!hasScope(account, PHOTOS_OAUTH_SCOPE)) return { ...result, error: 'Profile photos are not allowed for this mailbox.' };
   try {
-    const people = google.people({ version: 'v1', auth: await authorizedClientFor(account) });
+    const people = peopleApi({ version: 'v1', auth: await authorizedClientFor(account) });
     const found = new Map<string, string>();
     const names = new Map<string, string>();
     let pageToken: string | undefined;

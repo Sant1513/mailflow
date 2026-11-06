@@ -9,8 +9,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const sendMock = vi.fn();
 const markExpired = vi.fn(async () => undefined);
 
-vi.mock('googleapis', () => ({
-  google: { gmail: () => ({ users: { messages: { send: sendMock, get: vi.fn() } } }) },
+vi.mock('@googleapis/gmail', () => ({
+  gmail: () => ({ users: { messages: { send: sendMock, get: vi.fn() } } }),
 }));
 vi.mock('@/lib/gmail/oauth', () => ({
   authorizedClientFor: vi.fn(async () => ({})),
