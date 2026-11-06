@@ -29,21 +29,50 @@ const STUCK_MS = 10 * 60_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const videoCache = new Map<string, Buffer>();
 
-export function kickRecruiterWorker(reason = 'kick'): void {
+/**
+ * Starts a fresh sender run. `wait: true` returns only once the request has had time to reach
+ * the server (used at the end of a run: a fire-and-forget hand-over was sometimes dropped when
+ * the run finished first, and the send sat still until the next backstop).
+ */
+export function kickRecruiterWorker(reason = 'kick', opts: { wait?: boolean } = {}): Promise<void> {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return;
+  if (!secret) return Promise.resolve();
   const base = process.env.INTERNAL_APP_URL?.replace(/\/+$/, '') || appBaseUrl();
   const controller = new AbortController();
   const call = fetch(`${base}/api/cron/recruiter-send?reason=${encodeURIComponent(reason)}`, {
     headers: { Authorization: `Bearer ${secret}` },
     signal: controller.signal,
-  }).catch(() => undefined);
-  const hangUp = new Promise<void>((resolve) => setTimeout(() => { controller.abort(); resolve(); }, 2_500));
+  }).then(() => undefined, () => undefined);
+  const hangUp = new Promise<void>((resolve) => setTimeout(() => { controller.abort(); resolve(); }, opts.wait ? 4_000 : 2_500));
+  const done = Promise.race([call, hangUp]);
+  if (opts.wait) return done;
   try {
-    waitUntil(Promise.race([call, hangUp]));
+    waitUntil(done);
   } catch {
     /* not on Vercel: runs on its own */
   }
+  return Promise.resolve();
+}
+
+/**
+ * Watchdog: sends that should be moving but haven't sent (or claimed) anything for longer than
+ * their pause plus a margin get a fresh run. Called when someone looks at the send pages and by
+ * the laptop backstop, so a dropped hand-over never leaves a send sitting still.
+ */
+const lastWatchdogKick = { at: 0 };
+export async function nudgeStuckSends(reason = 'watchdog'): Promise<number> {
+  if (Date.now() - lastWatchdogKick.at < 30_000) return 0;
+  const sending = await prisma.recruiterBlast.findMany({ where: { status: 'SENDING' }, select: { id: true, gapSeconds: true, startedAt: true } });
+  let stuck = 0;
+  for (const b of sending) {
+    const last = await prisma.recruiterBlastGroup.findFirst({ where: { blastId: b.id, sentAt: { not: null } }, orderBy: { sentAt: 'desc' }, select: { sentAt: true } });
+    const since = (last?.sentAt ?? b.startedAt ?? new Date(0)).getTime();
+    if (Date.now() - since > (b.gapSeconds + 75) * 1000) stuck++;
+  }
+  if (!stuck) return 0;
+  lastWatchdogKick.at = Date.now();
+  await kickRecruiterWorker(reason);
+  return stuck;
 }
 
 async function recoverStuck() {
@@ -279,7 +308,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
 
   // Hand over while any send can still move; sends waiting for a mailbox resume on the schedule.
   const more = await prisma.recruiterBlast.count({ where: { status: 'SENDING', id: { notIn: [...waitingIds] } } });
-  if (more) kickRecruiterWorker('continue');
+  if (more) await kickRecruiterWorker('continue', { wait: true });
   return { sent, failed, waiting };
 }
 

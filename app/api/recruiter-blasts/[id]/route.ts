@@ -10,6 +10,8 @@ import { usageLast24h, dailyLimit } from '@/lib/queue/drain';
 import { isValidEmail } from '@/lib/quickSend/prepare';
 import { readVideo, videoLinkCard, videoSchema } from '@/lib/recruiterSend/video';
 import { Prisma } from '@prisma/client';
+import { waitUntil } from '@vercel/functions';
+import { nudgeStuckSends } from '@/lib/recruiterSend/worker';
 
 /** One recruiter send: everything the page shows (GET), edit a draft (PATCH), delete a draft (DELETE). */
 export const dynamic = 'force-dynamic';
@@ -19,6 +21,8 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
   const blast = await loadBlast(session, params.id);
   if (!blast) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const page = Math.max(1, Number(new URL(req.url).searchParams.get('page') ?? '1'));
+  // Watchdog: a send that should be moving but isn't gets a fresh run (in the background).
+  try { waitUntil(nudgeStuckSends('page').catch(() => 0)); } catch { void nudgeStuckSends('page').catch(() => 0); }
 
   // Totals come from the whole send, not the capped lists below (groups 500, recruiters 200 a page).
   const [groupTotals, openedRecruiters] = await Promise.all([

@@ -1,6 +1,8 @@
 # Scheduled jobs every 15 minutes. Vercel Hobby only allows daily crons
 # (vercel.json keeps daily backstops); this calls the same secured
 # endpoints on the cadence the product wants.
+# Each step is independent (continue-on-error): one failing or slow endpoint must never stop
+# the others — the senders run first because a stalled send is the costliest failure.
 name: scheduled-jobs
 on:
   schedule:
@@ -10,23 +12,28 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
+      - name: Recruiter bulk sends (restarts sending if it stopped)
+        continue-on-error: true
+        run: |
+          curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://mailflow-six-sooty.vercel.app/api/cron/recruiter-send?reason=github"
       - name: Send queued campaign emails (restarts background sending if it stopped)
+        continue-on-error: true
         run: |
           curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "https://mailflow-six-sooty.vercel.app/api/cron/send-queue?reason=github"
       - name: Sync every connected Gmail mailbox
-        run: |
-          curl -fsS -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://mailflow-six-sooty.vercel.app/api/cron/gmail-sync"
-      - name: Follow-up reminders
-        run: |
-          curl -fsS -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://mailflow-six-sooty.vercel.app/api/cron/follow-ups"
-      - name: Google Sheets two-way sync
-        run: |
-          curl -fsS -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://mailflow-six-sooty.vercel.app/api/cron/sheets-sync"
-      - name: Recruiter bulk sends (restarts sending if it stopped)
+        continue-on-error: true
         run: |
           curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://mailflow-six-sooty.vercel.app/api/cron/recruiter-send?reason=github"
+            "https://mailflow-six-sooty.vercel.app/api/cron/gmail-sync"
+      - name: Follow-up reminders
+        continue-on-error: true
+        run: |
+          curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://mailflow-six-sooty.vercel.app/api/cron/follow-ups"
+      - name: Google Sheets two-way sync
+        continue-on-error: true
+        run: |
+          curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://mailflow-six-sooty.vercel.app/api/cron/sheets-sync"

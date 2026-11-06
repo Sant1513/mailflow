@@ -174,6 +174,17 @@ describe('sending', () => {
     expect(failure.data.status).toBe('FAILED');
   });
 
+  it('watchdog restarts a send that stopped moving, and leaves a moving one alone', async () => {
+    const { nudgeStuckSends } = await import('@/lib/recruiterSend/worker');
+    const old = new Date(Date.now() - 20 * 60_000);
+    db.recruiterBlast.findMany.mockReset().mockResolvedValueOnce([{ id: 'b1', gapSeconds: 60, startedAt: old }]);
+    db.recruiterBlastGroup.findFirst.mockReset().mockResolvedValueOnce({ sentAt: new Date(Date.now() - 30_000) });
+    expect(await nudgeStuckSends('test')).toBe(0); // sent 30 s ago: moving
+    db.recruiterBlast.findMany.mockResolvedValueOnce([{ id: 'b1', gapSeconds: 60, startedAt: old }]);
+    db.recruiterBlastGroup.findFirst.mockResolvedValueOnce({ sentAt: old });
+    expect(await nudgeStuckSends('test')).toBe(1); // nothing for 20 min: stuck → restarted
+  });
+
   it('waits (and says why) when every chosen mailbox is at its limit', async () => {
     db.recruiterBlast.findMany.mockReset().mockResolvedValueOnce([blast({ accountIds: ['a1'], accountLimits: { a1: 1 } })]).mockResolvedValue([]);
     const r = await runRecruiterWorker({ budgetMs: 20_000 });

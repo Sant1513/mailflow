@@ -309,7 +309,25 @@ async function runJob(job) {
   }
 }
 
+// Backstop for the cloud while this laptop is on standby: every 2 minutes, ask the cloud to
+// restart any Recruiter Bulk Send that stopped moving (a dropped hand-over between sender runs).
+// The cloud's watchdog only acts when a send is stuck, so this costs next to nothing.
+const CLOUD_APP = (APP_ENV.CLOUD_APP_URL || 'https://mailflow-six-sooty.vercel.app').replace(/\/+$/, '');
+let lastCloudWatch = 0;
+async function tickCloudWatchdog() {
+  if (role !== 'standby' || !APP_ENV.CRON_SECRET || Date.now() - lastCloudWatch < 115_000) return;
+  lastCloudWatch = Date.now();
+  try {
+    const res = await fetch(`${CLOUD_APP}/api/cron/recruiter-watchdog`, { headers: { Authorization: `Bearer ${APP_ENV.CRON_SECRET}` }, signal: AbortSignal.timeout(20_000) });
+    const body = (await res.text()).slice(0, 200).replace(/\s+/g, ' ');
+    if (!res.ok || /"restarted":[1-9]/.test(body)) log(`[watchdog] cloud recruiter sends: ${res.status} ${body}`);
+  } catch (err) {
+    log('[watchdog] cloud check failed:', String(err?.message ?? err));
+  }
+}
+
 function tickJobs() {
+  tickCloudWatchdog();
   if (role !== 'active' || handingOver) return; // only the active server runs jobs
   const state = readState();
   const now = Date.now();

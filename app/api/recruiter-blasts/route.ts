@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { requireBlastAdmin, sendableMailboxes } from '@/lib/recruiterSend/access';
+import { waitUntil } from '@vercel/functions';
+import { nudgeStuckSends } from '@/lib/recruiterSend/worker';
 import { DEFAULT_GAP } from '@/lib/recruiterSend/core';
 
 /** Mail → Recruiter Bulk Send: the list of sends (GET) and a new draft (POST). Admins only. */
@@ -10,6 +12,8 @@ export const dynamic = 'force-dynamic';
 
 export const GET = withErrorHandling(async () => {
   const session = await requireBlastAdmin();
+  // Watchdog: a send that should be moving but isn't gets a fresh run (in the background).
+  try { waitUntil(nudgeStuckSends('page').catch(() => 0)); } catch { void nudgeStuckSends('page').catch(() => 0); }
   const blasts = await prisma.recruiterBlast.findMany({
     where: { organizationId: session.organizationId, ...(session.role === 'SUPER_ADMIN' ? {} : { workspaceId: session.workspaceId! }) },
     orderBy: { createdAt: 'desc' },
