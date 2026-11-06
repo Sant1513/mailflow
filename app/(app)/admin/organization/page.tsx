@@ -12,6 +12,8 @@ import {
 } from '@/lib/analytics/metrics';
 import { ApprovalsChart, DailyAreaChart, FailureRateChart } from '@/components/analytics/Charts';
 import { ViewWorkspaceButton } from '@/components/admin/ViewWorkspaceButton';
+import { SendLedger } from '@/components/admin/SendLedger';
+import { Suspense } from 'react';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,11 +47,11 @@ export default async function AdminOrganizationPage({
     { label: 'Contacts', value: counts.contacts },
     { label: 'Datasets', value: counts.datasets },
     { label: 'Campaigns', value: counts.campaigns },
-    { label: 'Emails sent', value: t.emailsSent, accent: true },
-    { label: 'Failed', value: t.emailsFailed, warn: t.emailsFailed > 0 },
-    { label: 'Replies', value: t.replies, accent: true },
     { label: 'Open conversations', value: t.openConversations },
     { label: 'Resolved', value: t.resolvedConversations },
+    { label: 'Unread', value: t.unread, warn: t.unread > 0 },
+    { label: 'Follow-ups due', value: t.followUpsDue, warn: t.followUpsDue > 0 },
+    { label: 'Pending sends', value: t.emailsPending },
     { label: `AI calls (${days}d)`, value: counts.aiCalls },
   ];
 
@@ -66,12 +68,20 @@ export default async function AdminOrganizationPage({
         <PeriodPicker days={days} />
       </div>
 
+      {/* Every email from every workspace, by type, user and mailbox, with filters. */}
+      <div className="mb-8">
+        <Suspense fallback={null}>
+          <SendLedger />
+        </Suspense>
+      </div>
+
+      <h2 className="mb-3 font-heading text-lg font-bold text-foreground">Organization at a glance</h2>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {stats.map((s) => (
           <div key={s.label} className="panel p-4">
             <div
               className={`font-heading text-2xl font-bold ${
-                s.warn ? 'text-warning' : s.accent ? 'text-primary' : 'text-foreground'
+                s.warn ? 'text-warning' : 'text-foreground'
               }`}
             >
               {s.value.toLocaleString('en-IN')}
@@ -82,7 +92,7 @@ export default async function AdminOrganizationPage({
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
-        <ChartCard title="Emails by day" hint={`${series.emailsByDay.reduce((a, p) => a + p.value, 0)} sent in ${days} days`}>
+        <ChartCard title="Campaign emails by day" hint={`${series.emailsByDay.reduce((a, p) => a + p.value, 0)} sent in ${days} days`}>
           <DailyAreaChart series={series.emailsByDay} label="Sent" />
         </ChartCard>
         <ChartCard title="Replies by day" hint={`${series.repliesByDay.reduce((a, p) => a + p.value, 0)} human replies in ${days} days`}>
@@ -95,7 +105,7 @@ export default async function AdminOrganizationPage({
           <ApprovalsChart series={approvals.byDay} />
         </ChartCard>
         <ChartCard
-          title="Failure rate"
+          title="Campaign failure rate"
           hint={series.failurePct === null ? 'Nothing attempted in this window' : `${series.failurePct}% of attempts failed`}
         >
           <FailureRateChart series={series.failureByDay} />
