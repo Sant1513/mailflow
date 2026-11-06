@@ -110,7 +110,7 @@ describe('sending', () => {
   });
 
   it('BCC: one message to the visible To, recruiters in Bcc, with Reply-To, links untouched', async () => {
-    const r = await runRecruiterWorker({ budgetMs: 20_000 });
+    const r = await runRecruiterWorker({ budgetMs: 45_000 });
     expect(r.sent).toBe(1);
     expect(sent[0]).toMatchObject({ from: 'one@masaischool.com', to: 'placements@masaischool.com', bcc: ['a@corp.com', 'b@corp.com'], replyTo: 'hr@masaischool.com, one@masaischool.com', listUnsubscribeUrl: null });
     expect(sent[0].html).toContain('href="https://x.com"');
@@ -121,12 +121,12 @@ describe('sending', () => {
   it('moves to the next mailbox when one reaches the limit set for this send', async () => {
     db.recruiterBlast.findMany.mockReset().mockResolvedValueOnce([blast({ accountLimits: { a1: 300 } })]).mockResolvedValue([]);
     db.recruiterBlastGroup.groupBy.mockResolvedValue([{ accountId: 'a1', _sum: { recipientCount: 299 } }] as never);
-    await runRecruiterWorker({ budgetMs: 20_000 });
+    await runRecruiterWorker({ budgetMs: 45_000 });
     expect(sent[0].from).toBe('two@masaischool.com');
   });
 
   it('claims with a timestamp, one message per send at a time, and clears the old error', async () => {
-    await runRecruiterWorker({ budgetMs: 20_000 });
+    await runRecruiterWorker({ budgetMs: 45_000 });
     const claim = (db.recruiterBlastGroup.updateMany.mock.calls as any[][]).find((c) => c[0].data.status === 'SENDING')?.[0] as any;
     expect(claim.where).toMatchObject({ status: 'PENDING', blast: { status: 'SENDING', groups: { none: { status: 'SENDING' } } } });
     expect(claim.data.sentAt).toBeInstanceOf(Date);
@@ -135,7 +135,7 @@ describe('sending', () => {
 
   it('never re-queues a message Gmail accepted, even if recording it fails', async () => {
     db.$transaction.mockRejectedValue(new Error('database unreachable'));
-    const r = await runRecruiterWorker({ budgetMs: 20_000 });
+    const r = await runRecruiterWorker({ budgetMs: 45_000 });
     expect(sent).toHaveLength(1);
     expect(r.sent).toBe(1);
     const requeued = db.recruiterBlastGroup.update.mock.calls.some((c: any[]) => c[0].data.status === 'PENDING');
@@ -145,14 +145,14 @@ describe('sending', () => {
 
   it('drops recruiters who unsubscribed or bounced after the send started', async () => {
     db.emailSuppression.findMany.mockResolvedValueOnce([{ email: 'b@corp.com' }]);
-    await runRecruiterWorker({ budgetMs: 20_000 });
+    await runRecruiterWorker({ budgetMs: 45_000 });
     expect(sent[0].bcc).toEqual(['a@corp.com']);
     expect(db.recruiterBlastRecipient.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ['r2'] } }, data: expect.objectContaining({ status: 'SKIPPED' }) }));
   });
 
   it("skips a teammate's mailbox once they stop sharing it", async () => {
     allowed.delete('a1');
-    await runRecruiterWorker({ budgetMs: 20_000 });
+    await runRecruiterWorker({ budgetMs: 45_000 });
     allowed.add('a1');
     expect(sent[0].from).toBe('two@masaischool.com');
   });
@@ -161,17 +161,24 @@ describe('sending', () => {
     db.recruiterBlast.findMany.mockReset().mockResolvedValueOnce([blast({ mode: 'INDIVIDUAL', name: 'Hiring partners' })]).mockResolvedValue([]);
     db.recruiterBlastRecipient.findMany.mockResolvedValue([{ id: 'r1', email: 'gone@corp.com' }]);
     const { SendEmailError } = await import('@/lib/email/provider');
-    await runRecruiterWorker({ budgetMs: 20_000, send: async () => { throw new SendEmailError('Invalid To header', 'INVALID_RECIPIENT'); } });
+    await runRecruiterWorker({ budgetMs: 45_000, send: async () => { throw new SendEmailError('Invalid To header', 'INVALID_RECIPIENT'); } });
     expect(suppressRejectedRecruiter).toHaveBeenCalledWith('w1', 'gone@corp.com', expect.stringContaining('Recruiter Bulk Send “Hiring partners”'));
     expect(markRecruiterBounced).toHaveBeenCalledWith('b1', ['gone@corp.com'], expect.stringContaining('Invalid To header'));
   });
 
   it('a failure after the send was cancelled is not left queued', async () => {
     db.recruiterBlast.findUnique.mockResolvedValue({ status: 'CANCELLED' });
-    await runRecruiterWorker({ budgetMs: 20_000, send: async () => { throw new Error('socket hang up'); } });
+    await runRecruiterWorker({ budgetMs: 45_000, send: async () => { throw new Error('socket hang up'); } });
     db.recruiterBlast.findUnique.mockResolvedValue({ status: 'SENDING' });
     const failure = db.recruiterBlastGroup.update.mock.calls.find((c: any[]) => c[0].data.errorCode)?.[0];
     expect(failure.data.status).toBe('FAILED');
+  });
+
+  it('never starts a send too close to the end of a run (it would be killed before handing over)', async () => {
+    const r = await runRecruiterWorker({ budgetMs: 20_000 }); // only 15 s usable: under the 18 s reserve
+    expect(r.sent).toBe(0);
+    expect(sent).toHaveLength(0);
+    expect(db.recruiterBlastGroup.updateMany.mock.calls.some((c: any[]) => c[0].data?.status === 'SENDING')).toBe(false);
   });
 
   it('watchdog restarts a send that stopped moving, and leaves a moving one alone', async () => {
@@ -187,7 +194,7 @@ describe('sending', () => {
 
   it('waits (and says why) when every chosen mailbox is at its limit', async () => {
     db.recruiterBlast.findMany.mockReset().mockResolvedValueOnce([blast({ accountIds: ['a1'], accountLimits: { a1: 1 } })]).mockResolvedValue([]);
-    const r = await runRecruiterWorker({ budgetMs: 20_000 });
+    const r = await runRecruiterWorker({ budgetMs: 45_000 });
     expect(sent).toHaveLength(0);
     expect(r.waiting).toMatch(/reached the limit you set/);
   });

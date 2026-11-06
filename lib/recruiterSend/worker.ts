@@ -151,6 +151,11 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
   const send = opts.send ?? gmailSender;
   const deadline = Date.now() + (opts.budgetMs ?? 45_000);
   const timeLeft = () => deadline - 5_000 - Date.now();
+  // A Gmail send (150 Bcc, maybe a video) can take 10-20 s. Never start one this close to the end:
+  // the run would hit the 60 s function limit and be killed before handing over to the next run,
+  // and the send would sit still (it stalled after 3 batches twice).
+  const SEND_RESERVE_MS = 18_000;
+  let handOver = false;
   let sent = 0;
   let failed = 0;
   let waiting: string | null = null;
@@ -174,7 +179,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
       const last = await prisma.recruiterBlastGroup.findFirst({ where: { blastId: blast.id, status: { in: ['SENT', 'SENDING'] }, sentAt: { not: null } }, orderBy: { sentAt: 'desc' }, select: { sentAt: true } });
       const wait = last?.sentAt ? last.sentAt.getTime() + blast.gapSeconds * 1000 - Date.now() : 0;
       if (wait > 0) {
-        if (wait > timeLeft()) {
+        if (wait > timeLeft() - SEND_RESERVE_MS) {
           nextGap = Math.min(nextGap, wait);
           continue;
         }
@@ -212,6 +217,11 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
         waitingIds.add(blast.id);
         if (blast.note !== waiting) await prisma.recruiterBlast.update({ where: { id: blast.id }, data: { note: waiting } });
         continue;
+      }
+
+      if (timeLeft() < SEND_RESERVE_MS) {
+        handOver = true; // not enough time left to send safely: let the next run do it
+        break;
       }
 
       // Claim it: only one run may send this message, and only one message of a send is out at
@@ -295,11 +305,13 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
       sent++;
     }
 
+    if (handOver) break;
     if (!progressed) {
       // Every send is between messages: wait here rather than hand over to a new run that
-      // would only find the same pause.
-      if (Number.isFinite(nextGap) && timeLeft() > 1_000) {
-        await sleep(Math.min(nextGap, timeLeft()));
+      // would only find the same pause, but keep enough time to send and hand over.
+      const usable = timeLeft() - SEND_RESERVE_MS;
+      if (Number.isFinite(nextGap) && usable > 1_000) {
+        await sleep(Math.min(nextGap, usable));
         continue;
       }
       break;
