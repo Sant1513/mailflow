@@ -45,6 +45,8 @@ export class GmailProvider implements EmailProvider {
       inReplyTo: input.inReplyTo,
       references: input.references,
       listUnsubscribeUrl: input.listUnsubscribeUrl,
+      listUnsubscribeMailto: input.listUnsubscribeMailto,
+      listUnsubscribeOneClick: input.listUnsubscribeOneClick,
     });
 
     try {

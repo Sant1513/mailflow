@@ -11,7 +11,8 @@ import { DocumentFileError } from '@/lib/documents/inspect';
 import { buildRsvpUrl, injectTracking } from '@/lib/email/tracking';
 import { placeRsvpBlock, readRsvpConfig, renderRsvpBlock, renderRsvpText, stripRsvpPlaceholder } from '@/lib/rsvp/config';
 import { appBaseUrl } from '@/lib/app-url';
-import { replyToHeader } from '@/lib/recruiterSend/core';
+import { replyToHeader, unsubscribeButtonHtml } from '@/lib/recruiterSend/core';
+import { unsubscribeMailto } from '@/lib/email/unsubscribeByEmail';
 import crypto from 'crypto';
 
 /**
@@ -138,9 +139,7 @@ export async function processEmailJob(
     const unsubscribeUrl = `${baseUrl}/api/unsubscribe/${unsubscribeToken}`;
 
     // Build the footer — appended unconditionally so every campaign email has an unsubscribe link.
-    const unsubscribeFooter = `<p style="font-size:11px;color:#999;text-align:center;margin-top:32px;">
-  <a href="${unsubscribeUrl}" style="color:#999;">Unsubscribe</a>
-</p>`;
+    const unsubscribeFooter = unsubscribeButtonHtml({ href: unsubscribeUrl, mailto: unsubscribeMailto(job.fromEmail, `cj-${unsubscribeToken}`) });
 
     // RSVP buttons (lib/rsvp/config.ts): this recipient's own signed links, at [[rsvp]] or before
     // the footer. They go to /rsvp/… directly, never through click tracking.
@@ -176,6 +175,7 @@ export async function processEmailJob(
       plainText,
       threadId: job.gmailThreadId,
       listUnsubscribeUrl: unsubscribeUrl,
+      listUnsubscribeMailto: unsubscribeMailto(job.fromEmail, `cj-${unsubscribeToken}`),
       ...(documents.length > 0
         ? { attachments: documents.map((d) => ({ filename: d.filename, mimeType: 'application/pdf', content: d.content })) }
         : {}),

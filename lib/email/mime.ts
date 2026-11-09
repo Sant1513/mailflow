@@ -24,8 +24,12 @@ export interface BuildMessageInput {
   attachments?: EmailAttachment[];
   inReplyTo?: string | null;
   references?: string | null;
-  /** One-click unsubscribe URL (RFC 8058); adds List-Unsubscribe and List-Unsubscribe-Post. */
+  /** Unsubscribe URL for List-Unsubscribe (https). One-click (RFC 8058) unless listUnsubscribeOneClick is false. */
   listUnsubscribeUrl?: string | null;
+  /** mailto: unsubscribe (an email to the sending mailbox): the only way a BCC email can say who unsubscribed. */
+  listUnsubscribeMailto?: string | null;
+  /** false when the URL can't name the recipient (BCC): mail apps then use the mailto instead. */
+  listUnsubscribeOneClick?: boolean;
   /** Overridable for deterministic tests. */
   messageId?: string;
   date?: Date;
@@ -100,9 +104,12 @@ export function buildMimeMessage(input: BuildMessageInput): BuiltMessage {
 
   // Google's sender guidelines: bulk mail carries one-click unsubscribe headers, so mail
   // clients can show their own Unsubscribe button. Only https URLs are accepted.
-  if (input.listUnsubscribeUrl && /^https:\/\/[^\s<>]+$/.test(input.listUnsubscribeUrl)) {
-    headers.push(`List-Unsubscribe: <${input.listUnsubscribeUrl}>`);
-    headers.push('List-Unsubscribe-Post: List-Unsubscribe=One-Click');
+  const unsubUrl = input.listUnsubscribeUrl && /^https:\/\/[^\s<>]+$/.test(input.listUnsubscribeUrl) ? input.listUnsubscribeUrl : null;
+  const unsubMail = input.listUnsubscribeMailto && /^mailto:[^\s<>]+$/.test(input.listUnsubscribeMailto) ? input.listUnsubscribeMailto : null;
+  if (unsubUrl || unsubMail) {
+    headers.push(`List-Unsubscribe: ${[unsubMail, unsubUrl].filter(Boolean).map((u) => `<${u}>`).join(', ')}`);
+    // One-click only when the URL names the person; a BCC email's URL can't, so its mailto is used.
+    if (unsubUrl && input.listUnsubscribeOneClick !== false) headers.push('List-Unsubscribe-Post: List-Unsubscribe=One-Click');
   }
 
   const plain = input.plainText?.trim()

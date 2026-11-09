@@ -203,7 +203,7 @@ async function deliver(blast: BlastRow, group: { id: string; attempts: number },
   const bcc = mode === 'BCC' ? recipients.map((r) => r.email) : [];
   // Individual copies carry the recruiter's own {{Column}} values (name, company, UTM link).
   const content = mode === 'INDIVIDUAL' ? personalize({ subject: blast.subject, html: blast.html, plainText: blast.plainText }, recipients[0]!) : { subject: blast.subject, html: blast.html, plainText: blast.plainText };
-  const decorated = decorate(content.html, { groupId: group.id, mode, workspaceId: blast.workspaceId, blastId: blast.id, recipientEmail: mode === 'INDIVIDUAL' ? to : undefined, pixel: mode === 'INDIVIDUAL' });
+  const decorated = decorate(content.html, { groupId: group.id, mode, workspaceId: blast.workspaceId, blastId: blast.id, recipientEmail: mode === 'INDIVIDUAL' ? to : undefined, pixel: mode === 'INDIVIDUAL', sendingAddress: account.emailAddress });
   let result: Awaited<ReturnType<RecruiterSender>>;
   try {
     const docs = blast.attachmentDocumentIds.length
@@ -234,9 +234,12 @@ async function deliver(blast: BlastRow, group: { id: string; attempts: number },
       replyTo: replyToHeader(blast.replyTo, account.emailAddress),
       subject: content.subject,
       html: decorated.html,
-      plainText: `${content.plainText}\n\nUnsubscribe: ${decorated.unsubscribeUrl}`,
-      // One-click unsubscribe only where it can name the person (individual copies).
-      listUnsubscribeUrl: mode === 'INDIVIDUAL' ? decorated.unsubscribeUrl : null,
+      plainText: `${content.plainText}\n\nUnsubscribe: ${decorated.unsubscribeUrl}${mode === 'BCC' ? ` (or email ${account.emailAddress} with the subject "Unsubscribe")` : ''}`,
+      // Gmail's own Unsubscribe button: one-click where the link names the person (individual
+      // copies); a BCC email's link can't, so it unsubscribes by email (the mailto says who).
+      listUnsubscribeUrl: decorated.unsubscribeUrl,
+      listUnsubscribeOneClick: mode === 'INDIVIDUAL',
+      listUnsubscribeMailto: decorated.unsubscribeMailto,
       attachments,
     };
     // Big messages (a video) go through Gmail's upload endpoint, which takes up to 35 MB.

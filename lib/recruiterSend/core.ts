@@ -186,19 +186,41 @@ export function replyToHeader(replyTo: string | null | undefined, sendingAddress
   return `${custom}, ${sendingAddress.trim()}`;
 }
 
-export function decorate(html: string, opts: { groupId: string; mode: BlastMode; workspaceId: string; blastId: string; recipientEmail?: string; pixel?: boolean }): {
+/**
+ * The Unsubscribe button at the bottom of every bulk email. With `mailto` (an email to the
+ * sending mailbox) the button sends that email, which says exactly who unsubscribed even in a
+ * BCC email; `href` is the web page, offered as a small link too.
+ */
+/** An email to the sending mailbox asking to unsubscribe (read by lib/email/unsubscribeByEmail.ts). */
+export function unsubscribeMailtoFor(sendingAddress: string, code: string): string {
+  return `mailto:${sendingAddress.trim()}?subject=${encodeURIComponent(`Unsubscribe ${code}`)}&body=${encodeURIComponent('Please unsubscribe me from these emails.')}`;
+}
+
+export function unsubscribeButtonHtml(opts: { href: string; mailto?: string | null; primary?: 'mailto' | 'href' }): string {
+  const primary = opts.primary === 'mailto' && opts.mailto ? opts.mailto : opts.href;
+  const secondary = primary === opts.href ? null : opts.href;
+  return `<table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:28px auto 0;border-collapse:collapse"><tr><td align="center" style="font:12px/1.5 Arial,Helvetica,sans-serif;color:#888">
+<a href="${primary}" style="display:inline-block;padding:6px 16px;border:1px solid #cfcfcf;border-radius:999px;color:#555;text-decoration:none;font:600 12px/1.4 Arial,Helvetica,sans-serif">Unsubscribe</a>
+<div style="margin-top:6px">Don't want these emails? Click Unsubscribe${secondary ? ` (or <a href="${secondary}" style="color:#888">unsubscribe on the web</a>)` : ''}.</div>
+</td></tr></table>`;
+}
+
+export function decorate(html: string, opts: { groupId: string; mode: BlastMode; workspaceId: string; blastId: string; recipientEmail?: string; pixel?: boolean; sendingAddress?: string }): {
   html: string;
   unsubscribeUrl: string;
+  unsubscribeMailto: string | null;
 } {
   const base = appBaseUrl();
   const unsubscribeUrl =
     opts.mode === 'INDIVIDUAL' && opts.recipientEmail
       ? buildUnsubscribeUrl(opts.workspaceId, opts.recipientEmail)
       : `${base}/unsubscribe/list/${listUnsubscribeToken(opts.blastId)}`;
-  const footer = `<p style="margin-top:24px;font-size:11px;color:#999;text-align:center;"><a href="${unsubscribeUrl}" style="color:#999;">Unsubscribe</a> from these emails.</p>`;
+  // BCC: the button sends an email from the recruiter (so we know who); individual copies: their own link.
+  const unsubscribeMailtoLink = opts.sendingAddress ? unsubscribeMailtoFor(opts.sendingAddress, `rb-${listUnsubscribeToken(opts.blastId)}`) : null;
+  const footer = unsubscribeButtonHtml({ href: unsubscribeUrl, mailto: unsubscribeMailtoLink, primary: opts.mode === 'BCC' ? 'mailto' : 'href' });
   const pixel = `<img src="${base}/api/track/rb/${openToken(opts.groupId)}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0;" />`;
   const extra = opts.pixel === false ? footer : `${footer}${pixel}`;
-  return { html: /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${extra}</body>`) : html + extra, unsubscribeUrl };
+  return { html: /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${extra}</body>`) : html + extra, unsubscribeUrl, unsubscribeMailto: unsubscribeMailtoLink };
 }
 
 /** The email as recruiters will see it (unsubscribe line included), for previews: no open pixel, so a preview never counts as an open. */

@@ -6,6 +6,7 @@ import { normalizeSubject, type ParsedMessage } from '@/lib/gmail/parseMessage';
 import { MessageDirection, MessageClassification, type EmailProviderAccount } from '@prisma/client';
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
 import { parseBounce, suppressBounced } from '@/lib/email/bounces';
+import { handleUnsubscribeEmail, parseUnsubscribeSubject } from '@/lib/email/unsubscribeByEmail';
 import { cleanName } from '@/lib/contacts/names';
 import { applyReplyRules } from '@/lib/replyRules/apply';
 import { findRecruiterSend, markRecruiterBounced, markRecruiterReplied, recruiterContact, recruiterThreadKey, type RecruiterReplyMatch } from '@/lib/recruiterSend/replies';
@@ -101,6 +102,19 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
       return stored;
     });
     return { status: 'STORED', conversationId: thread.id, messageId: outbound.id, classification: 'OUTBOUND', created: false };
+  }
+
+  // ── Unsubscribe by email ──
+  // Gmail's Unsubscribe button and the button in our emails send "Unsubscribe <code>" from the
+  // recipient to the sending mailbox: the only way a BCC email can say who unsubscribed
+  // (lib/email/unsubscribeByEmail.ts). Suppress them; it isn't a conversation.
+  const unsubscribe = parseUnsubscribeSubject(message.subject);
+  if (unsubscribe && fromEmail) {
+    const done = await handleUnsubscribeEmail(account, fromEmail, unsubscribe).catch((err) => {
+      console.error('[ingest] unsubscribe by email failed', err);
+      return null;
+    });
+    if (done) return { status: 'IGNORED', reason: `Unsubscribe request from ${fromEmail}: ${done.label}.` };
   }
 
   // ── Resolve the conversation this belongs to ──

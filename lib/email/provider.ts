@@ -23,8 +23,11 @@ export interface SendEmailInput {
   threadId?: string | null;
   inReplyTo?: string | null;
   references?: string | null;
-  /** Campaign emails: one-click unsubscribe URL for the List-Unsubscribe headers. */
+  /** Bulk emails: unsubscribe URL for the List-Unsubscribe headers (one-click unless listUnsubscribeOneClick is false). */
   listUnsubscribeUrl?: string | null;
+  /** mailto: unsubscribe to the sending mailbox (lib/email/unsubscribeByEmail.ts). */
+  listUnsubscribeMailto?: string | null;
+  listUnsubscribeOneClick?: boolean;
 }
 
 export interface EmailAttachment {

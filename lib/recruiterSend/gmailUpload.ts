@@ -38,6 +38,8 @@ export async function sendViaUpload(account: EmailProviderAccount, input: SendEm
     plainText: input.plainText,
     attachments: input.attachments,
     listUnsubscribeUrl: input.listUnsubscribeUrl,
+    listUnsubscribeMailto: input.listUnsubscribeMailto,
+    listUnsubscribeOneClick: input.listUnsubscribeOneClick,
   });
   try {
     const gmail = gmailApi({ version: 'v1', auth: await authorizedClientFor(account) });
