@@ -1,8 +1,9 @@
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
+import { prisma } from '@/lib/db/client';
 import { getOrgSettings, updateOrgSettings } from '@/lib/settings/org';
 import { emailsForRoles, postSystemSlack, sendSystemEmail, type ChannelOutcome } from '@/lib/notify/system';
-import { collectNeedsAttention, digestTotal, renderDigestEmail, renderDigestSlack } from '@/lib/digest/needsAttention';
-import { collectDailyActivity, hasActivity, type DailyActivity } from '@/lib/digest/dailyActivity';
+import { collectNeedsAttention, digestTotal, renderDigestSlack } from '@/lib/digest/needsAttention';
+import { collectDailyActivity, dueReportDay, latestReportDay, reportWindow } from '@/lib/digest/dailyActivity';
 import { renderDailyEmail, renderDailySlackLine } from '@/lib/digest/dailyEmail';
 import { buildWeeklyReport, renderWeeklyReportEmail, renderWeeklyReportSlack } from '@/lib/reports/weekly';
 
@@ -21,46 +22,72 @@ export interface DispatchResult {
 }
 
 /**
- * Sends the daily digest for one organisation. Scheduled runs send at most
- * once per IST day and stay quiet when nothing needs attention; a test run
- * (`testTo`) always sends, to that one address only, and never touches Slack
- * or the once-a-day marker.
+ * The daily report, 8 PM IST, Monday to Friday (replaces the 09:00 "needs attention" digest):
+ * everything since the last report (8 PM → 8 PM; Monday includes the weekend), each person's
+ * inbox, and what needs attention. Sent once per working day: the day is claimed in the
+ * database before sending, so the GitHub schedule, the Vercel cron and the laptop can all
+ * try without sending twice. A test (`testTo`) goes to that one address only and never
+ * touches Slack or the once-a-day marker.
  */
-export async function dispatchDigest(organizationId: string, opts: { testTo?: string; now?: Date } = {}): Promise<DispatchResult> {
+export async function dispatchDailyReport(organizationId: string, opts: { testTo?: string; now?: Date; day?: string } = {}): Promise<DispatchResult> {
   const now = opts.now ?? new Date();
   const settings = await getOrgSettings(organizationId);
-  const today = istDate(now);
+  const day = opts.day ?? (opts.testTo ? latestReportDay(now) : dueReportDay(now));
+  if (!day) return { organizationId, sent: false, reason: 'not report time (8 PM IST, Monday to Friday)' };
   if (!opts.testTo) {
-    if (!settings.digest.enabled) return { organizationId, sent: false, reason: 'digest turned off' };
-    if (settings.lastDigestOn === today) return { organizationId, sent: false, reason: 'already sent today' };
+    if (!settings.digest.enabled) return { organizationId, sent: false, reason: 'daily report turned off' };
+    if (settings.lastDailyReportOn === day) return { organizationId, sent: false, reason: `already sent for ${day}` };
+    if (!(await claimReportDay(organizationId, day))) return { organizationId, sent: false, reason: `already sent for ${day}` };
   }
 
-  const data = await collectNeedsAttention(organizationId, settings.digest, now);
-  const items = digestTotal(data);
-  // Yesterday's sending and inbox numbers; the digest still goes out if they can't be worked out.
-  let activity: DailyActivity | null = null;
   try {
-    activity = await collectDailyActivity(organizationId, now);
+    const window = reportWindow(day);
+    const [needs, activity] = await Promise.all([collectNeedsAttention(organizationId, settings.digest, now), collectDailyActivity(organizationId, window)]);
+    const items = digestTotal(needs);
+    const { subject, html } = renderDailyEmail(activity, needs);
+    const visible = settings.digest.to.length > 0;
+    const to = opts.testTo
+      ? [opts.testTo]
+      : visible
+        ? settings.digest.to
+        : [...(settings.digest.emailAdmins ? await emailsForRoles(organizationId, [Role.SUPER_ADMIN, Role.ADMIN]) : []), ...settings.digest.extraEmails];
+    const email = await sendSystemEmail({
+      organizationId,
+      senderAccountId: settings.senderAccountId,
+      to,
+      cc: opts.testTo ? [] : settings.digest.cc,
+      visible: !!opts.testTo || visible,
+      subject: opts.testTo ? `[Test] ${subject}` : subject,
+      html,
+    });
+    const slack = !opts.testTo && settings.digest.slack ? await postSystemSlack(organizationId, `${renderDailySlackLine(activity)}\n\n${renderDigestSlack(needs)}`) : undefined;
+    // Nothing went out: release the day so the next run tries again.
+    if (!opts.testTo && !email.startsWith('SENT') && !slack?.startsWith('SENT')) await releaseReportDay(organizationId, day, settings.lastDailyReportOn);
+    return { organizationId, sent: email.startsWith('SENT') || !!slack?.startsWith('SENT'), items, email, slack, reason: `report for ${day}` };
   } catch (err) {
-    console.error('[digest] daily activity failed', err);
+    if (!opts.testTo) await releaseReportDay(organizationId, day, settings.lastDailyReportOn).catch(() => undefined);
+    throw err;
   }
-  if (!opts.testTo && items === 0 && !(activity && hasActivity(activity))) {
-    await updateOrgSettings(organizationId, { lastDigestOn: today }, 'system');
-    return { organizationId, sent: false, reason: 'nothing needs attention', items };
-  }
-
-  const { subject, html } = activity ? renderDailyEmail(activity, data) : renderDigestEmail(data);
-  const to = opts.testTo
-    ? [opts.testTo]
-    : [...(settings.digest.emailAdmins ? await emailsForRoles(organizationId, [Role.SUPER_ADMIN, Role.ADMIN]) : []), ...settings.digest.extraEmails];
-  const email = await sendSystemEmail({ organizationId, senderAccountId: settings.senderAccountId, to, subject: opts.testTo ? `[Test] ${subject}` : subject, html });
-  const slack = !opts.testTo && settings.digest.slack ? await postSystemSlack(organizationId, [activity ? renderDailySlackLine(activity) : null, renderDigestSlack(data)].filter(Boolean).join('\n\n')) : undefined;
-
-  if (!opts.testTo) await updateOrgSettings(organizationId, { lastDigestOn: today }, 'system');
-  return { organizationId, sent: email.startsWith('SENT') || !!slack?.startsWith('SENT'), items, email, slack };
 }
 
-/** Sends the weekly report; same once-per-day and test rules as the digest. */
+/** Marks `day` as sent, only if it isn't already (one atomic UPDATE). True = this run sends it. */
+async function claimReportDay(organizationId: string, day: string): Promise<boolean> {
+  await prisma.integrationSettings.upsert({ where: { organizationId }, update: {}, create: { organizationId, settings: {} } });
+  const n = await prisma.$executeRaw`
+    UPDATE "IntegrationSettings"
+    SET "settings" = jsonb_set(COALESCE("settings", '{}'::jsonb), '{lastDailyReportOn}', to_jsonb(${day}::text)), "updatedAt" = now()
+    WHERE "organizationId" = ${organizationId} AND COALESCE("settings"->>'lastDailyReportOn', '') <> ${day}`;
+  return n > 0;
+}
+
+async function releaseReportDay(organizationId: string, day: string, previous: string | null): Promise<void> {
+  await prisma.$executeRaw`
+    UPDATE "IntegrationSettings"
+    SET "settings" = jsonb_set("settings", '{lastDailyReportOn}', ${previous === null ? Prisma.sql`'null'::jsonb` : Prisma.sql`to_jsonb(${previous}::text)`})
+    WHERE "organizationId" = ${organizationId} AND "settings"->>'lastDailyReportOn' = ${day}`;
+}
+
+/** Sends the weekly report: once per IST day, and a test goes to one address only. */
 export async function dispatchWeeklyReport(organizationId: string, opts: { testTo?: string; now?: Date } = {}): Promise<DispatchResult> {
   const now = opts.now ?? new Date();
   const settings = await getOrgSettings(organizationId);

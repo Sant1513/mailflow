@@ -3,6 +3,7 @@ import type { Adapter, AdapterUser } from 'next-auth/adapters';
 import GoogleProvider from 'next-auth/providers/google';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from '@/lib/db/client';
+import { syncOrgBounces } from '@/lib/email/bounces';
 import { Role, UserStatus } from '@prisma/client';
 
 /**
@@ -135,6 +136,8 @@ function mailflowAdapter(): Adapter {
           members: { create: { userId: user.id, role: isFirstAdmin ? Role.SUPER_ADMIN : Role.OPERATOR } },
         },
       });
+      // Addresses that already bounced for teammates are suppressed in the new workspace too.
+      await syncOrgBounces(org.id).catch((err) => console.error('[auth] bounce sync for new workspace failed', err));
 
       // Notify all super admins about the pending registration.
       if (!isFirstAdmin) {

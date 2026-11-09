@@ -30,7 +30,7 @@
     },
     {
       "path": "/api/cron/daily-digest",
-      "schedule": "30 3 * * *"
+      "schedule": "0 15 * * 1-5"
     },
     {
       "path": "/api/cron/weekly-report",

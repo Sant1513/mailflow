@@ -6,9 +6,11 @@ import { requireRole } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { getOrgSettings, orgSettingsSchema, updateOrgSettings, TRIAGE_INTENTS } from '@/lib/settings/org';
-import { collectNeedsAttention, digestTotal, renderDigestEmail } from '@/lib/digest/needsAttention';
+import { collectNeedsAttention, digestTotal } from '@/lib/digest/needsAttention';
 import { buildWeeklyReport, renderWeeklyReportEmail } from '@/lib/reports/weekly';
-import { dispatchDigest, dispatchWeeklyReport } from '@/lib/digest/dispatch';
+import { dispatchDailyReport, dispatchWeeklyReport } from '@/lib/digest/dispatch';
+import { collectDailyActivity, latestReportDay, reportWindow } from '@/lib/digest/dailyActivity';
+import { renderDailyEmail } from '@/lib/digest/dailyEmail';
 
 /**
  * Super Admin → System Settings → Automation: daily digest, weekly report and
@@ -76,15 +78,17 @@ export const POST = withErrorHandling(async (req) => {
 
   if (action === 'preview-digest') {
     const settings = await getOrgSettings(orgId);
-    const data = await collectNeedsAttention(orgId, settings.digest);
-    return NextResponse.json({ items: digestTotal(data), ...renderDigestEmail(data) });
+    // The latest 8 PM report (today's once 8 PM has passed, else the last working day's).
+    const day = latestReportDay(new Date());
+    const [data, activity] = await Promise.all([collectNeedsAttention(orgId, settings.digest), collectDailyActivity(orgId, reportWindow(day))]);
+    return NextResponse.json({ items: digestTotal(data), day, ...renderDailyEmail(activity, data) });
   }
   if (action === 'preview-report') {
     return NextResponse.json(renderWeeklyReportEmail(await buildWeeklyReport(orgId)));
   }
 
   const result = action === 'test-digest'
-    ? await dispatchDigest(orgId, { testTo: session.email })
+    ? await dispatchDailyReport(orgId, { testTo: session.email })
     : await dispatchWeeklyReport(orgId, { testTo: session.email });
   await audit(session, action === 'test-digest' ? 'DIGEST_TEST_SENT' : 'WEEKLY_REPORT_TEST_SENT', {
     targetType: 'Organization',

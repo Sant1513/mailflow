@@ -34,11 +34,16 @@ export async function emailsForRoles(organizationId: string, roles: Role[]): Pro
 
 export type ChannelOutcome = `SENT${string}` | `SKIPPED: ${string}` | `FAILED: ${string}`;
 
-/** One email to all recipients (BCC keeps addresses private); never throws. */
+/**
+ * One email to all recipients; never throws. By default everyone is in Bcc (addresses stay
+ * private); `visible` sends To `to` with `cc` copied, and no Bcc.
+ */
 export async function sendSystemEmail(opts: {
   organizationId: string;
   senderAccountId: string | null;
   to: string[];
+  cc?: string[];
+  visible?: boolean;
   subject: string;
   html: string;
 }): Promise<ChannelOutcome> {
@@ -47,16 +52,18 @@ export async function sendSystemEmail(opts: {
   const account = await systemSenderMailbox(opts.organizationId, opts.senderAccountId);
   if (!account) return 'SKIPPED: no connected Gmail mailbox to send from';
   try {
+    const cc = [...new Set((opts.cc ?? []).map((e) => e.trim().toLowerCase()).filter((e) => e && !recipients.includes(e)))];
     await new GmailProvider(account).sendEmail({
-      to: account.emailAddress,
-      bcc: recipients,
+      ...(opts.visible ? { to: recipients.join(', '), cc } : { to: account.emailAddress, bcc: recipients }),
       fromName: 'MailFlow',
       fromEmail: account.emailAddress,
       subject: opts.subject,
       html: opts.html,
       plainText: htmlToPlainText(opts.html),
     });
-    return `SENT to ${recipients.length} from ${account.emailAddress}`;
+    return opts.visible
+      ? `SENT to ${recipients.join(', ')}${cc.length ? ` cc ${cc.join(', ')}` : ''} from ${account.emailAddress}`
+      : `SENT to ${recipients.length} from ${account.emailAddress}`;
   } catch (err) {
     return `FAILED: ${err instanceof Error ? err.message : String(err)}`;
   }

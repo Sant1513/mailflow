@@ -103,6 +103,28 @@ export function parseBounce(
  * (an unsubscribe, a manual entry, an earlier bounce) are kept as they are.
  * Also marks matching records BOUNCED with the error, and fires the email.bounced webhook.
  */
+/**
+ * Every workspace in the organisation gets every bounce and spam complaint already known, so a
+ * workspace created after a bounce (a new teammate) never emails that address. recordHardBounce
+ * spreads each new bounce at the time; this fills the gaps (on sign-up and once a day).
+ * Unsubscribes stay per workspace: they're a choice about that sender. Returns rows added.
+ */
+export async function syncOrgBounces(organizationId: string): Promise<number> {
+  return prisma.$executeRaw`
+    INSERT INTO "EmailSuppression" (id, "workspaceId", email, reason, source, detail, "createdAt")
+    SELECT 'sb' || substr(md5(w.id || ':' || b.email || ':' || clock_timestamp()::text), 1, 23), w.id, b.email, b.reason, 'BOUNCE',
+           left(COALESCE(b.detail, b.reason) || ' (known across the organisation)', 1000), now()
+    FROM "Workspace" w
+    JOIN (
+      SELECT DISTINCT ON (s.email, s.reason) s.email, s.reason, s.detail
+      FROM "EmailSuppression" s JOIN "Workspace" ws ON ws.id = s."workspaceId"
+      WHERE ws."organizationId" = ${organizationId} AND s.reason IN ('BOUNCED', 'COMPLAINT')
+      ORDER BY s.email, s.reason, s."createdAt"
+    ) b ON TRUE
+    WHERE w."organizationId" = ${organizationId}
+    ON CONFLICT ("workspaceId", email) DO NOTHING`;
+}
+
 export async function recordHardBounce(input: { workspaceId: string; email: string; detail: string; campaignId?: string | null; webhook?: boolean }): Promise<void> {
   const email = input.email.trim().toLowerCase();
   const detail = input.detail.slice(0, 1000);

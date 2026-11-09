@@ -3,15 +3,83 @@ import { prisma } from '@/lib/db/client';
 import { ledgerReport, type LedgerReport, type LedgerSource } from '@/lib/analytics/sendLedger';
 
 /**
- * The "yesterday" half of the daily email (09:00 IST): everything sent in the last full IST
- * day, by type, by user and by mailbox (the Organization ledger), plus each person's inbox:
- * replies received, still pending, closed, and first / average response times for the day
- * and the last 30 days. Rows where every number is 0 are left out.
+ * The daily report (8 PM IST, Monday to Friday): everything sent since the last report, by
+ * type, by user and by mailbox (the Organization ledger), plus each person's inbox: replies
+ * received, still pending, closed, and first / average response times for the window and the
+ * last 30 days. Rows where every number is 0 are left out.
+ *
+ * The window runs 8 PM to 8 PM. Work after 8 PM goes into the next working day's report, and
+ * Monday's report also carries Friday after 8 PM, Saturday and Sunday — each shown as its own
+ * line ("segments") so it's clear what came from outside the day.
  */
 
 export const IST_OFFSET_MS = 330 * 60_000;
 const DAY_MS = 864e5;
 const NOISE = ['BOUNCE', 'DELIVERY_FAILURE', 'OUT_OF_OFFICE', 'AUTO_REPLY'];
+
+/** The hour the daily report is cut and sent (IST). */
+export const REPORT_HOUR = 20;
+const ymdOf = (d: Date) => new Date(d.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+const istHour = (d: Date) => new Date(d.getTime() + IST_OFFSET_MS).getUTCHours();
+const addDays = (ymd: string, n: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+const weekday = (ymd: string) => new Date(`${ymd}T00:00:00Z`).getUTCDay(); // 0 Sunday … 6 Saturday
+const midnight = (ymd: string) => new Date(`${ymd}T00:00:00+05:30`);
+const cutoff = (ymd: string) => new Date(`${ymd}T${String(REPORT_HOUR).padStart(2, '0')}:00:00+05:30`);
+const dayName = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'UTC' });
+
+export interface ReportWindow {
+  /** The working day the report is for (YYYY-MM-DD, IST). */
+  day: string;
+  from: Date;
+  to: Date;
+  /** The parts of the window: after-hours / weekend first, then the day itself (main). */
+  segments: { label: string; from: Date; to: Date; main: boolean }[];
+}
+
+/** 8 PM of the previous working day → 8 PM of `day`; Monday reaches back to Friday 8 PM. */
+export function reportWindow(day: string): ReportWindow {
+  const monday = weekday(day) === 1;
+  const prev = addDays(day, monday ? -3 : -1);
+  const from = cutoff(prev);
+  const to = cutoff(day);
+  const segments: ReportWindow['segments'] = monday
+    ? [
+        { label: 'Friday after 8 PM', from, to: midnight(addDays(day, -2)), main: false },
+        { label: 'Saturday', from: midnight(addDays(day, -2)), to: midnight(addDays(day, -1)), main: false },
+        { label: 'Sunday', from: midnight(addDays(day, -1)), to: midnight(day), main: false },
+      ]
+    : [{ label: `${dayName(prev)} after 8 PM`, from, to: midnight(day), main: false }];
+  segments.push({ label: `${dayName(day)} until 8 PM`, from: midnight(day), to, main: true });
+  return { day, from, to, segments };
+}
+
+/**
+ * The report due at `now`: a working day whose 8 PM has passed — until 8 AM the next morning,
+ * so a late run still catches up — or null (weekends, or before 8 PM).
+ */
+export function dueReportDay(now: Date): string | null {
+  const today = ymdOf(now);
+  const hour = istHour(now);
+  const day = hour >= REPORT_HOUR ? today : hour < 8 ? addDays(today, -1) : null;
+  if (!day) return null;
+  const wd = weekday(day);
+  return wd === 0 || wd === 6 ? null : day;
+}
+
+/** The working day before `day` (Monday → Friday), for "last report" previews. */
+export function previousWorkingDay(day: string): string {
+  let d = addDays(day, -1);
+  while ([0, 6].includes(weekday(d))) d = addDays(d, -1);
+  return d;
+}
+
+/** The latest report day at or before `now` whose 8 PM has passed (for previews and tests). */
+export function latestReportDay(now: Date): string {
+  const due = dueReportDay(now);
+  if (due) return due;
+  const today = ymdOf(now);
+  return [0, 6].includes(weekday(today)) || istHour(now) < REPORT_HOUR ? previousWorkingDay(today) : today;
+}
 
 /** The IST day before `now`: [from, to) as instants, and its YYYY-MM-DD. */
 export function previousIstDay(now: Date): { from: Date; to: Date; ymd: string } {
@@ -34,10 +102,15 @@ export interface InboxRow {
   art30: number | null;
 }
 
+export interface SegmentCount { label: string; main: boolean; emails: number; people: number; replies: number }
+
 export interface DailyActivity {
   from: Date;
   to: Date;
+  /** The report day (YYYY-MM-DD, IST). */
   ymd: string;
+  /** What the window is made of, with counts per part (after-hours / weekend / the day). */
+  segments: SegmentCount[];
   totals: LedgerReport['totals'];
   bySource: LedgerReport['bySource'];
   users: (LedgerReport['byUser'][number] & { image: string | null })[];
@@ -82,8 +155,8 @@ export function responseTimes(msgs: { dir: string; at: Date }[], from: Date, to:
   return { frt, art };
 }
 
-export async function collectDailyActivity(organizationId: string, now: Date = new Date()): Promise<DailyActivity> {
-  const { from, to, ymd } = previousIstDay(now);
+export async function collectDailyActivity(organizationId: string, window: ReportWindow): Promise<DailyActivity> {
+  const { from, to, day: ymd } = window;
   const from30 = new Date(to.getTime() - 30 * DAY_MS);
   const noise = Prisma.sql`m."classification"::text <> ALL(${NOISE}::text[])`;
 
@@ -181,6 +254,15 @@ export async function collectDailyActivity(organizationId: string, now: Date = n
     art30: avg(all.art30),
   };
 
+  // Each part of the window on its own line: emails and people sent, replies received.
+  const segments = await Promise.all(
+    window.segments.map(async (seg) => {
+      const part = await ledgerReport({ organizationId, from: seg.from, to: seg.to });
+      const replies = msgs.filter((m) => m.dir === 'INBOUND' && m.at >= seg.from && m.at < seg.to).length;
+      return { label: seg.label, main: seg.main, emails: part.totals.emails, people: part.totals.people, replies };
+    }),
+  );
+
   const users = ledger.byUser
     .filter((u) => u.emails || u.people || u.othersUsedTheirMailbox || u.replies || u.failed)
     .map((u) => ({ ...u, image: person.get(u.userId)?.image ?? null }));
@@ -189,6 +271,7 @@ export async function collectDailyActivity(organizationId: string, now: Date = n
     from,
     to,
     ymd,
+    segments,
     totals: ledger.totals,
     bySource: ledger.bySource.filter((s) => s.emails > 0),
     users,

@@ -261,7 +261,8 @@ const JOBS = [
   { name: 'sheets-sync', path: '/api/cron/sheets-sync', everyMin: 15 },
   { name: 'scheduled-send', path: '/api/cron/scheduled-send', dailyAt: [0, 0] },
   { name: 'scheduled-replies', path: '/api/cron/scheduled-replies', dailyAt: [0, 0] },
-  { name: 'daily-digest', path: '/api/cron/daily-digest', dailyAt: [3, 30] },
+  // The 8 PM IST daily report (Mon–Fri; the route skips weekends and anything already sent).
+  { name: 'daily-digest', path: '/api/cron/daily-digest', dailyAt: [14, 35] },
   { name: 'sla-check', path: '/api/cron/sla-check', dailyAt: [8, 0] },
   { name: 'signing-reminders', path: '/api/cron/signing-reminders', dailyAt: [9, 0] },
   { name: 'weekly-report', path: '/api/cron/weekly-report', dailyAt: [3, 30], weekday: 1 },

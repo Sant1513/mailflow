@@ -101,20 +101,22 @@ export function AutomationSettings({ readOnly }: { readOnly: boolean }) {
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="text-sm font-semibold">Daily “needs attention” digest</h3>
-            <p className="text-xs text-muted-foreground">Every day at 09:00 IST: unanswered replies, SLA breaches, documents about to expire unsigned, and pending approvals. Skipped on days with nothing to report.</p>
+            <h3 className="text-sm font-semibold">Daily report</h3>
+            <p className="text-xs text-muted-foreground">8 PM IST, Monday to Friday: everything sent since the last report (8 PM to 8 PM) by type, user and mailbox, each person&apos;s inbox (received, pending, closed, FRT, ART), and what needs attention. Work after 8 PM goes into the next report; the weekend goes into Monday&apos;s, marked as such.</p>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => run('preview-digest')} disabled={busy !== null} className="btn-secondary !py-1.5 text-xs">{busy === 'preview-digest' ? 'Loading…' : 'Preview today'}</button>
+            <button onClick={() => run('preview-digest')} disabled={busy !== null} className="btn-secondary !py-1.5 text-xs">{busy === 'preview-digest' ? 'Loading…' : 'Preview latest'}</button>
             <button onClick={() => run('test-digest')} disabled={busy !== null} className="btn-secondary !py-1.5 text-xs">{busy === 'test-digest' ? 'Sending…' : 'Send test to me'}</button>
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
-          <Toggle checked={s.digest.enabled} disabled={off} onChange={(v) => save({ digest: { enabled: v } })} label="Send the digest" hint="Turn the daily email and Slack post on or off." />
-          <Toggle checked={s.digest.emailAdmins} disabled={off || !s.digest.enabled} onChange={(v) => save({ digest: { emailAdmins: v } })} label="Email all admins" hint="Every Super Admin and Admin in the organisation." />
+          <Toggle checked={s.digest.enabled} disabled={off} onChange={(v) => save({ digest: { enabled: v } })} label="Send the daily report" hint="Turn the 8 PM email and Slack post on or off." />
+          <Toggle checked={s.digest.emailAdmins} disabled={off || !s.digest.enabled || (s.digest.to ?? []).length > 0} onChange={(v) => save({ digest: { emailAdmins: v } })} label="Email all admins (Bcc)" hint="Used only when no To address is set below." />
           <Toggle checked={s.digest.slack} disabled={off || !s.digest.enabled} onChange={(v) => save({ digest: { slack: v } })} label="Post to Slack" hint="A short summary in the notifications channel." />
         </div>
-        <EmailList label="Also email" value={s.digest.extraEmails} disabled={off || !s.digest.enabled} onSave={(v) => save({ digest: { extraEmails: v } })} />
+        <EmailList label="To (one visible email, no Bcc)" value={s.digest.to ?? []} disabled={off || !s.digest.enabled} onSave={(v) => save({ digest: { to: v } })} />
+        <EmailList label="CC" value={s.digest.cc ?? []} disabled={off || !s.digest.enabled || !(s.digest.to ?? []).length} onSave={(v) => save({ digest: { cc: v } })} />
+        {!(s.digest.to ?? []).length && <EmailList label="Also email (Bcc)" value={s.digest.extraEmails} disabled={off || !s.digest.enabled} onSave={(v) => save({ digest: { extraEmails: v } })} />}
         <div className="flex flex-wrap gap-4 text-xs">
           <label>
             <span className="mb-1 block font-medium">“Expiring” means within</span>

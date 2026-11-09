@@ -225,8 +225,35 @@ function attention(d: NeedsAttention): string {
     .join('');
 }
 
-export function dailyLabel(a: { from: Date }): string {
-  return a.from.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Asia/Kolkata' });
+/** "Monday, 9 November" for the report day. */
+export function dailyLabel(a: { ymd: string }): string {
+  return new Date(`${a.ymd}T12:00:00+05:30`).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Asia/Kolkata' });
+}
+
+/** "Fri 8 PM → Mon 8 PM": the window the report covers. */
+export function windowLabel(a: { from: Date; to: Date }): string {
+  const f = (d: Date) => d.toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'Asia/Kolkata' });
+  return `${f(a.from)} 8 PM → ${f(a.to)} 8 PM`;
+}
+
+/**
+ * The remark for anything from outside the day itself: after 8 PM the evening before, and on
+ * Mondays Saturday and Sunday too, each with its own numbers.
+ */
+function windowRemark(a: DailyActivity): string {
+  const extra = a.segments.filter((sg) => !sg.main);
+  if (!extra.length) return '';
+  const line = (sg: DailyActivity['segments'][number]) =>
+    `<tr><td style="${TD};${sg.main ? 'font-weight:600' : ''}">${e(sg.label)}${sg.main ? '' : ` <span style="display:inline-block;margin-left:4px;padding:1px 7px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:600">added from after hours</span>`}</td>
+<td align="right" style="${TD}">${zeroDim(sg.emails, sg.main)}</td><td align="right" style="${TD}">${zeroDim(sg.people)}</td><td align="right" style="${TD}">${zeroDim(sg.replies, sg.main)}</td></tr>`;
+  const afterHours = extra.reduce((n, sg) => n + sg.emails + sg.replies, 0);
+  return card(
+    `${cardTitle('🕗', 'What this report covers', `${windowLabel(a)}. Anything after 8 PM is added to the next working day's report${a.segments.length > 2 ? ', and the weekend to Monday’s' : ''}.${afterHours ? '' : ' Nothing happened after hours this time.'}`)}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="mf-t" style="border-collapse:collapse">
+<tr><th align="left" style="${TH}">Part</th><th align="right" style="${TH}">Emails</th><th align="right" style="${TH}">People</th><th align="right" style="${TH}">Replies</th></tr>
+${a.segments.map(line).join('')}</table>`,
+    { pad: 14, delay: 60 },
+  );
 }
 
 export function renderDailyEmail(a: DailyActivity, d: NeedsAttention): { subject: string; html: string } {
@@ -234,7 +261,9 @@ export function renderDailyEmail(a: DailyActivity, d: NeedsAttention): { subject
   const t = a.totals;
   const items = digestTotal(d);
   const day = dailyLabel(a);
-  const dashboard = `${base}/admin/organization?lfrom=${a.ymd}&lto=${a.ymd}`;
+  const span = windowLabel(a);
+  const fromYmd = new Date(a.from.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+  const dashboard = `${base}/admin/organization?lfrom=${fromYmd}&lto=${a.ymd}`;
 
   const kpis = tiles([
     { value: num(t.emails), label: 'Emails sent', sub: `${num(t.mailboxes)} mailbox${t.mailboxes === 1 ? '' : 'es'}` },
@@ -242,11 +271,12 @@ export function renderDailyEmail(a: DailyActivity, d: NeedsAttention): { subject
     { value: num(t.failed), label: 'Failed', accent: t.failed ? RED : INK },
     { value: num(t.borrowed), label: "From others' mailboxes", sub: 'backup / teammates' },
     { value: num(a.inboxTotal.received), label: 'Replies received', sub: t.replyRate !== null ? `${t.replyRate}% of emails` : undefined },
-    { value: num(a.inboxTotal.pending), label: 'Waiting for an answer', sub: `${num(a.inboxTotal.closed)} closed on the day`, accent: a.inboxTotal.pending ? RED : INK },
+    { value: num(a.inboxTotal.pending), label: 'Waiting for an answer', sub: `${num(a.inboxTotal.closed)} closed in this report`, accent: a.inboxTotal.pending ? RED : INK },
   ]);
 
   const body = `
-<div style="font:600 11px/1.2 ${FONT};letter-spacing:1.4px;text-transform:uppercase;color:${RED};margin:0 0 10px">Yesterday · ${e(day)}</div>
+<div style="font:600 11px/1.2 ${FONT};letter-spacing:1.4px;text-transform:uppercase;color:${RED};margin:0 0 10px">${e(day)} · ${e(span)}</div>
+${windowRemark(a)}
 ${kpis}
 ${typeCards(a)}
 ${byUser(a)}
@@ -267,23 +297,23 @@ ${attention(d)}`;
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:760px"><tr><td>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="mf-rise" style="background:${INK};background-image:linear-gradient(135deg,#18181b 0%,#18181b 55%,#7f0119 100%);border-radius:18px;border-collapse:separate;margin:0 0 14px"><tr>
 <td style="padding:22px 24px">
-<div style="font:600 11px/1.2 ${FONT};letter-spacing:1.6px;text-transform:uppercase;color:#fda4af">MailFlow · Daily report</div>
+<div style="font:600 11px/1.2 ${FONT};letter-spacing:1.6px;text-transform:uppercase;color:#fda4af">MailFlow · Daily report · 8 PM</div>
 <div style="font:700 24px/1.25 ${FONT};color:#ffffff;margin-top:6px">${num(t.emails)} emails · ${num(t.people)} people · ${num(a.inboxTotal.received)} replies</div>
-<div style="font:400 13px/1.4 ${FONT};color:#d4d4d8;margin-top:4px">${e(day)}${items ? ` · ${items} thing${items === 1 ? '' : 's'} need attention today` : ' · nothing needs attention'}</div>
+<div style="font:400 13px/1.4 ${FONT};color:#d4d4d8;margin-top:4px">${e(day)} · ${e(span)}${items ? ` · ${items} thing${items === 1 ? '' : 's'} need attention today` : ' · nothing needs attention'}</div>
 <div style="margin-top:14px"><a href="${e(dashboard)}" style="display:inline-block;padding:10px 16px;border-radius:999px;background:${RED};color:#ffffff;font:600 13px/1 ${FONT};text-decoration:none">Open live dashboard →</a></div>
 </td>
 </tr></table>
 ${body}
-<div style="font:400 11px/1.5 ${FONT};color:${FAINT};text-align:center;margin-top:18px">Sent by MailFlow at 9:00 IST · the live, filterable view is under Super Admin → Organization · change these emails under System Settings</div>
+<div style="font:400 11px/1.5 ${FONT};color:${FAINT};text-align:center;margin-top:18px">Sent by MailFlow at 8 PM IST, Monday to Friday · 8 PM to 8 PM; after-hours and weekend work roll into the next report · the live, filterable view is under Super Admin → Organization · change these emails under System Settings</div>
 </td></tr></table>
 </td></tr></table>
 </body></html>`;
 
-  const subject = `[MailFlow] ${day}: ${num(t.emails)} emails, ${num(a.inboxTotal.received)} replies${items ? ` · ${items} need attention` : ''}`;
+  const subject = `[MailFlow] Daily report · ${day}: ${num(t.emails)} emails, ${num(a.inboxTotal.received)} replies${items ? ` · ${items} need attention` : ''}`;
   return { subject, html };
 }
 
 export function renderDailySlackLine(a: DailyActivity): string {
   const t = a.totals;
-  return `:bar_chart: *Yesterday (${dailyLabel(a)})*: ${num(t.emails)} emails to ${num(t.people)} people${t.failed ? `, ${t.failed} failed` : ''}; ${num(a.inboxTotal.received)} replies received, ${num(a.inboxTotal.pending)} waiting, ${num(a.inboxTotal.closed)} closed · FRT ${duration(a.inboxTotal.frtDay)}, ART ${duration(a.inboxTotal.artDay)}`;
+  return `:bar_chart: *Daily report · ${dailyLabel(a)} (${windowLabel(a)})*: ${num(t.emails)} emails to ${num(t.people)} people${t.failed ? `, ${t.failed} failed` : ''}; ${num(a.inboxTotal.received)} replies received, ${num(a.inboxTotal.pending)} waiting, ${num(a.inboxTotal.closed)} closed · FRT ${duration(a.inboxTotal.frtDay)}, ART ${duration(a.inboxTotal.artDay)}`;
 }

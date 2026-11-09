@@ -28,6 +28,8 @@ export const orgSettingsSchema = z.object({
   senderAccountId: z.string().nullable().default(null),
   /** IST dates (YYYY-MM-DD) of the last scheduled sends, so a cron that fires twice sends once. */
   lastDigestOn: z.string().nullable().default(null),
+  /** The report day (YYYY-MM-DD, IST) of the last 8 PM daily report sent. */
+  lastDailyReportOn: z.string().nullable().default(null),
   lastWeeklyReportOn: z.string().nullable().default(null),
   /**
    * Gmail mailboxes (EmailProviderAccount ids) whose owners allow them to be used as a
@@ -40,6 +42,12 @@ export const orgSettingsSchema = z.object({
       /** Email every SUPER_ADMIN and ADMIN in the organisation. */
       emailAdmins: z.boolean().default(true),
       extraEmails: emailList.default([]),
+      /**
+       * The daily report as one visible email: To these addresses, CC the next list, no Bcc.
+       * Empty = the older way (every admin + extraEmails, hidden in Bcc).
+       */
+      to: emailList.default([]),
+      cc: emailList.default([]),
       slack: z.boolean().default(true),
       /** Hours before expiry that an unsigned document counts as "near expiry". */
       expiringWithinHours: z.number().int().min(1).max(24 * 14).default(48),
