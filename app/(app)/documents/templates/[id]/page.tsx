@@ -160,7 +160,7 @@ export default function EditTemplatePage() {
         >
           ← Templates
         </Link>
-        <h1 className="text-xl font-semibold">Edit Template</h1>
+        <h1 className="font-heading text-2xl font-bold tracking-tight">Edit Template</h1>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">

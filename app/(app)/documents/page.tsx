@@ -298,7 +298,7 @@ export default function ESignDocumentsPage() {
     <div className="p-6">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Documents</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Documents</h1>
           <p className="text-sm text-muted-foreground">E-signature requests sent to recipients.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

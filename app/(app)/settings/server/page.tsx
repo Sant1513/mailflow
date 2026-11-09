@@ -78,11 +78,11 @@ export default function ServerPage() {
   const canSwitch = !status.switchTo && (other === 'cloud' || status.laptopOnline);
 
   return (
-    <div className="max-w-2xl p-6">
+    <div className="max-w-5xl p-4 sm:p-6">
       <Link href="/settings" className="text-sm text-muted-foreground hover:underline">
         ← Settings
       </Link>
-      <h1 className="mb-1 mt-2 text-xl font-semibold">Server</h1>
+      <h1 className="mb-1 mt-2 font-heading text-2xl font-bold tracking-tight">Server</h1>
       <p className="mb-6 text-sm text-muted-foreground">
         MailFlow runs on one server at a time; the other keeps a copy. Switching copies everything across first, so no data
         or sign-ins are lost.

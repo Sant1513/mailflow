@@ -63,7 +63,7 @@ export default function ContactsPage() {
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="mb-1 text-xl font-semibold">Contacts{total ? <span className="ml-2 align-middle text-sm font-normal text-muted-foreground">{total.toLocaleString('en-IN')}{q ? ' found' : ' in all'}</span> : null}</h1>
+          <h1 className="mb-1 font-heading text-2xl font-bold tracking-tight">Contacts{total ? <span className="ml-2 align-middle text-sm font-normal text-muted-foreground">{total.toLocaleString('en-IN')}{q ? ' found' : ' in all'}</span> : null}</h1>
           <p className="text-sm text-muted-foreground">
             One person, resolved across every dataset and conversation.
           </p>

@@ -379,7 +379,7 @@ export default function CampaignDetailPage() {
 
       <div className="mb-4 mt-2 flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{campaign.name}</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">{campaign.name}</h1>
           <p className="text-sm text-muted-foreground">
             {campaign.dataset.name} · {campaign.template.name} v{campaign.templateVersion.version} ·{' '}
             {campaign.status.replace(/_/g, ' ')}

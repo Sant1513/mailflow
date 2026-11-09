@@ -240,6 +240,19 @@
     backdrop-filter: blur(18px) saturate(140%);
     border: 1px solid hsl(var(--border));
   }
+  /* Older cards written as "rounded-lg border bg-card" get the same look as .panel, so every
+     page matches the sidebar (dialogs with shadow-xl stay solid). */
+  .rounded-lg.border.bg-card:not(.shadow-xl) {
+    border-radius: var(--radius-card);
+    border-color: hsl(var(--border-subtle));
+    box-shadow: var(--shadow-card);
+  }
+  .dark .rounded-lg.border.bg-card:not(.shadow-xl) {
+    background: hsl(var(--glass) / var(--glass-alpha));
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(18px) saturate(140%);
+    border-color: hsl(var(--border));
+  }
   /* Sidebar, top bar and drawer: a white floating panel; frosted glass in the dark theme. */
   .glass-nav {
     background: hsl(var(--card));

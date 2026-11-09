@@ -87,7 +87,7 @@ export default function TemplatesPage() {
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Templates</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Templates</h1>
           <p className="text-sm text-muted-foreground">
             HTML/CSS email templates with variables, versioning, and personalized preview.
           </p>

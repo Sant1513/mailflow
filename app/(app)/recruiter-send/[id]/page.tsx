@@ -326,7 +326,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           {draft ? (
             <input value={form.name} onChange={(e) => edit({ name: e.target.value })} className="w-full rounded border-transparent bg-transparent px-1 text-xl font-semibold hover:border-border focus:border-border" aria-label="Name of this send" maxLength={200} />
           ) : (
-            <h1 className="text-xl font-semibold">{b.name}</h1>
+            <h1 className="font-heading text-2xl font-bold tracking-tight">{b.name}</h1>
           )}
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className={`rounded px-1.5 py-0.5 ${STATUS_STYLE[b.status] ?? ''}`}>{b.status.toLowerCase()}</span>

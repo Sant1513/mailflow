@@ -93,7 +93,7 @@ export default function AuditLogsPage() {
     <div className="p-6">
       <div className="mb-4 flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Audit Logs</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Audit Logs</h1>
           <p className="text-sm text-muted-foreground">Every sensitive action, organization-wide (§95).</p>
         </div>
         {loading && <span className="text-xs text-muted-foreground">Loading…</span>}

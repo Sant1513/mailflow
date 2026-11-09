@@ -109,7 +109,7 @@ export default function SuppressionsPage() {
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Suppression List</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Suppression List</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
             Emails here are skipped on every future send. Bounces and spam reports are added automatically and apply to everyone in the organisation; unsubscribes are added when someone clicks Unsubscribe.
           </p>

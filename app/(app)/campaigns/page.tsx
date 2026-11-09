@@ -140,7 +140,7 @@ export default function CampaignsPage() {
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Campaigns</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Campaigns</h1>
           <p className="text-sm text-muted-foreground">
             Simulate, get approval, then send from your connected Gmail account.
           </p>

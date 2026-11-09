@@ -53,9 +53,9 @@ export default function DeliverabilityPage() {
   }, [days]);
 
   return (
-    <div className="max-w-5xl p-6">
+    <div className="p-4 sm:p-6">
       <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Deliverability</h1>
+        <h1 className="font-heading text-2xl font-bold tracking-tight">Deliverability</h1>
         <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="rounded border bg-background px-2 py-1 text-sm" aria-label="Period">
           <option value={7}>Last 7 days</option>
           <option value={30}>Last 30 days</option>

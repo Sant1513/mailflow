@@ -130,7 +130,7 @@ export default function SigningAnalyticsPage() {
     data !== null ? Math.round((data.avgTimeToSignHours / 24) * 10) / 10 : null;
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-8">
+    <div className="space-y-8 p-4 sm:p-6">
       <h1 className="text-2xl font-bold text-foreground">Signing Analytics</h1>
 
       {error && (

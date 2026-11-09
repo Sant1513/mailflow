@@ -43,7 +43,7 @@ export default function ContactProfilePage() {
       <div className="mt-2 flex items-center gap-4">
         <Avatar email={contact.primaryEmail} name={contact.name} size={72} className="shadow-card" />
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold">{contact.name || contact.primaryEmail}</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">{contact.name || contact.primaryEmail}</h1>
           <p className="text-sm text-muted-foreground">{contact.primaryEmail}{contact.phone ? ` · ${contact.phone}` : ''}</p>
         </div>
       </div>

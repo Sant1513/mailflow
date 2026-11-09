@@ -27,7 +27,7 @@ export default async function AdminAllDataPage({ searchParams }: { searchParams:
 
   return (
     <div className="p-6">
-      <h1 className="mb-1 text-xl font-semibold">All Data</h1>
+      <h1 className="mb-1 font-heading text-2xl font-bold tracking-tight">All Data</h1>
       <p className="mb-4 text-sm text-muted-foreground">Every dataset across every workspace, organization-wide.</p>
 
       <div className="overflow-x-auto rounded-lg border bg-card">

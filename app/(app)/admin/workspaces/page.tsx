@@ -23,7 +23,7 @@ export default async function AdminWorkspacesPage({ searchParams }: { searchPara
 
   return (
     <div className="p-6">
-      <h1 className="mb-1 text-xl font-semibold">Workspaces</h1>
+      <h1 className="mb-1 font-heading text-2xl font-bold tracking-tight">Workspaces</h1>
       <p className="mb-4 text-sm text-muted-foreground">
         Every user&apos;s operational workspace. Viewing another user&apos;s data is audited (§9).
       </p>

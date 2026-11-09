@@ -140,7 +140,7 @@ export default function AdminUsersPage() {
     <div className="p-6 space-y-8">
       {/* User management table */}
       <div>
-        <h1 className="mb-1 text-xl font-semibold">Users</h1>
+        <h1 className="mb-1 font-heading text-2xl font-bold tracking-tight">Users</h1>
         <p className="mb-4 text-sm text-muted-foreground">Organization-wide user &amp; role management.</p>
 
         {error ? (

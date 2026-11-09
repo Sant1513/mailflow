@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Avatar } from '@/components/ui/Avatar';
 
 interface Row {
   id: string;
@@ -64,41 +65,46 @@ export function MailboxUsage() {
   }, []);
 
   // A failed refresh keeps the last numbers on screen (with a note); only a first load shows the error.
-  if (error && !data) return <p className="text-sm text-red-600">{error}</p>;
-  if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (!data.mailboxes.length) return <p className="text-sm text-muted-foreground">No mailboxes connected yet.</p>;
+  if (error && !data) return <p className="p-4 text-sm text-red-600">{error}</p>;
+  if (!data) return <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
+  if (!data.mailboxes.length) return <p className="p-4 text-sm text-muted-foreground">No mailboxes connected yet.</p>;
 
   return (
     <div className="overflow-x-auto">
-      {error && <p className="mb-1 text-xs text-muted-foreground">Couldn&apos;t refresh just now; showing the last numbers.</p>}
-      <table className="w-full text-sm">
-        <thead className="text-left text-xs text-muted-foreground">
+      {error && <p className="px-4 pt-3 text-xs text-muted-foreground">Couldn&apos;t refresh just now; showing the last numbers.</p>}
+      <table className="w-full min-w-[640px] text-sm">
+        <thead className="bg-muted/50 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
           <tr>
-            <th className="py-1.5 pr-3 font-medium">Person · mailbox</th>
-            <th className="py-1.5 pr-3 font-medium">Campaign emails</th>
-            <th className="py-1.5 pr-3 font-medium">Recruiter sends</th>
-            <th className="py-1.5 pr-3 font-medium">Against Google&apos;s daily limits</th>
+            <th className="px-4 py-2.5 font-semibold">Person · mailbox</th>
+            <th className="px-4 py-2.5 text-right font-semibold">Campaign emails</th>
+            <th className="px-4 py-2.5 text-right font-semibold">Recruiter sends</th>
+            <th className="w-[38%] px-4 py-2.5 font-semibold">Against Google&apos;s daily limits</th>
           </tr>
         </thead>
         <tbody>
           {data.mailboxes.map((m) => (
-            <tr key={m.id} className="border-t border-border-subtle align-top">
-              <td className="py-2 pr-3">
-                <div className="font-medium">{m.owner?.name ?? m.owner?.email ?? '—'}</div>
-                <div className="text-xs text-muted-foreground">{m.emailAddress}</div>
+            <tr key={m.id} className="border-t border-border-subtle align-top transition-colors hover:bg-elevated/40">
+              <td className="px-4 py-3">
+                <div className="flex items-start gap-2.5">
+                <Avatar email={m.emailAddress} name={m.owner?.name ?? null} size={30} />
+                <div className="min-w-0">
+                <div className="font-medium text-foreground">{m.owner?.name ?? m.owner?.email ?? '—'}</div>
+                <div className="truncate text-xs text-muted-foreground">{m.emailAddress}</div>
                 {m.status !== 'CONNECTED' && <div className="text-xs text-red-600">{m.status.toLowerCase()}</div>}
                 {m.pausedUntil && (
                   <div className="text-xs text-amber-700 dark:text-amber-400">
-                    Paused by Gmail until {new Date(m.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    Paused by Gmail until {new Date(m.pausedUntil).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}
                   </div>
                 )}
+                </div>
+                </div>
               </td>
-              <td className="py-2 pr-3">{m.campaignEmails.toLocaleString()}</td>
-              <td className="py-2 pr-3">
-                {m.recruiterMessages.toLocaleString()} email{m.recruiterMessages === 1 ? '' : 's'}
-                <div className="text-xs text-muted-foreground">{m.recruiterRecipients.toLocaleString()} recruiters</div>
+              <td className="px-4 py-3 text-right tabular-nums">{m.campaignEmails.toLocaleString('en-IN')}</td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {m.recruiterMessages.toLocaleString('en-IN')} email{m.recruiterMessages === 1 ? '' : 's'}
+                <div className="text-xs text-muted-foreground">{m.recruiterRecipients.toLocaleString('en-IN')} recruiters</div>
               </td>
-              <td className="space-y-1.5 py-2 pr-3">
+              <td className="space-y-1.5 px-4 py-3">
                 <Bar label="Emails" value={m.messages} max={data.limits.messages} />
                 <Bar label="Different people" value={m.uniqueRecipients} max={data.limits.uniqueRecipients} />
               </td>
@@ -106,7 +112,7 @@ export function MailboxUsage() {
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-xs text-muted-foreground">
+      <p className="border-t border-border-subtle px-4 py-3 text-xs text-muted-foreground">
         Last 24 hours, updated every minute. Every Bcc recipient counts towards a mailbox&apos;s &ldquo;different people&rdquo; limit. When a mailbox is near a
         limit, sending moves to the next chosen mailbox.
       </p>

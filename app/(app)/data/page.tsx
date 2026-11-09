@@ -57,7 +57,7 @@ export default function DataPage() {
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Data</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Data</h1>
           <p className="text-sm text-muted-foreground">Datasets are collections of records — the spreadsheet layer.</p>
         </div>
         <div className="flex gap-2">

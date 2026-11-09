@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { toast } from 'sonner';
 import Link from 'next/link';
 
@@ -146,21 +147,20 @@ export default function SlaPage() {
   }
 
   return (
-    <div className="p-6">
-      <div className="mb-4 flex items-center gap-3">
-        <Link href="/settings" className="text-sm text-muted-foreground hover:text-foreground">← Settings</Link>
-        <h1 className="text-xl font-semibold">SLA Rules</h1>
-      </div>
-      <p className="mb-6 text-sm text-muted-foreground max-w-lg">
-        Define response time targets. Conversations that breach a rule get a red SLA badge in the inbox.
-      </p>
+    <div className="p-4 sm:p-6">
+      <Link href="/settings" className="mb-3 inline-flex text-xs font-medium text-muted-foreground hover:text-foreground">← Settings</Link>
+      <PageHeader eyebrow="Workspace" title="SLA rules" description="Response-time targets. Conversations that breach a rule get a red SLA badge in the inbox." />
 
       {/* Rule list */}
-      <section className="mb-8 max-w-2xl">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(320px,1fr)]">
+      <section className="min-w-0">
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : rules.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No SLA rules yet. Create one below.</p>
+          <div className="rounded-lg border bg-card px-6 py-12 text-center">
+            <div className="font-heading text-sm font-semibold text-foreground">No SLA rules yet</div>
+            <p className="mt-1 text-xs text-muted-foreground">Create one with the form: for example, answer every new reply within 4 hours.</p>
+          </div>
         ) : (
           <div className="divide-y rounded-lg border bg-card">
             {rules.map((rule) => (
@@ -210,7 +210,7 @@ export default function SlaPage() {
       </section>
 
       {/* Create / Edit form */}
-      <section className="max-w-lg rounded-lg border bg-card p-4">
+      <section className="rounded-lg border bg-card p-4 lg:sticky lg:top-4">
         <h2 className="mb-3 text-sm font-semibold">{editingId ? 'Edit rule' : 'New SLA rule'}</h2>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
@@ -330,6 +330,7 @@ export default function SlaPage() {
           </div>
         </form>
       </section>
+      </div>
     </div>
   );
 }

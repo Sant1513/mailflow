@@ -208,7 +208,7 @@ export default function NewSigningRequestPage() {
         <Link href="/documents" className="text-sm text-muted-foreground hover:text-foreground">
           ← Documents
         </Link>
-        <h1 className="text-xl font-semibold">New Signing Request</h1>
+        <h1 className="font-heading text-2xl font-bold tracking-tight">New Signing Request</h1>
       </div>
 
       {/* Template picker */}

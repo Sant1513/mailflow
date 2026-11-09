@@ -1,5 +1,7 @@
 import { requireSuperAdminPage } from '@/lib/auth/adminGuard';
 import { getOptionalSession } from '@/lib/auth/session';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { SettingsLayout, type SettingsSection } from '@/components/settings/SettingsLayout';
 import { allowedDomain } from '@/lib/auth/options';
 import { RetentionPanel } from '@/components/admin/RetentionPanel';
 import { SlackSettings } from '@/components/admin/SlackSettings';
@@ -9,6 +11,13 @@ import { startOfTodayIst } from '@/lib/ai/limits';
 import { prisma } from '@/lib/db/client';
 
 export const dynamic = 'force-dynamic';
+
+const SECTIONS: SettingsSection[] = [
+  { id: 'retention', label: 'Data retention', icon: 'retention', group: 'Organisation' },
+  { id: 'automation', label: 'Reports & triage', icon: 'automation', group: 'Organisation' },
+  { id: 'slack', label: 'Slack', icon: 'slack', group: 'Organisation' },
+  { id: 'runtime', label: 'Runtime', icon: 'runtime', group: 'Deployment' },
+];
 
 export default async function AdminSystemSettingsPage() {
   await requireSuperAdminPage();
@@ -35,12 +44,11 @@ export default async function AdminSystemSettingsPage() {
   ];
 
   return (
-    <div className="p-6">
-      <div className="eyebrow mb-2">Super Admin</div>
-      <h1 className="font-heading text-2xl font-bold tracking-tight">System Settings</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Retention policy and the deployment&apos;s runtime configuration.</p>
+    <div className="p-4 sm:p-6">
+      <PageHeader eyebrow="Super Admin" title="System Settings" description="Reports, AI triage, Slack, data retention and the deployment's runtime configuration, for the whole organisation." />
+      <SettingsLayout sections={SECTIONS}>
 
-      <section className="panel mt-6 max-w-3xl p-5">
+      <section id="retention" className="panel scroll-mt-6 p-5">
         <div className="mb-4">
           <h2 className="font-heading text-base font-semibold">Data retention</h2>
           <p className="text-xs text-muted-foreground">§130 — per-organization policy, audited on every change.</p>
@@ -48,7 +56,7 @@ export default async function AdminSystemSettingsPage() {
         <RetentionPanel readOnly={readOnly} />
       </section>
 
-      <section className="panel mt-4 max-w-3xl p-5">
+      <section id="automation" className="panel scroll-mt-6 p-5">
         <div className="mb-4">
           <h2 className="font-heading text-base font-semibold">Automation</h2>
           <p className="text-xs text-muted-foreground">Daily report (8 PM IST, Mon–Fri), weekly report and AI inbox triage for the whole organisation.</p>
@@ -56,7 +64,7 @@ export default async function AdminSystemSettingsPage() {
         <AutomationSettings readOnly={readOnly} />
       </section>
 
-      <section className="panel mt-4 max-w-3xl p-5">
+      <section id="slack" className="panel scroll-mt-6 p-5">
         <div className="mb-4">
           <h2 className="font-heading text-base font-semibold">Slack notifications</h2>
           <p className="text-xs text-muted-foreground">Assignments, resolutions and follow-ups post to one channel and continue in threads. People are mentioned by the Slack ID on their profile.</p>
@@ -64,7 +72,7 @@ export default async function AdminSystemSettingsPage() {
         <SlackSettings readOnly={readOnly} />
       </section>
 
-      <section className="panel mt-4 max-w-3xl p-5">
+      <section id="runtime" className="panel scroll-mt-6 p-5">
         <h2 className="font-heading text-base font-semibold">Runtime configuration</h2>
         <p className="mb-3 text-xs text-muted-foreground">
           Read from the environment at deploy time. Change these in the hosting provider, not here — so a change is
@@ -82,6 +90,7 @@ export default async function AdminSystemSettingsPage() {
           ))}
         </dl>
       </section>
+      </SettingsLayout>
     </div>
   );
 }

@@ -63,7 +63,7 @@ export default function DocumentTemplatesPage() {
               ← Documents
             </Link>
           </div>
-          <h1 className="text-xl font-semibold">Document Templates</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Document Templates</h1>
         </div>
         <Link href="/documents/templates/new" className="btn-primary">
           New Template

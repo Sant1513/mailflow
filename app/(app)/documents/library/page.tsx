@@ -90,7 +90,7 @@ export default function DocumentLibraryPage() {
     <div className="p-6">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">PDF Document Library</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">PDF Document Library</h1>
           <p className="text-sm text-muted-foreground">
             Personalised PDFs attached to campaign emails. Each recipient gets their own filled-in copy.
           </p>

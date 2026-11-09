@@ -68,7 +68,7 @@ export default function RecruiterSendList() {
     <div className="max-w-6xl space-y-6 p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Recruiter Bulk Send</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Recruiter Bulk Send</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             One email to many recruiters — in BCC groups of up to 250, or as individual copies — from the mailboxes you choose. Replies come to your inbox; opens are tracked for individual copies;
             links are left as you write them.
@@ -133,8 +133,8 @@ export default function RecruiterSendList() {
         </>
       )}
 
-      <section className="rounded-lg border bg-card p-4">
-        <h2 className="mb-3 text-sm font-semibold">Mailbox usage today</h2>
+      <section className="panel overflow-hidden p-0">
+        <h2 className="px-4 pb-2 pt-4 font-heading text-sm font-semibold">Mailbox usage today</h2>
         <MailboxUsage />
       </section>
     </div>

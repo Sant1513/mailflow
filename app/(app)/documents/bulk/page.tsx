@@ -39,7 +39,7 @@ export default function BulkSendingPage() {
     <div className="p-6">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Bulk Sending</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Bulk Sending</h1>
           <p className="text-sm text-muted-foreground">
             Send signing requests to multiple recipients at once.
           </p>

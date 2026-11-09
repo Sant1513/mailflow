@@ -180,7 +180,7 @@ export default function AutomationBuilderPage() {
 
       <div className="mb-6 mt-2 flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{automation.name}</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">{automation.name}</h1>
           <p className="text-sm text-muted-foreground">
             v{version?.version ?? 1} · {automation.enabled ? 'Running' : 'Turned off'}
           </p>

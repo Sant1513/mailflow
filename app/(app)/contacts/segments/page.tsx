@@ -202,7 +202,7 @@ export default function SegmentsPage() {
             <span>/</span>
             <span>Segments</span>
           </div>
-          <h1 className="text-xl font-semibold">Contact Segments</h1>
+          <h1 className="font-heading text-2xl font-bold tracking-tight">Contact Segments</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
             Saved filter combos — use them as campaign dataset sources.
           </p>

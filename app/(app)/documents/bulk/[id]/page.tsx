@@ -143,7 +143,7 @@ export default function BulkSendDetailPage() {
         </Link>
         <div className="mt-3 flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold">{batch.title}</h1>
+            <h1 className="font-heading text-2xl font-bold tracking-tight">{batch.title}</h1>
             <p className="text-sm text-muted-foreground">
               {batch.template ? `Template: ${batch.template.title}` : 'No template'} &middot; Created{' '}
               {new Date(batch.createdAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
