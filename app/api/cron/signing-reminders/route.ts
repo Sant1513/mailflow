@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
+import { emailBrandHeader } from '@/lib/email/brand';
 import { GmailProvider } from '@/lib/email/gmail';
 import { appUrl } from '@/lib/campaigns/approvalEmails';
 import { refreshWaitingDocuments, syncSigningStatusToRecord } from '@/lib/signing/writeback';
@@ -103,9 +104,7 @@ async function sendReminders(now: Date): Promise<number> {
 <html>
 <head><meta charset="utf-8" /></head>
 <body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;padding:24px;">
-  <div style="background:#1a56db;padding:20px 24px;border-radius:8px 8px 0 0;">
-    <h1 style="color:#fff;margin:0;font-size:22px;">MailFlow · Masai School</h1>
-  </div>
+  ${emailBrandHeader()}
   <div style="border:1px solid #e5e7eb;border-top:none;padding:32px 24px;border-radius:0 0 8px 8px;">
     <p style="font-size:16px;margin-top:0;">Hi ${request.recipientName},</p>
     <p style="font-size:15px;">This is a reminder that a document is waiting for your signature.</p>
@@ -116,7 +115,7 @@ async function sendReminders(now: Date): Promise<number> {
     ${urgencyNote}
     <div style="text-align:center;margin:28px 0;">
       <a href="${signingUrl}"
-         style="background:#1a56db;color:#fff;text-decoration:none;padding:14px 32px;border-radius:6px;font-size:16px;font-weight:600;display:inline-block;">
+         style="background:#ED0331;color:#fff;text-decoration:none;padding:14px 32px;border-radius:6px;font-size:16px;font-weight:600;display:inline-block;">
         Review &amp; Sign Document
       </a>
     </div>

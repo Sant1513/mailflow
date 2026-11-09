@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { MasaiLogo, MasaiMark } from '@/components/brand/MasaiLogo';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
@@ -148,11 +149,12 @@ export function AppNav({
 
   const logo = (rail: boolean) => (
     <Link href={home} className="flex min-w-0 items-center gap-2.5" title="MailFlow home">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent-from to-accent-to font-heading text-base font-bold text-white shadow-card">m</span>
-      {!rail && (
+      {rail ? (
+        <MasaiMark size={36} />
+      ) : (
         <span className="min-w-0">
-          <span className="block truncate font-heading text-[15px] font-bold leading-tight text-foreground">MailFlow</span>
-          <span className="block truncate text-[11px] text-faint">{PRODUCTS[product].name} · masai.</span>
+          <MasaiLogo height={22} />
+          <span className="mt-1 block truncate text-[11px] font-medium text-faint">MailFlow · {PRODUCTS[product].name}</span>
         </span>
       )}
     </Link>

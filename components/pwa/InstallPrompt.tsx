@@ -47,7 +47,7 @@ export function InstallPrompt() {
   return (
     <div className="fixed bottom-4 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-lg">
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary">
-        <img src="/icons/icon.svg" alt="" className="h-6 w-6" />
+        <img src="/icons/icon.svg" alt="" className="h-6 w-6 rounded-full" />
       </span>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-semibold">Add MailFlow to Home Screen</div>

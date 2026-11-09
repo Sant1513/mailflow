@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { MasaiLogo } from '@/components/brand/MasaiLogo';
 import { useParams, useRouter } from 'next/navigation';
 import { renderSigningContent } from '@/lib/signing/fields';
 import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
@@ -411,8 +412,8 @@ export default function SigningPage() {
       <div className="mx-auto max-w-3xl">
         {/* Header */}
         <div className="mb-6 text-center">
-          <div className="mb-1 text-2xl font-bold tracking-tight text-gray-900">
-            masai<span className="text-red-500">.</span>MailFlow
+          <div className="mb-2 flex items-center justify-center gap-2">
+            <MasaiLogo height={28} fixed="light" />
           </div>
           <p className="text-sm text-gray-500">Document Signing</p>
         </div>

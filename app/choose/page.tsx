@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
+import { MasaiLogo } from '@/components/brand/MasaiLogo';
 import { getOptionalSession } from '@/lib/auth/session';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { DEFAULT_PRODUCT_COOKIE, isProduct } from '@/lib/products';
@@ -20,9 +21,7 @@ export default async function ChooseProductPage() {
       <div aria-hidden className="pointer-events-none absolute -left-40 -top-40 h-[32rem] w-[32rem] rounded-full bg-primary/20 blur-[120px]" />
 
       <header className="relative z-10 flex items-center justify-between px-6 py-5 sm:px-10">
-        <div className="font-heading text-2xl font-bold leading-none tracking-tight text-foreground">
-          masai<span className="text-primary">.</span>
-        </div>
+        <MasaiLogo height={30} />
         <ThemeToggle compact />
       </header>
 

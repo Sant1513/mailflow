@@ -1,5 +1,6 @@
 import { LoginButton } from './LoginButton';
 import { allowedDomain } from '@/lib/auth/options';
+import { MasaiLogo } from '@/components/brand/MasaiLogo';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 
 const PILLARS = [
@@ -22,9 +23,7 @@ export default function LoginPage() {
       />
 
       <header className="relative z-10 flex items-center justify-between px-6 py-5 sm:px-10">
-        <div className="font-heading text-2xl font-bold leading-none tracking-tight text-foreground">
-          masai<span className="text-primary">.</span>
-        </div>
+        <MasaiLogo height={30} />
         <div className="flex items-center gap-3">
           <div className="eyebrow hidden sm:block">Internal · MailFlow</div>
           <ThemeToggle compact />

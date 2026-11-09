@@ -1,4 +1,5 @@
 import { appBaseUrl } from '@/lib/app-url';
+import { masaiLogoUrl } from '@/lib/email/brand';
 import { escapeHtml } from '@/lib/templates/variables';
 import type { LedgerSource } from '@/lib/analytics/sendLedger';
 import { digestTotal, type DigestItem, type NeedsAttention } from '@/lib/digest/needsAttention';
@@ -320,6 +321,7 @@ ${attention(d)}`;
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:760px"><tr><td>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="mf-rise" style="background:${INK};background-image:linear-gradient(135deg,#18181b 0%,#18181b 55%,#7f0119 100%);border-radius:18px;border-collapse:separate;margin:0 0 14px"><tr>
 <td style="padding:22px 24px">
+<img src="${masaiLogoUrl(true)}" alt="Masai" width="90" height="24" style="display:block;height:24px;width:auto;border:0;margin:0 0 12px" />
 <div style="font:600 11px/1.2 ${FONT};letter-spacing:1.6px;text-transform:uppercase;color:#fda4af">MailFlow · ${weekly ? 'Weekly report' : 'Daily report · 8 PM'}</div>
 <div style="font:700 24px/1.25 ${FONT};color:#ffffff;margin-top:6px">${num(t.emails)} emails · ${num(t.people)} people · ${num(a.inboxTotal.received)} replies</div>
 <div style="font:400 13px/1.4 ${FONT};color:#d4d4d8;margin-top:4px">${e(day)} · ${e(span)}${items ? ` · ${items} thing${items === 1 ? '' : 's'} need attention today` : ' · nothing needs attention'}</div>

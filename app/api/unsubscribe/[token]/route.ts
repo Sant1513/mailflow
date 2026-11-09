@@ -54,7 +54,7 @@ function htmlPage(title: string, body: string): Response {
 </head>
 <body>
   <div class="card">
-    <div class="logo">MailFlow · Masai School</div>
+    <div class="logo"><img src="/brand/masai-logo.png" alt="Masai" height="26" style="height:26px;width:auto;display:block;margin:0 auto 4px"></div>
     ${body}
   </div>
 </body>

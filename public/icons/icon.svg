@@ -1,9 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#4f46e5"/>
-  <!-- Envelope body -->
-  <rect x="80" y="160" width="352" height="240" rx="16" fill="none" stroke="white" stroke-width="24"/>
-  <!-- Envelope flap (V) -->
-  <polyline points="80,176 256,296 432,176" fill="none" stroke="white" stroke-width="24" stroke-linejoin="round"/>
-  <!-- Lightning bolt -->
-  <polygon points="272,200 240,272 264,272 240,328 296,248 268,248 296,200" fill="white" opacity="0.9"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Masai round "m": white disc, black m (a hairline ring keeps it visible on light tabs) -->
+  <circle cx="32" cy="32" r="31" fill="#ffffff" stroke="#d4d4d8" stroke-width="1.5"/>
+  <path d="M17.5 44 V27.5 M17.5 33.5 C17.5 26.5 31 26.5 31 33.5 V44 M31 33.5 C31 26.5 44.5 26.5 44.5 33.5 V44" fill="none" stroke="#111111" stroke-width="6.2" stroke-linejoin="round" stroke-linecap="butt"/>
 </svg>
