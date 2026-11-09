@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withErrorHandling } from '@/lib/api/respond';
-import { loadBlast, requireBlastAdmin } from '@/lib/recruiterSend/access';
+import { loadBlast, requireBlastReader } from '@/lib/recruiterSend/access';
 import { personalisedPreview, planBlast } from '@/lib/recruiterSend/plan';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 
@@ -8,7 +8,7 @@ import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 export const dynamic = 'force-dynamic';
 
 export const POST = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
-  const session = await requireBlastAdmin();
+  const session = await requireBlastReader(); // read-only: nothing is sent or saved
   const blast = await loadBlast(session, params.id);
   if (!blast) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const [plan, preview] = await Promise.all([planBlast(blast), personalisedPreview(blast)]);

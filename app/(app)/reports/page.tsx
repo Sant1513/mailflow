@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { istYmd } from '@/lib/dates/istRange';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -199,7 +200,7 @@ function WeeklyBarChart({ data }: { data: WeekPoint[] }) {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function toDateInput(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return istYmd(d);
 }
 
 function preset(days: number): { from: string; to: string } {

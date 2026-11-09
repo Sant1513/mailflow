@@ -67,7 +67,7 @@ const STATUS_BADGE: Record<DocumentStatus, string> = {
 const SIGNER_DOT: Record<SigningStatus, string> = {
   SIGNED: 'bg-emerald-500',
   VIEWED: 'bg-amber-400',
-  SENT: 'bg-blue-500',
+  SENT: 'bg-primary',
   DRAFT: 'bg-gray-300',
   EXPIRED: 'bg-gray-400',
   VOIDED: 'bg-red-400',
@@ -192,36 +192,33 @@ export default function ESignDocumentsPage() {
     setSelectedIds((prev) => (prev.length === requests.length ? [] : requests.map((r) => r.id)));
   }
 
-  async function bulkVoid() {
-    if (!confirm(`Void ${selectedIds.length} selected request${selectedIds.length > 1 ? 's' : ''}?`)) return;
-    await Promise.allSettled(
+  /** Runs one action on every selected request and reports how many really worked. */
+  async function bulkAction(action: 'void' | 'resend') {
+    const n = selectedIds.length;
+    const verb = action === 'void' ? 'Void' : 'Resend';
+    if (!confirm(`${verb} ${n} selected request${n > 1 ? 's' : ''}?`)) return;
+    const results = await Promise.all(
       selectedIds.map((id) =>
         fetch(`/api/e-sign/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'void' }),
+          body: JSON.stringify({ action }),
         })
-      )
+          .then(async (res) => (res.ok ? null : ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`))
+          .catch(() => 'network error'),
+      ),
     );
-    toast.success(`Voided ${selectedIds.length} request${selectedIds.length > 1 ? 's' : ''}`);
+    const failed = results.filter((r) => r !== null);
+    const done = n - failed.length;
+    const past = action === 'void' ? 'Voided' : 'Resent';
+    if (failed.length === 0) toast.success(`${past} ${done} request${done !== 1 ? 's' : ''}`);
+    else toast.error(`${past} ${done} of ${n}; ${failed.length} failed (${failed[0]})`);
     setSelectedIds([]);
     load(page);
   }
 
-  async function bulkResend() {
-    if (!confirm(`Resend ${selectedIds.length} selected request${selectedIds.length > 1 ? 's' : ''}?`)) return;
-    await Promise.allSettled(
-      selectedIds.map((id) =>
-        fetch(`/api/e-sign/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'resend' }),
-        })
-      )
-    );
-    toast.success(`Resent ${selectedIds.length} request${selectedIds.length > 1 ? 's' : ''}`);
-    setSelectedIds([]);
-  }
+  const bulkVoid = () => bulkAction('void');
+  const bulkResend = () => bulkAction('resend');
 
   async function viewPdf(id: string, format: 'html' | 'pdf' = 'html') {
     // Open synchronously so pop-up blockers allow the tab, then point it at the document.
@@ -390,8 +387,8 @@ export default function ESignDocumentsPage() {
 
       {/* Bulk action toolbar */}
       {selectedIds.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-4 py-2">
-          <span className="text-sm font-medium text-blue-900">
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2">
+          <span className="text-sm font-medium text-foreground">
             {selectedIds.length} selected
           </span>
           <button onClick={bulkVoid} className="btn-secondary !px-3 !py-1 text-xs">

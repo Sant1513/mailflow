@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { istDayEndExclusive, istDayStart } from '@/lib/dates/istRange';
 import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
@@ -33,8 +34,9 @@ export const GET = withErrorHandling(async (req) => {
   const now = new Date();
   const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  const from = url.searchParams.get('from') ? new Date(url.searchParams.get('from')!) : defaultFrom;
-  const to = url.searchParams.get('to') ? new Date(url.searchParams.get('to')!) : now;
+  // IST days: the To day counts in full (lib/dates/istRange.ts).
+  const from = url.searchParams.get('from') ? istDayStart(url.searchParams.get('from')!) : defaultFrom;
+  const to = url.searchParams.get('to') ? new Date(istDayEndExclusive(url.searchParams.get('to')!).getTime() - 1) : now;
 
   const [signingRequests, campaignCount, emailJobs, trackingEvents, conversations] = await Promise.all([
     prisma.signingRequest.findMany({

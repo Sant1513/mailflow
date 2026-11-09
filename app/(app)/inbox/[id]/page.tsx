@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { LoadError, loadErrorMessage } from '@/components/ui/LoadError';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
@@ -33,12 +34,16 @@ export default function ConversationPage() {
   const [mergeBusy, setMergeBusy] = useState(false);
   const mergeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async () => {
-    const res = await fetch(`/api/conversations/${params.id}`);
-    if (!res.ok) {
-      toast.error('Failed to load conversation');
+    const res = await fetch(`/api/conversations/${params.id}`).catch(() => null);
+    if (!res?.ok) {
+      const message = await loadErrorMessage(res, 'conversation');
+      setLoadError(message);
+      toast.error(message);
       return;
     }
+    setLoadError(null);
     const json = await res.json();
     setData(json);
     // Opening it marks it read (§52).
@@ -289,7 +294,7 @@ export default function ConversationPage() {
     win.onafterprint = () => win.close();
   }
 
-  if (!data) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!data) return loadError ? <LoadError message={loadError} onRetry={load} backHref="/inbox" backLabel="Back to the inbox" /> : <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   const c = data.conversation;
 
   // §80: the most recent inbound message's AI intent, if ingest or the user classified it.

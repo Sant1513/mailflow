@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { MailboxUsage } from '@/components/admin/MailboxUsage';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
+import { ListPager } from '@/components/ui/ListPager';
 
 interface Row {
   id: string;
@@ -32,16 +33,20 @@ export default function RecruiterSendList() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
-    fetch('/api/recruiter-blasts', { cache: 'no-store' })
+    fetch(`/api/recruiter-blasts?page=${page}&pageSize=${pageSize}`, { cache: 'no-store' })
       .then(async (r) => {
-        const j = await r.json();
+        const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.error ?? 'Could not load recruiter sends.');
         setRows(j.blasts);
+        setTotal(j.total ?? j.blasts?.length ?? 0);
       })
       .catch((e) => setError(String(e.message ?? e)));
-  }, []);
+  }, [page, pageSize]);
 
   async function create() {
     setBusy(true);
@@ -78,6 +83,7 @@ export default function RecruiterSendList() {
       {!rows && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
       {rows && rows.length === 0 && <p className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">No recruiter sends yet.</p>}
       {rows && rows.length > 0 && (
+        <>
         <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-muted-foreground">
@@ -123,6 +129,8 @@ export default function RecruiterSendList() {
             </tbody>
           </table>
         </div>
+          <ListPager page={page} pageSize={pageSize} total={total} onPage={setPage} onPageSize={(n) => { setPageSize(n); setPage(1); }} noun="sends" sizes={[25, 50, 100]} />
+        </>
       )}
 
       <section className="rounded-lg border bg-card p-4">

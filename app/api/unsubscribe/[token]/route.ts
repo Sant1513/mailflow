@@ -107,6 +107,9 @@ export async function POST(_req: Request, { params }: { params: { token: string 
       email: job.toEmail,
       reason: 'UNSUBSCRIBED',
       source: 'UNSUBSCRIBE',
+      // Where it came from, for the suppression list.
+      detail: 'Clicked Unsubscribe in a campaign email',
+      campaignId: job.campaignId,
     },
     update: {},
   });

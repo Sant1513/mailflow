@@ -32,8 +32,12 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
     where: { token: params.token },
   });
 
-  if (!request || request.status === 'VOIDED') {
+  if (!request) {
     return NextResponse.json({ error: 'Not found.' }, { status: 404 });
+  }
+  // Cancelled by the sender: say so, rather than "not found".
+  if (request.status === 'VOIDED') {
+    return NextResponse.json({ error: 'voided' }, { status: 410 });
   }
 
   // Block access if this signer's turn hasn't come yet (sequential multi-signer)

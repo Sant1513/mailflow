@@ -128,7 +128,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
       <Stagger className="grid gap-4 lg:grid-cols-12">
         <StaggerItem className="lg:col-span-4">
           <HeroCard
-            label={`Emails sent · last ${days} days`}
+            label={`Campaign & Quick Send emails · last ${days} days`}
             value={n(t.emailsSent)}
             pct={changePct(t.emailsSent, prev.emailsSent)}
             rows={[
@@ -143,7 +143,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
         </StaggerItem>
         <StaggerItem className="grid grid-cols-2 gap-4 lg:col-span-4" lift={false}>
           <StatCard icon="reply" label="Replies received" value={n(t.replies)} pct={changePct(t.replies, prev.replies)} note="vs the period before" href="/inbox" />
-          <StatCard icon="percent" label="Reply rate" value={replyRate !== null ? `${replyRate}%` : '—'} pct={replyRate !== null && prevReplyRate !== null ? replyRate - prevReplyRate : undefined} note="replies per email sent" />
+          <StatCard icon="percent" label="Reply rate" value={replyRate !== null ? `${replyRate}%` : '—'} pct={replyRate !== null && prevReplyRate !== null ? replyRate - prevReplyRate : undefined} note="replies per campaign / Quick Send email (Recruiter Bulk Send is under Recruiter Bulk Send and Organization)" />
           <StatCard icon="eye" label="Unique opens" value={n(tracking.uniqueOpens)} note={tracking.openRate !== null ? `${tracking.openRate}% open rate` : 'no tracked sends yet'} />
           <StatCard icon="click" label="Unique clicks" value={n(tracking.uniqueClicks)} note={tracking.clickRate !== null ? `${tracking.clickRate}% click rate` : 'no tracked links yet'} />
         </StaggerItem>
@@ -174,7 +174,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
         <div className="panel p-5 lg:col-span-8">
           <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
             <div>
-              <div className="font-heading text-sm font-semibold text-foreground">Emails sent</div>
+              <div className="font-heading text-sm font-semibold text-foreground">Campaign & Quick Send emails</div>
               <div className="text-xs text-faint">
                 {n(t.emailsSent)} in the last {days} days{series.emailsByDay.length > 14 ? ', by week' : ', by day'}
                 {series.failurePct === null ? '' : ` · ${series.failurePct}% failure rate`}

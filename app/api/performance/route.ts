@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { istDayEndExclusive, istDayStart } from '@/lib/dates/istRange';
 import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
@@ -39,8 +40,9 @@ export const GET = withErrorHandling(async (req) => {
   const statusFilter = url.searchParams.get('status');   // '' | OPEN | RESOLVED | etc.
   const tagFilter = url.searchParams.get('tag');
 
-  const from = fromParam ? new Date(fromParam) : new Date(Date.now() - 30 * 86_400_000);
-  const to = toParam ? new Date(toParam) : new Date();
+  // IST days: the To day counts in full (lib/dates/istRange.ts).
+  const from = fromParam ? istDayStart(fromParam) : new Date(Date.now() - 30 * 86_400_000);
+  const to = toParam ? new Date(istDayEndExclusive(toParam).getTime() - 1) : new Date();
 
   const where: any = {
     workspaceId,

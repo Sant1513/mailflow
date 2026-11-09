@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { LoadError, loadErrorMessage } from '@/components/ui/LoadError';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
@@ -69,12 +70,16 @@ export default function CampaignDetailPage() {
     [openPreview, params.id]
   );
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async () => {
-    const res = await fetch(`/api/campaigns/${params.id}`);
-    if (!res.ok) {
-      toast.error('Failed to load campaign');
+    const res = await fetch(`/api/campaigns/${params.id}`).catch(() => null);
+    if (!res?.ok) {
+      const message = await loadErrorMessage(res, 'campaign');
+      setLoadError(message);
+      toast.error(message);
       return;
     }
+    setLoadError(null);
     setData(await res.json());
   }, [params.id]);
 
@@ -361,7 +366,7 @@ export default function CampaignDetailPage() {
     }
   }
 
-  if (!data) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!data) return loadError ? <LoadError message={loadError} onRetry={load} backHref="/campaigns" backLabel="Back to campaigns" /> : <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
 
   const canApprove = (data.viewerRole === 'ADMIN' || data.viewerRole === 'SUPER_ADMIN');
   const isAdmin = canApprove;

@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { ListPager } from '@/components/ui/ListPager';
+import { LoadError, loadErrorMessage } from '@/components/ui/LoadError';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -21,6 +23,8 @@ export default function AutomationBuilderPage() {
   const [columns, setColumns] = useState<string[]>([]);
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
+  const [runPage, setRunPage] = useState(1);
+  const [runTotal, setRunTotal] = useState(0);
   const [impact, setImpact] = useState<any>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -32,12 +36,16 @@ export default function AutomationBuilderPage() {
   const [frequencyMode, setFrequencyMode] = useState('ONCE');
   const [cooldownDays, setCooldownDays] = useState(0);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async () => {
-    const res = await fetch(`/api/automations/${params.id}`);
-    if (!res.ok) {
-      toast.error('Failed to load automation');
+    const res = await fetch(`/api/automations/${params.id}`).catch(() => null);
+    if (!res?.ok) {
+      const message = await loadErrorMessage(res, 'automation');
+      setLoadError(message);
+      toast.error(message);
       return;
     }
+    setLoadError(null);
     const json = await res.json();
     setAutomation(json.automation);
 
@@ -64,12 +72,13 @@ export default function AutomationBuilderPage() {
   }, [load]);
 
   const loadRuns = useCallback(async () => {
-    const res = await fetch(`/api/automations/${params.id}/runs`);
-    if (res.ok) {
+    const res = await fetch(`/api/automations/${params.id}/runs?page=${runPage}&pageSize=50`).catch(() => null);
+    if (res?.ok) {
       const json = await res.json();
       setRuns(json.runs ?? []);
+      setRunTotal(json.total ?? json.runs?.length ?? 0);
     }
-  }, [params.id]);
+  }, [params.id, runPage]);
 
   useEffect(() => {
     loadRuns();
@@ -159,7 +168,7 @@ export default function AutomationBuilderPage() {
     load();
   }
 
-  if (!automation) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!automation) return loadError ? <LoadError message={loadError} onRetry={load} backHref="/automations" backLabel="Back to automations" /> : <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
 
   const version = automation.versions[0];
 
@@ -314,7 +323,7 @@ export default function AutomationBuilderPage() {
               <tbody>
                 {runs.map((run) => (
                   <tr key={run.id} className="border-t">
-                    <td className="px-2 py-1 text-muted-foreground">{new Date(run.createdAt).toLocaleString()}</td>
+                    <td className="px-2 py-1 text-muted-foreground">{new Date(run.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })}</td>
                     <td className="px-2 py-1">{run.triggerType}</td>
                     <td className={`px-2 py-1 ${run.result === 'TRIGGERED' ? 'text-success' : run.result === 'ERROR' ? 'text-primary' : 'text-muted-foreground'}`}>
                       {run.result}
@@ -327,6 +336,7 @@ export default function AutomationBuilderPage() {
                 ))}
               </tbody>
             </table>
+            <ListPager page={runPage} pageSize={50} total={runTotal} onPage={setRunPage} noun="runs" />
           </div>
         )}
       </div>

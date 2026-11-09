@@ -639,9 +639,16 @@ export default function NewBulkSendPage() {
       return;
     }
 
-    toast.success(
-      `Bulk send created — ${validRecipients.length} row${validRecipients.length !== 1 ? 's' : ''} queued for signing`,
-    );
+    const done = (await res.json().catch(() => ({}))) as { emailsToSend?: number; emailsSent?: number; emailError?: string | null };
+    const notSent = (done.emailsToSend ?? 0) - (done.emailsSent ?? 0);
+    if (notSent > 0) {
+      // Created, but some invitations did not go out: say how many and why (Resend is on the batch page).
+      toast.warning(`Bulk send created, but ${notSent} of ${done.emailsToSend} invitation email${done.emailsToSend === 1 ? '' : 's'} could NOT be sent: ${done.emailError ?? 'unknown error'}. Resend them from the batch once that's fixed.`, { duration: 15000 });
+    } else {
+      toast.success(
+        `Bulk send created — ${validRecipients.length} row${validRecipients.length !== 1 ? 's' : ''} queued for signing`,
+      );
+    }
     try {
       sessionStorage.removeItem('mailflow.signSource');
     } catch {

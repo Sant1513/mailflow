@@ -50,8 +50,9 @@ export function MailboxUsage() {
     const load = () =>
       fetch('/api/admin/mailbox-usage', { cache: 'no-store' })
         .then(async (r) => {
-          const j = await r.json();
+          const j = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(j.error ?? 'Could not load mailbox usage.');
+          setError(null);
           setData(j);
         })
         .catch((e) => setError(String(e.message ?? e)));
@@ -62,12 +63,14 @@ export function MailboxUsage() {
     return () => clearInterval(t);
   }, []);
 
-  if (error) return <p className="text-sm text-red-600">{error}</p>;
+  // A failed refresh keeps the last numbers on screen (with a note); only a first load shows the error.
+  if (error && !data) return <p className="text-sm text-red-600">{error}</p>;
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (!data.mailboxes.length) return <p className="text-sm text-muted-foreground">No mailboxes connected yet.</p>;
 
   return (
     <div className="overflow-x-auto">
+      {error && <p className="mb-1 text-xs text-muted-foreground">Couldn&apos;t refresh just now; showing the last numbers.</p>}
       <table className="w-full text-sm">
         <thead className="text-left text-xs text-muted-foreground">
           <tr>

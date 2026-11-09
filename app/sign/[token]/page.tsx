@@ -136,7 +136,8 @@ export default function SigningPage() {
           return;
         }
         if (res.status === 410) {
-          setLoadError('This signing link has expired.');
+          const j = (await res.json().catch(() => ({}))) as { error?: string };
+          setLoadError(j.error === 'voided' ? 'This signing request was cancelled by the sender. Please contact them if you still need to sign.' : 'This signing link has expired.');
           return;
         }
         if (res.status === 423) {

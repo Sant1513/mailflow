@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
-import { loadBlast, requireBlastAdmin, sendableMailboxes } from '@/lib/recruiterSend/access';
+import { loadBlast, requireBlastAdmin, sendableMailboxes, requireBlastReader } from '@/lib/recruiterSend/access';
 import { buildBody, MAX_GROUP_SIZE, MIN_GAP, previewHtml, type BlastMode } from '@/lib/recruiterSend/core';
 import { personalisedPreview } from '@/lib/recruiterSend/plan';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
@@ -18,7 +18,7 @@ import { nudgeStuckSends } from '@/lib/recruiterSend/worker';
 export const dynamic = 'force-dynamic';
 
 export const GET = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
-  const session = await requireBlastAdmin();
+  const session = await requireBlastReader();
   const blast = await loadBlast(session, params.id);
   if (!blast) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const page = Math.max(1, Number(new URL(req.url).searchParams.get('page') ?? '1'));

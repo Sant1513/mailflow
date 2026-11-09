@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { istRange } from '@/lib/dates/istRange';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
@@ -43,7 +44,7 @@ export const GET = withErrorHandling(async (req) => {
       { workspaceId },
       { OR: [{ groupId: null }, { signerOrder: 0 }] },
       ...(from || to
-        ? [{ createdAt: { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lte: new Date(to) } : {}) } }]
+        ? [{ createdAt: istRange(from, to) }]
         : []),
       ...(text
         ? [{
@@ -209,11 +210,13 @@ export const POST = withErrorHandling(async (req) => {
     },
   });
 
-  // Send signing invitation email
+  // Send signing invitation email (the request stands either way: its link works and it can be resent).
   const account = await prisma.emailProviderAccount.findFirst({
-    where: { workspaceId },
+    where: { workspaceId, status: 'CONNECTED' },
     orderBy: { createdAt: 'asc' },
   });
+  let emailSent = false;
+  let emailError: string | null = account ? null : 'No connected Gmail mailbox in this workspace (Settings → Gmail).';
 
   if (account) {
     const signingUrl = `${process.env.NEXTAUTH_URL}/sign/${request.token}`;
@@ -286,15 +289,18 @@ export const POST = withErrorHandling(async (req) => {
         html,
         attachments: extraAttachments.length > 0 ? extraAttachments : undefined,
       });
+      emailSent = true;
     } catch (err) {
       console.error('[e-sign] failed to send invitation email', err);
+      emailError = err instanceof Error ? err.message.slice(0, 300) : 'Gmail did not accept the email.';
     }
   }
 
   await audit(session, 'SIGNING_REQUEST_SENT', {
     targetType: 'SigningRequest',
     targetId: request.id,
+    metadata: { emailSent, emailError },
   });
 
-  return NextResponse.json({ request }, { status: 201 });
+  return NextResponse.json({ request, emailSent, emailError }, { status: 201 });
 });

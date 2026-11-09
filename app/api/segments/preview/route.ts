@@ -14,12 +14,12 @@ export const POST = withErrorHandling(async (req) => {
   const body = await req.json();
   const filters = (body.filters ?? {}) as Record<string, unknown>;
 
-  const contacts = await prisma.contact.findMany({
-    where: { workspaceId: session.workspaceId!, ...buildContactWhere(filters) },
-    select: { id: true, name: true, primaryEmail: true },
-    orderBy: { updatedAt: 'desc' },
-    take: 500,
-  });
+  const where = { workspaceId: session.workspaceId!, ...buildContactWhere(filters) };
+  // A sample to show, and the real number that match (not capped at the sample size).
+  const [contacts, total] = await Promise.all([
+    prisma.contact.findMany({ where, select: { id: true, name: true, primaryEmail: true }, orderBy: { updatedAt: 'desc' }, take: 200 }),
+    prisma.contact.count({ where }),
+  ]);
 
-  return NextResponse.json({ contacts, total: contacts.length });
+  return NextResponse.json({ contacts, total });
 });

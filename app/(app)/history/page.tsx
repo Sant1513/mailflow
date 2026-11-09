@@ -97,7 +97,7 @@ export default function HistoryPage() {
         <div>
           <div className="eyebrow mb-2">Records are immutable</div>
           <h1 className="font-heading text-2xl font-bold tracking-tight">History</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Every email this workspace sent or received, exactly as it happened (§126).</p>
+          <p className="mt-1 text-sm text-muted-foreground">Every campaign and Quick Send email this workspace sent, and the replies received, exactly as it happened. Recruiter Bulk Send has its own page.</p>
         </div>
         <div className="flex rounded-full border border-border bg-card p-1">
           {(['sent', 'received'] as const).map((d) => (

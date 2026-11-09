@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
-import { loadBlast, requireBlastAdmin } from '@/lib/recruiterSend/access';
+import { loadBlast, requireBlastReader } from '@/lib/recruiterSend/access';
 import { decorate, type BlastMode } from '@/lib/recruiterSend/core';
 import { personalize, squash, valuesOf, variablesIn } from '@/lib/recruiterSend/personalize';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
@@ -16,7 +16,7 @@ import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 export const dynamic = 'force-dynamic';
 
 export const GET = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
-  const session = await requireBlastAdmin();
+  const session = await requireBlastReader();
   const blast = await loadBlast(session, params.id);
   if (!blast) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const email = (new URL(req.url).searchParams.get('email') ?? '').trim().toLowerCase();

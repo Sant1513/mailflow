@@ -73,7 +73,7 @@
   --ring: 348 97% 50%;
   --success: 160 64% 52%;           /* emerald-400                        */
   --warning: 43 96% 56%;            /* amber-400                          */
-  --info: 213 94% 68%;              /* blue-400 (info badges only)        */
+  --info: 240 5% 72%;               /* neutral zinc (dark mode: black + Masai red only, no blue) */
 
   /* Pills, active tabs and primary buttons: Masai red, like the light theme's accent. */
   --ink: 348 97% 50%;

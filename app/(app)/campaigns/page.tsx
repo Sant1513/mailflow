@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment } from 'react';
+import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -35,6 +36,7 @@ const STATUS_STYLES: Record<string, string> = {
 export default function CampaignsPage() {
   const router = useRouter();
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
+  const paged = useClientPaging(campaigns, 25);
   const [datasets, setDatasets] = useState<{ id: string; name: string }[]>([]);
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -269,13 +271,13 @@ export default function CampaignsPage() {
               </tr>
             </thead>
             <tbody>
-              {campaigns.map((c) => {
+              {paged.rows.map((c) => {
                 const batch = c.batches[0];
                 const isDraft = c.status === 'DRAFT';
                 const isEditingThis = editingId === c.id;
                 return (
-                  <>
-                    <tr key={c.id} className={`border-t hover:bg-elevated/60 ${isEditingThis ? 'bg-elevated/40' : ''}`}>
+                  <Fragment key={c.id}>
+                    <tr className={`border-t hover:bg-elevated/60 ${isEditingThis ? 'bg-elevated/40' : ''}`}>
                       <td className="px-4 py-2">
                         <Link href={`/campaigns/${c.id}`} className="font-medium text-primary hover:underline">
                           {c.name}
@@ -384,11 +386,12 @@ export default function CampaignsPage() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>
           </table>
+          <ListPager {...paged.pager} noun="campaigns" className="border-t px-3" />
         </div>
       )}
     </div>

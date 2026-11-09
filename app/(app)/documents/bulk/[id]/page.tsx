@@ -83,6 +83,8 @@ export default function BulkSendDetailPage() {
 
   async function voidBatch() {
     if (!batch) return;
+    const pending = batch.requests.filter((r) => !['SIGNED', 'VOIDED', 'EXPIRED'].includes(r.status)).length;
+    if (!confirm(`Void all ${pending} pending request${pending === 1 ? '' : 's'} in this bulk send? Their signing links stop working. This can't be undone.`)) return;
     const res = await fetch(`/api/signing-batches/${batchId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

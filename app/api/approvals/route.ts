@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { requireRole } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
-import { CampaignStatus, Role } from '@prisma/client';
+import { CampaignStatus, Prisma, Role } from '@prisma/client';
+import { pageInfo, parsePaging } from '@/lib/api/paging';
 import { reviewScope } from '@/lib/permissions/reviewer';
 
 /**
@@ -26,9 +27,9 @@ export const GET = withErrorHandling(async (req) => {
   const statuses = STATUS_FILTER[status] ?? STATUS_FILTER.pending!;
 
   const scope = await reviewScope(session);
+  const paging = parsePaging(url.searchParams, { pageSize: 50 });
 
-  const campaigns = await prisma.campaign.findMany({
-    where: {
+  const where: Prisma.CampaignWhereInput = {
       ...scope,
       // "all" still means "has been through the workflow" — drafts are not requests.
       ...(statuses ? { status: { in: statuses } } : { submittedAt: { not: null } }),
@@ -42,9 +43,13 @@ export const GET = withErrorHandling(async (req) => {
             ],
           }
         : {}),
-    },
-    orderBy: [{ submittedAt: 'desc' }, { updatedAt: 'desc' }],
-    take: 200,
+  };
+  const total = await prisma.campaign.count({ where });
+  const campaigns = await prisma.campaign.findMany({
+    where,
+    orderBy: [{ submittedAt: 'desc' }, { updatedAt: 'desc' }, { id: 'asc' }],
+    skip: paging.skip,
+    take: paging.take,
     select: {
       id: true,
       name: true,
@@ -92,6 +97,7 @@ export const GET = withErrorHandling(async (req) => {
   const count = (s: CampaignStatus) => counts.find((c) => c.status === s)?._count._all ?? 0;
 
   return NextResponse.json({
+    ...pageInfo(total, paging),
     scope: session.role === Role.SUPER_ADMIN ? 'organization' : 'workspace',
     counts: { pending: count(CampaignStatus.PENDING_APPROVAL), approved: count(CampaignStatus.APPROVED), rejected: count(CampaignStatus.REJECTED) },
     requests: campaigns.map((c) => ({

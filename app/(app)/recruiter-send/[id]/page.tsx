@@ -98,10 +98,17 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [recipientPage, setRecipientPage] = useState(1);
+  const loadedOnce = useRef(false);
   const load = useCallback(async () => {
     const res = await fetch(`/api/recruiter-blasts/${params.id}?page=${recipientPage}`, { cache: 'no-store' }).catch(() => null);
     const j = await res?.json().catch(() => ({}));
-    if (!res?.ok) return setError(j?.error ?? 'Could not load this send.');
+    // A failed background refresh keeps what is on screen; only a first load shows the error.
+    if (!res?.ok) {
+      if (!loadedOnce.current) setError(j?.error ?? 'Could not load this send.');
+      return;
+    }
+    loadedOnce.current = true;
+    setError(null);
     setDetail(j);
     setPreview(j.previewHtml ?? '');
     setPreviewAs({ subject: j.previewSubject ?? null, recipient: j.previewRecipient ?? null });
@@ -328,9 +335,9 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {['SENDING', 'SCHEDULED'].includes(b.status) && <button type="button" onClick={() => control('pause')} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated">Pause</button>}
-          {b.status === 'PAUSED' && <button type="button" onClick={() => control('resume')} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated">Resume</button>}
-          {['SENDING', 'SCHEDULED', 'PAUSED'].includes(b.status) && <button type="button" onClick={() => control('cancel')} className="rounded border px-3 py-1.5 text-sm text-red-700 hover:bg-elevated">Cancel</button>}
+          {['SENDING', 'SCHEDULED'].includes(b.status) && <button type="button" onClick={() => control('pause')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'pause' ? 'Pausing…' : 'Pause'}</button>}
+          {b.status === 'PAUSED' && <button type="button" onClick={() => control('resume')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'resume' ? 'Resuming…' : 'Resume'}</button>}
+          {['SENDING', 'SCHEDULED', 'PAUSED'].includes(b.status) && <button type="button" onClick={() => control('cancel')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm text-red-700 hover:bg-elevated disabled:opacity-50">{busy === 'cancel' ? 'Cancelling…' : 'Cancel'}</button>}
           <button type="button" onClick={copy} disabled={busy === 'copy'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">Copy</button>
           {draft && <button type="button" onClick={removeDraft} className="rounded px-3 py-1.5 text-sm text-muted-foreground hover:bg-elevated">Delete draft</button>}
         </div>
@@ -557,7 +564,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             </div>
           </Section>
 
-          <Section n={5} title="Send from" summary={stepSummary[5]} done={stepDone[5]} hint="Tick the mailboxes to use, in order. MailFlow moves to the next one when a mailbox reaches its limit for this send, Google's daily limit, or is paused by Gmail. Leave a limit empty for no extra limit.">
+          <Section n={5} title="Send from" summary={stepSummary[5]} done={stepDone[5]} hint={form.sendOrder === 'SEQUENTIAL' ? "Tick the mailboxes to use, in order. MailFlow moves to the next one when a mailbox reaches its limit for this send, Google's daily limit, or is paused by Gmail. Leave a limit empty for no extra limit." : "Tick the mailboxes to use. They all send together, each with its own pause; if one reaches its limit for this send or Google's daily limit, or Gmail pauses it, its batches move to the others. Leave a limit empty for no extra limit."}>
             {detail.mailboxes.length === 0 ? <p className="text-sm text-muted-foreground">Connect your Gmail in Settings first.</p> : (
               <ul className="space-y-2">
                 {mailboxOrder.map((m) => {
@@ -592,7 +599,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                 })}
               </ul>
             )}
-            {form.mode === 'BCC' && <p className="mt-2 text-xs text-muted-foreground">Limits count whole groups: with groups of {form.groupSize}, a limit of 400 sends one group from that mailbox and moves on.</p>}
+            {form.mode === 'BCC' && <p className="mt-2 text-xs text-muted-foreground">Limits count whole groups: with groups of {form.groupSize}, a limit of 400 lets that mailbox send {Math.floor(400 / Math.max(1, form.groupSize))} group{Math.floor(400 / Math.max(1, form.groupSize)) === 1 ? '' : 's'} ({(Math.floor(400 / Math.max(1, form.groupSize)) * form.groupSize).toLocaleString()} recruiters).</p>}
           </Section>
 
         </div>

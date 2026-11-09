@@ -12,8 +12,9 @@ export async function POST(req: NextRequest) {
 
   await prisma.emailSuppression.upsert({
     where: { workspaceId_email: { workspaceId: payload.workspaceId, email: payload.email.toLowerCase() } },
-    update: { reason: 'UNSUBSCRIBED', source: 'UNSUBSCRIBE' },
-    create: { workspaceId: payload.workspaceId, email: payload.email.toLowerCase(), reason: 'UNSUBSCRIBED', source: 'UNSUBSCRIBE' },
+    // Already suppressed (a bounce, a complaint): keep that reason and its detail.
+    update: {},
+    create: { workspaceId: payload.workspaceId, email: payload.email.toLowerCase(), reason: 'UNSUBSCRIBED', source: 'UNSUBSCRIBE', detail: 'Clicked Unsubscribe in an email' },
   });
 
   dispatchWebhook(payload.workspaceId, 'email.unsubscribed', {

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { toast } from 'sonner';
 
@@ -83,6 +84,7 @@ export default function DocumentLibraryPage() {
   }
 
   const visible = docs.filter((d) => includeArchived || !d.archived);
+  const paged = useClientPaging(visible, 25);
 
   return (
     <div className="p-6">
@@ -136,7 +138,7 @@ export default function DocumentLibraryPage() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((d) => (
+              {paged.rows.map((d) => (
                 <tr key={d.id} className={`border-b last:border-0 hover:bg-muted/20 transition-colors ${d.archived ? 'opacity-50' : ''}`}>
                   <td className="px-4 py-3">
                     <div className="font-medium">
@@ -179,6 +181,7 @@ export default function DocumentLibraryPage() {
               ))}
             </tbody>
           </table>
+          <ListPager {...paged.pager} noun="documents" className="border-t px-3" />
         </div>
       )}
 

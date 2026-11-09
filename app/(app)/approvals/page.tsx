@@ -4,6 +4,7 @@ import { Fragment, Suspense, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
+import { ListPager } from '@/components/ui/ListPager';
 
 interface RequestRow {
   id: string;
@@ -67,6 +68,9 @@ function ApprovalsPageInner() {
   );
   const [tab, setTab] = useState<Tab>('pending');
   const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [total, setTotal] = useState(0);
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [counts, setCounts] = useState({ pending: 0, approved: 0, rejected: 0 });
   const [scope, setScope] = useState<'organization' | 'workspace'>('workspace');
@@ -81,30 +85,44 @@ function ApprovalsPageInner() {
   // User registrations state
   const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
+  const [canReviewUsers, setCanReviewUsers] = useState(true);
   const [userBusy, setUserBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/approvals?status=${tab}&q=${encodeURIComponent(q.trim())}`);
+    const res = await fetch(`/api/approvals?status=${tab}&q=${encodeURIComponent(q.trim())}&page=${page}&pageSize=${pageSize}`);
     if (res.status === 403) {
       setForbidden(true);
       setLoading(false);
       return;
     }
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast.error(json.error ?? 'Could not load approvals');
+      setLoading(false);
+      return;
+    }
     setRows(json.requests ?? []);
+    setTotal(json.total ?? json.requests?.length ?? 0);
     setCounts(json.counts ?? counts);
     setScope(json.scope ?? 'workspace');
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, q]);
+  }, [tab, q, page, pageSize]);
+
+  // A new tab or search starts again at page 1.
+  useEffect(() => setPage(1), [tab, q, pageSize]);
 
   const loadUsers = useCallback(async () => {
     setUsersLoading(true);
-    const res = await fetch('/api/admin/pending-users');
-    if (res.ok) {
-      const json = await res.json();
+    const res = await fetch('/api/admin/pending-users').catch(() => null);
+    // Only Super Admins review sign-ups: anyone else doesn't get the tab at all.
+    if (res?.status === 403) {
+      setCanReviewUsers(false);
+      setSection((cur) => (cur === 'users' ? 'campaigns' : cur));
+    } else if (res?.ok) {
+      const json = await res.json().catch(() => ({}));
       setPendingUsers(json.users ?? []);
-    }
+    } else toast.error('Pending sign-ups could not be loaded.');
     setUsersLoading(false);
   }, []);
 
@@ -187,7 +205,7 @@ function ApprovalsPageInner() {
     <div className="p-4 sm:p-6">
       {/* Section switcher */}
       <div className="mb-5 flex items-center gap-1 rounded-lg border border-border bg-card p-1 w-fit">
-        {(['campaigns', 'users'] as Section[]).map((s) => (
+        {((canReviewUsers ? ['campaigns', 'users'] : ['campaigns']) as Section[]).map((s) => (
           <button
             key={s}
             onClick={() => setSection(s)}
@@ -394,6 +412,7 @@ function ApprovalsPageInner() {
                 ))}
               </tbody>
             </table>
+            <ListPager className="border-t px-3" page={page} pageSize={pageSize} total={total} onPage={setPage} onPageSize={setPageSize} noun="requests" />
           </div>
         )}
       </div>

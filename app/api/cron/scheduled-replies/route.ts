@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { blockedReplyRecipient } from '@/lib/email/replySuppression';
 import { prisma } from '@/lib/db/client';
 import { GmailProvider } from '@/lib/email/gmail';
 import { SendEmailError } from '@/lib/email/provider';
@@ -67,6 +68,14 @@ export async function GET(req: Request) {
 
     const quotedTrail = buildQuotedTrail(conversation.messages, { skipNewThread: reply.newThread });
     const htmlToSend = quotedTrail ? reply.html + quotedTrail : reply.html;
+
+    // Never reply to an address that hard-bounced or complained since it was scheduled.
+    const blocked = await blockedReplyRecipient(conversation.workspaceId, [conversation.recipientEmail, ...(reply.cc ?? [])]);
+    if (blocked) {
+      await prisma.scheduledReply.update({ where: { id: reply.id }, data: { status: 'FAILED', errorMessage: blocked.slice(0, 500) } });
+      failed++;
+      continue;
+    }
 
     let result;
     try {

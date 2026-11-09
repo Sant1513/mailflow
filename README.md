@@ -101,7 +101,7 @@ Deeper docs: [ARCHITECTURE.md](ARCHITECTURE.md) (system design) · [PHASE_STATUS
 ### Dashboards and AI
 - **Dashboard**: sent, reply rate, failed, pending, unread, open conversations, resolution rate, follow-ups due, open and click rates, **first response time (FRT)** and **average response time (ART)**, over a 7 / 30 / 90 day window.
 - **Performance**: per-agent volume, FRT / ART and resolution rate, with a trend chart. **Reports**: signing and campaign KPIs with CSV export.
-- **Daily "needs attention" digest** by email and Slack (09:00 IST): unanswered replies older than 24 hours, SLA breaches, unsigned documents near expiry, and campaigns and users waiting for approval. Skipped on days with nothing to report.
+- **Daily report** by email (To/CC, no Bcc) and Slack (its own channel), 8 PM IST Monday to Friday: everything sent since the last report (8 PM to 8 PM; work after 8 PM goes into the next report and the weekend into Monday's, marked as such) by type, user and mailbox, each person's inbox (received, pending, closed, FRT, ART), and what needs attention. The **weekly report** (Monday 09:00 IST) uses the same design for last week, day by day.
 - **Weekly report** to super admins every Monday (email, optional Slack): campaigns, opens, clicks, replies, documents sent and signed, median time to sign, FRT / ART and top responders, compared with the week before.
 - Both are set up in **Admin → System settings → Automation** (sender mailbox, recipients, thresholds), with a preview and a test send.
 - **Gemini AI assistant**: write or improve templates, subject ideas, suggested replies, conversation summaries with a suggested next step, reply intent, and "Why was this sent?". Per-user and per-org daily limits. The AI never sends anything or changes data on its own.
@@ -321,7 +321,7 @@ Set production variables at the project level (`vercel env add NAME production`)
 | `/api/cron/scheduled-replies`: send scheduled replies | 00:00 daily | — |
 | `/api/cron/sla-check`: flag SLA breaches | 08:00 daily | — |
 | `/api/cron/signing-reminders`: remind unsigned signers, expire overdue links, refresh "Days waiting to sign" on rows | 09:00 daily | — |
-| `/api/cron/daily-digest`: "needs attention" digest (email + Slack) | 03:30 daily (09:00 IST) | — |
+| `/api/cron/daily-digest`: the 8 PM daily report (email + Slack); also fills org-wide bounce gaps | 15:00 Mon–Fri (≈8:30 PM IST); the 15-minute dispatch sends it at 8 PM | — |
 | `/api/cron/weekly-report`: weekly report to leadership | 03:30 Mondays | — |
 | `/api/cron/sheets-sync`: two-way Google Sheets sync | 03:15 daily | every 15 min |
 

@@ -255,14 +255,16 @@ export const POST = withErrorHandling(async (req) => {
     }),
   );
 
-  // Get the workspace email account for sending
+  // Get the workspace email account for sending (a connected one).
   const account = await prisma.emailProviderAccount.findFirst({
-    where: { workspaceId },
+    where: { workspaceId, status: 'CONNECTED' },
     orderBy: { createdAt: 'asc' },
   });
 
   let sentCount = 0;
   const requestsToEmail = requests.filter((r) => r.status === 'SENT');
+  // Told to the person who sent it: how many invitations did not go out, and why.
+  let emailError: string | null = !account && requestsToEmail.length ? 'No connected Gmail mailbox in this workspace (Settings → Gmail).' : null;
 
   if (account && requestsToEmail.length > 0) {
     const expiresDateStr = expiresAt.toLocaleDateString('en-IN', {
@@ -306,6 +308,8 @@ export const POST = withErrorHandling(async (req) => {
     const failedCount = results.length - sentCount;
     if (failedCount > 0) {
       console.error(`[signing-batches] ${failedCount} email(s) failed to send for batch ${batch.id}`);
+      const firstError = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')?.reason;
+      emailError = firstError instanceof Error ? firstError.message.slice(0, 300) : 'Gmail did not accept some emails.';
     }
   }
 
@@ -347,7 +351,7 @@ export const POST = withErrorHandling(async (req) => {
     },
   });
 
-  return NextResponse.json({ batch: fullBatch }, { status: 201 });
+  return NextResponse.json({ batch: fullBatch, emailsToSend: requestsToEmail.length, emailsSent: sentCount, emailError }, { status: 201 });
 });
 
 function buildInviteHtml({

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -17,6 +18,7 @@ interface SigningBatch {
 export default function BulkSendingPage() {
   const router = useRouter();
   const [batches, setBatches] = useState<SigningBatch[]>([]);
+  const paged = useClientPaging(batches, 25);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -66,7 +68,7 @@ export default function BulkSendingPage() {
               </tr>
             </thead>
             <tbody>
-              {batches.map((batch, i) => {
+              {paged.rows.map((batch, i) => {
                 const pct =
                   batch.totalCount > 0
                     ? Math.round((batch.signedCount / batch.totalCount) * 100)
@@ -120,6 +122,7 @@ export default function BulkSendingPage() {
               })}
             </tbody>
           </table>
+          <ListPager {...paged.pager} noun="bulk sends" className="border-t px-3" />
         </div>
       )}
     </div>

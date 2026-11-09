@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { ListPager } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 import { useRouter } from 'next/navigation';
@@ -50,11 +51,15 @@ export default function SegmentsPage() {
   // Preview state
   const [previewing, setPreviewing] = useState(false);
   const [previewContacts, setPreviewContacts] = useState<ContactRow[] | null>(null);
+  const [previewTotal, setPreviewTotal] = useState(0);
 
   // Selected segment for contact list
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedContacts, setSelectedContacts] = useState<ContactRow[] | null>(null);
   const [loadingContacts, setLoadingContacts] = useState(false);
+  const [memberPage, setMemberPage] = useState(1);
+  const [memberSize, setMemberSize] = useState(50);
+  const [memberTotal, setMemberTotal] = useState(0);
   const [contactCounts, setContactCounts] = useState<Record<string, number>>({});
 
   const load = useCallback(async () => {
@@ -124,6 +129,7 @@ export default function SegmentsPage() {
     setPreviewing(false);
     if (!res.ok) { toast.error(json.error ?? 'Preview failed'); return; }
     setPreviewContacts(json.contacts ?? []);
+    setPreviewTotal(json.total ?? json.contacts?.length ?? 0);
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -168,12 +174,20 @@ export default function SegmentsPage() {
     if (selectedId === seg.id) { setSelectedId(null); setSelectedContacts(null); return; }
     setSelectedId(seg.id);
     setSelectedContacts(null);
+    await loadMembers(seg.id, 1, memberSize);
+  }
+
+  // One page of a segment's members, with the real total.
+  async function loadMembers(id: string, page: number, size: number) {
+    setMemberPage(page);
+    setMemberSize(size);
     setLoadingContacts(true);
-    const res = await fetch(`/api/segments/${seg.id}/contacts`);
-    const json = await res.json().catch(() => ({}));
+    const res = await fetch(`/api/segments/${id}/contacts?page=${page}&pageSize=${size}`).catch(() => null);
+    const json = await res?.json().catch(() => ({}));
     setLoadingContacts(false);
-    if (!res.ok) { toast.error('Could not load contacts'); return; }
+    if (!res?.ok) { toast.error(json?.error ?? 'Could not load contacts'); return; }
     setSelectedContacts(json.contacts ?? []);
+    setMemberTotal(json.total ?? json.contacts?.length ?? 0);
   }
 
   const hasConvValue =
@@ -289,7 +303,7 @@ export default function SegmentsPage() {
               <p className="mb-2 text-xs font-medium text-muted-foreground">
                 {previewContacts.length === 0
                   ? 'No contacts match these filters.'
-                  : `${previewContacts.length} contact${previewContacts.length !== 1 ? 's' : ''} match`}
+                  : `${previewTotal.toLocaleString('en-IN')} contact${previewTotal !== 1 ? 's' : ''} match${previewTotal > previewContacts.length ? ` (showing ${previewContacts.length})` : ''}`}
               </p>
               {previewContacts.length > 0 && (
                 <div className="max-h-40 overflow-y-auto">
@@ -322,7 +336,7 @@ export default function SegmentsPage() {
               disabled={previewing}
             >
               {previewing ? 'Loading…' : previewContacts !== null
-                ? `Preview (${previewContacts.length} contacts)`
+                ? `Preview (${previewTotal.toLocaleString('en-IN')} contacts)`
                 : 'Preview contacts'}
             </button>
             <button type="submit" className="btn-primary" disabled={saving || !formName.trim()}>
@@ -437,10 +451,7 @@ export default function SegmentsPage() {
                           ))}
                         </tbody>
                       </table>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {selectedContacts.length} contact{selectedContacts.length !== 1 ? 's' : ''}
-                        {selectedContacts.length === 500 ? ' (showing first 500)' : ''}
-                      </p>
+                      <ListPager page={memberPage} pageSize={memberSize} total={memberTotal} onPage={(p) => selectedId && loadMembers(selectedId, p, memberSize)} onPageSize={(n) => selectedId && loadMembers(selectedId, 1, n)} noun="contacts" />
                     </div>
                   )}
                 </div>

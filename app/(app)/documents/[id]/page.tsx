@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { LoadError, loadErrorMessage } from '@/components/ui/LoadError';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
@@ -129,15 +130,17 @@ export default function DocumentEditorPage() {
     setIssues(p.issues);
   }, []);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     fetch(`/api/documents/${params.id}`)
       .then(async (res) => {
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) toast.error(json.error ?? 'Could not load the document');
-        else apply(json);
+        if (!res.ok) return setLoadError(await loadErrorMessage(res, 'document'));
+        setLoadError(null);
+        apply(await res.json());
       })
-      .catch(() => toast.error('Could not load the document'));
-  }, [params.id, apply]);
+      .catch(() => setLoadError('The document could not be loaded. Check your connection and try again.'));
+  }, [params.id, apply, reloadKey]);
 
   useEffect(() => {
     try {
@@ -426,7 +429,7 @@ export default function DocumentEditorPage() {
     if (json?.issues) setIssues(json.issues as DocumentIssue[]);
   }
 
-  if (!data) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!data) return loadError ? <LoadError message={loadError} onRetry={() => setReloadKey((n) => n + 1)} backHref="/documents/library" backLabel="Back to the library" /> : <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
 
   const { inspection, document: doc } = data;
   const fillable = inspection.formFields.filter((f) => !UNFILLABLE.has(f.type));

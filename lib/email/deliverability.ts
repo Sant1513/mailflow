@@ -67,14 +67,18 @@ export async function deliverabilityReport(workspaceIds: string[], days: number)
 
   const [sent, bounces, unsubscribes, opens, clicks, automated, recentBounces, accounts] = await Promise.all([
     prisma.emailJob.count({ where: { ...campaignScope, status: EmailJobStatus.SENT, sentAt: { gte: since } } }),
-    prisma.emailSuppression.count({ where: { workspaceId: { in: workspaceIds }, reason: 'BOUNCED', createdAt: { gte: since } } }),
+    // Bounce rate = bounces of these workspaces' own campaign emails ÷ those emails sent. Copies of a
+    // teammate's bounce (org-wide suppression) and recruiter-send bounces aren't part of "sent" here.
+    prisma.emailSuppression.findMany({ where: { workspaceId: { in: workspaceIds }, reason: 'BOUNCED', campaignId: { not: null }, createdAt: { gte: since } }, distinct: ['email'], select: { email: true } }).then((r) => r.length),
     prisma.emailSuppression.count({ where: { workspaceId: { in: workspaceIds }, reason: 'UNSUBSCRIBED', createdAt: { gte: since } } }),
     prisma.emailTrackingEvent.groupBy({ by: ['emailJobId'], where: { ...campaignScope, type: 'OPEN', automated: false, createdAt: { gte: since } } }).then((r) => r.length),
     prisma.emailTrackingEvent.groupBy({ by: ['emailJobId'], where: { ...campaignScope, type: 'CLICK', automated: false, createdAt: { gte: since } } }).then((r) => r.length),
     prisma.emailTrackingEvent.count({ where: { ...campaignScope, automated: true, createdAt: { gte: since } } }),
+    // Each bounced address once (the org-wide copies would repeat it per workspace).
     prisma.emailSuppression.findMany({
       where: { workspaceId: { in: workspaceIds }, reason: 'BOUNCED' },
       orderBy: { createdAt: 'desc' },
+      distinct: ['email'],
       take: 20,
       select: { email: true, detail: true, createdAt: true, campaign: { select: { id: true, name: true } } },
     }),

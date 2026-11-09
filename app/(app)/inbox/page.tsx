@@ -75,20 +75,32 @@ export default function InboxPage() {
   const [bulkTag, setBulkTag] = useState('');
   const tagInputRef = useRef<HTMLInputElement>(null);
 
+  // Only the latest request may update the list (a slow older search can't overwrite a newer one).
+  const loadSeq = useRef(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async (p = page) => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     const params = new URLSearchParams({ filter, scope, page: String(p), pageSize: String(PAGE_SIZE) });
     if (q.trim()) params.set('q', q.trim());
     if (assigneeId) params.set('assigneeId', assigneeId);
     if (tag.trim()) params.set('tag', tag.trim());
-    const res = await fetch(`/api/inbox?${params}`);
-    const json = await res.json();
-    setRows(json.conversations ?? []);
-    setCounts(json.counts ?? {});
-    setTotal(json.total ?? 0);
-    setHasShared(!!json.hasSharedInboxes);
-    setLoading(false);
-    setSelected(new Set()); // clear selection on reload
+    try {
+      const res = await fetch(`/api/inbox?${params}`);
+      const json = await res.json().catch(() => ({}));
+      if (seq !== loadSeq.current) return;
+      if (!res.ok) throw new Error(json.error ?? `The inbox could not be loaded (${res.status}).`);
+      setLoadError(null);
+      setRows(json.conversations ?? []);
+      setCounts(json.counts ?? {});
+      setTotal(json.total ?? 0);
+      setHasShared(!!json.hasSharedInboxes);
+      setSelected(new Set()); // clear selection on reload
+    } catch (err) {
+      if (seq === loadSeq.current) setLoadError(err instanceof Error && err.message !== 'Failed to fetch' ? err.message : 'The inbox could not be loaded. Check your connection and try again.');
+    } finally {
+      if (seq === loadSeq.current) setLoading(false);
+    }
   }, [filter, scope, q, page, assigneeId, tag]);
 
   // Links into the inbox (e.g. "Replied" on a Recruiter Bulk Send) can preset ?filter= and ?q=.
@@ -132,12 +144,17 @@ export default function InboxPage() {
 
   async function syncNow() {
     setSyncing(true);
-    const res = await fetch('/api/gmail/sync', { method: 'POST' });
-    const json = await res.json();
-    setSyncing(false);
-    if (!res.ok) { toast.error(json.error ?? 'Sync failed'); return; }
-    toast.success(json.note ?? 'Synced');
-    load(page);
+    try {
+      const res = await fetch('/api/gmail/sync', { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(json.error ?? 'Sync failed'); return; }
+      toast.success(json.note ?? 'Synced');
+      load(page);
+    } catch {
+      toast.error('Sync failed: check your connection and try again.');
+    } finally {
+      setSyncing(false);
+    }
   }
 
   // ── Bulk selection ──────────────────────────────────────────────────────
@@ -165,10 +182,10 @@ export default function InboxPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: [...selected], action, ...extra }),
-    });
+    }).catch(() => null);
     setBulkBusy(false);
-    const json = await res.json();
-    if (!res.ok) { toast.error(json.error ?? 'Action failed'); return; }
+    const json = await res?.json().catch(() => ({}));
+    if (!res?.ok) { toast.error(json?.error ?? 'Action failed: check your connection and try again.'); return; }
     toast.success(`${json.updated} conversation${json.updated !== 1 ? 's' : ''} updated.`);
     setBulkAssignee('');
     setBulkTag('');
@@ -267,7 +284,7 @@ export default function InboxPage() {
         )}
         <div className="mt-4 rounded-md border bg-muted/40 p-2 text-[11px] text-muted-foreground">
           <p className="font-medium text-foreground">What shows here</p>
-          <p className="mt-0.5">Only threads started by MailFlow campaigns or replied to via MailFlow.</p>
+          <p className="mt-0.5">Replies to your campaigns, Quick Sends and recruiter sends, mail to your connected Gmail, and inboxes teammates share with you.</p>
         </div>
       </aside>
 
@@ -323,7 +340,9 @@ export default function InboxPage() {
 
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 overflow-y-auto">
-            {loading ? (
+            {loadError ? (
+              <div className="m-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{loadError} <button type="button" onClick={() => load(page)} className="ml-2 underline">Try again</button></div>
+            ) : loading && rows.length === 0 ? (
               <div className="p-6 text-sm text-muted-foreground">Loading…</div>
             ) : rows.length === 0 ? (
               <div className="p-12 text-center text-sm text-muted-foreground">

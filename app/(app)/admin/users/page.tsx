@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import { toast } from 'sonner';
 
 const ROLES = ['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'VIEWER'];
@@ -40,31 +41,39 @@ function fmtDuration(minutes: number | null): string {
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const paged = useClientPaging(users, 25);
   const [loading, setLoading] = useState(true);
   const [rtRows, setRtRows] = useState<ResponseTimeRow[]>([]);
   const [rtLoading, setRtLoading] = useState(true);
   const [rtDays, setRtDays] = useState(30);
 
+  const [error, setError] = useState<string | null>(null);
+  const [rtError, setRtError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
   async function load() {
     setLoading(true);
-    const res = await fetch('/api/admin/users');
-    if (res.status === 403) {
-      toast.error('Super admin only');
+    try {
+      const res = await fetch('/api/admin/users');
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(res.status === 403 ? 'Only Super Admins can manage users.' : json.error ?? `Users could not be loaded (${res.status}).`);
+      setError(null);
+      setUsers(json.users ?? []);
+    } catch (err) {
+      setError(err instanceof Error && err.message !== 'Failed to fetch' ? err.message : 'Users could not be loaded. Check your connection and try again.');
+    } finally {
       setLoading(false);
-      return;
     }
-    const json = await res.json();
-    setUsers(json.users ?? []);
-    setLoading(false);
   }
 
   async function loadRt(days: number) {
     setRtLoading(true);
-    const res = await fetch(`/api/admin/response-times?days=${days}`);
-    if (res.ok) {
-      const json = await res.json();
+    const res = await fetch(`/api/admin/response-times?days=${days}`).catch(() => null);
+    const json = await res?.json().catch(() => ({}));
+    if (res?.ok) {
+      setRtError(null);
       setRtRows(json.rows ?? []);
-    }
+    } else setRtError(json?.error ?? 'Response times could not be loaded.');
     setRtLoading(false);
   }
 
@@ -72,14 +81,19 @@ export default function AdminUsersPage() {
   useEffect(() => { loadRt(rtDays); }, [rtDays]);
 
   async function changeRole(id: string, role: string) {
+    const who = users.find((u) => u.id === id);
+    if (!confirm(`Change ${who?.name || who?.email || 'this user'}'s role to ${role.replace('_', ' ').toLowerCase()}?`)) { load(); return; }
+    setBusyId(id);
     const res = await fetch(`/api/admin/users/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role }),
-    });
-    if (!res.ok) {
-      const json = await res.json();
-      toast.error(json.error ?? 'Failed to change role');
+    }).catch(() => null);
+    setBusyId(null);
+    if (!res?.ok) {
+      const json = await res?.json().catch(() => ({}));
+      toast.error(json?.error ?? 'Failed to change role');
+      load();
       return;
     }
     toast.success('Role updated');
@@ -105,13 +119,18 @@ export default function AdminUsersPage() {
 
   async function toggleStatus(id: string, current: string) {
     const status = current === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
+    const who = users.find((u) => u.id === id);
+    if (status === 'DISABLED' && !confirm(`Disable ${who?.name || who?.email || 'this user'}? They won't be able to sign in until re-enabled.`)) return;
+    setBusyId(id);
     const res = await fetch(`/api/admin/users/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
-    });
-    if (!res.ok) {
-      toast.error('Failed to update status');
+    }).catch(() => null);
+    setBusyId(null);
+    if (!res?.ok) {
+      const json = await res?.json().catch(() => ({}));
+      toast.error(json?.error ?? 'Failed to update status');
       return;
     }
     load();
@@ -124,7 +143,9 @@ export default function AdminUsersPage() {
         <h1 className="mb-1 text-xl font-semibold">Users</h1>
         <p className="mb-4 text-sm text-muted-foreground">Organization-wide user &amp; role management.</p>
 
-        {loading ? (
+        {error ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{error} <button type="button" onClick={load} className="ml-2 underline">Try again</button></div>
+        ) : loading ? (
           <div className="text-sm text-muted-foreground">Loading…</div>
         ) : (
           <div className="overflow-hidden rounded-lg border bg-card">
@@ -142,7 +163,7 @@ export default function AdminUsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => (
+                {paged.rows.map((u) => (
                   <tr key={u.id} className="border-t">
                     <td className="px-4 py-2">{u.name}</td>
                     <td className="px-4 py-2">{u.email}</td>
@@ -150,7 +171,8 @@ export default function AdminUsersPage() {
                       <select
                         value={u.role}
                         onChange={(e) => changeRole(u.id, e.target.value)}
-                        className="rounded border px-1.5 py-0.5 text-xs"
+                        disabled={busyId === u.id}
+                        className="rounded border px-1.5 py-0.5 text-xs disabled:opacity-50"
                       >
                         {ROLES.map((r) => (
                           <option key={r} value={r}>{r}</option>
@@ -167,12 +189,13 @@ export default function AdminUsersPage() {
                       </button>
                     </td>
                     <td className="px-4 py-2 text-muted-foreground">
-                      {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : 'never'}
+                      {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) : 'never'}
                     </td>
                     <td className="px-4 py-2">
                       <button
                         onClick={() => toggleStatus(u.id, u.status)}
-                        className="text-xs text-muted-foreground hover:text-destructive"
+                        disabled={busyId === u.id}
+                        className="text-xs text-muted-foreground hover:text-destructive disabled:opacity-50"
                       >
                         {u.status === 'ACTIVE' ? 'Disable' : 'Enable'}
                       </button>
@@ -181,6 +204,7 @@ export default function AdminUsersPage() {
                 ))}
               </tbody>
             </table>
+            <ListPager {...paged.pager} noun="users" className="border-t px-3" />
           </div>
         )}
       </div>
@@ -213,6 +237,8 @@ export default function AdminUsersPage() {
 
         {rtLoading ? (
           <div className="text-sm text-muted-foreground">Loading…</div>
+        ) : rtError ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{rtError} <button type="button" onClick={() => loadRt(rtDays)} className="ml-2 underline">Try again</button></div>
         ) : rtRows.length === 0 ? (
           <div className="rounded-lg border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
             No assigned conversations in the last {rtDays} days.

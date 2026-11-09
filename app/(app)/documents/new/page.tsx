@@ -162,7 +162,11 @@ export default function NewSigningRequestPage() {
       return;
     }
 
-    toast.success('Signing request sent successfully');
+    const done = (await res.json().catch(() => ({}))) as { emailSent?: boolean; emailError?: string | null };
+    if (done.emailSent === false) {
+      // Saved, but the invitation didn't go out: say so (it can be resent from Documents).
+      toast.warning(`Request created, but the invitation email was NOT sent: ${done.emailError ?? 'unknown error'}. Use Resend in Documents once that's fixed.`, { duration: 12000 });
+    } else toast.success('Signing request sent successfully');
     router.push('/documents');
   }
 

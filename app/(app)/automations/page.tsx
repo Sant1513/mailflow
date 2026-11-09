@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -17,6 +18,7 @@ interface AutomationRow {
 export default function AutomationsPage() {
   const router = useRouter();
   const [automations, setAutomations] = useState<AutomationRow[]>([]);
+  const paged = useClientPaging(automations, 25);
   const [datasets, setDatasets] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -85,7 +87,7 @@ export default function AutomationsPage() {
               </tr>
             </thead>
             <tbody>
-              {automations.map((a) => {
+              {paged.rows.map((a) => {
                 const version = a.versions[0];
                 const actions = Array.isArray(version?.actions) ? version.actions : [];
                 return (
@@ -113,6 +115,7 @@ export default function AutomationsPage() {
               })}
             </tbody>
           </table>
+          <ListPager {...paged.pager} noun="automations" className="border-t px-3" />
         </div>
       )}
     </div>

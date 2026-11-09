@@ -39,7 +39,7 @@ export function TopBar({ user }: { user: { name?: string | null; email?: string 
           className="flex h-9 min-w-0 max-w-md flex-1 items-center gap-2 rounded-full border border-border-subtle bg-muted px-3 text-left text-sm text-faint hover:border-border hover:text-muted-foreground"
         >
           <Search size={15} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate">Search pages, campaigns, settings…</span>
+          <span className="min-w-0 flex-1 truncate">Go to a page…</span>
           <kbd className="hidden shrink-0 rounded-md border border-border bg-card px-1.5 py-0.5 font-sans text-[10px] text-faint xl:inline">Ctrl K</kbd>
         </button>
         <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -169,6 +169,11 @@ function CommandPalette({ role, onClose }: { role: string; onClose: () => void }
     (Object.keys(PRODUCT_NAV) as Product[]).forEach((p) => PRODUCT_NAV[p].forEach((i) => out.push({ ...i, group: PRODUCTS[p].name })));
     if (reviewer) REVIEWER_ITEMS.forEach((i) => out.push({ ...i, group: 'Admin' }));
     out.push({ ...SETTINGS_ITEM, group: 'Account' });
+    // Pages reached from inside other pages, so they can be found here too.
+    out.push({ href: '/contacts/segments', label: 'Segments', group: PRODUCTS.mail.name });
+    out.push({ href: '/settings/sla', label: 'SLA rules', group: 'Account' });
+    out.push({ href: '/settings/webhooks', label: 'Webhooks', group: 'Account' });
+    if (role === 'SUPER_ADMIN') out.push({ href: '/settings/server', label: 'Server (cloud / laptop)', group: 'Super Admin' });
     if (role === 'SUPER_ADMIN') ADMIN_ITEMS.forEach((i) => out.push({ ...i, group: 'Super Admin' }));
     return out;
   }, [reviewer, role]);

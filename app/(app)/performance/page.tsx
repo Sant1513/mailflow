@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { istYmd } from '@/lib/dates/istRange';
 import Link from 'next/link';
 
 interface Kpis {
@@ -77,8 +78,8 @@ function MiniBarChart({ data }: { data: TrendPoint[] }) {
 }
 
 export default function PerformancePage() {
-  const today = new Date().toISOString().slice(0, 10);
-  const thirtyAgo = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+  const today = istYmd();
+  const thirtyAgo = istYmd(new Date(Date.now() - 30 * 86_400_000));
 
   const [from, setFrom] = useState(thirtyAgo);
   const [to, setTo] = useState(today);
@@ -120,8 +121,8 @@ export default function PerformancePage() {
   }
 
   function setPreset(days: number) {
-    const t = new Date().toISOString().slice(0, 10);
-    const f = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+    const t = istYmd();
+    const f = istYmd(new Date(Date.now() - days * 86_400_000));
     setFrom(f);
     setTo(t);
   }

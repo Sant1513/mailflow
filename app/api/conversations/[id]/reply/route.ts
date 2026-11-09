@@ -11,6 +11,7 @@ import { GmailProvider } from '@/lib/email/gmail';
 import { SendEmailError } from '@/lib/email/provider';
 import { buildReferences, buildQuotedTrail } from '@/lib/email/mime';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
+import { blockedReplyRecipient } from '@/lib/email/replySuppression';
 import { MessageDirection, EmailProvider as EmailProviderEnum } from '@prisma/client';
 
 const replySchema = z.object({
@@ -116,6 +117,10 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   // correctly separates the new text from the quoted section for inbox display.
   const quotedTrail = buildQuotedTrail(conversation.messages, { skipNewThread: body.newThread });
   const htmlToSend = quotedTrail ? body.html + quotedTrail : body.html;
+
+  // Never reply to an address that hard-bounced or complained (suppressed org-wide).
+  const blocked = await blockedReplyRecipient(conversation.workspaceId, [conversation.recipientEmail, ...body.cc]);
+  if (blocked) return NextResponse.json({ error: blocked }, { status: 422 });
 
   let result;
   try {

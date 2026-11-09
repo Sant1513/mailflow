@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -18,6 +19,7 @@ interface TemplateRow {
 export default function TemplatesPage() {
   const router = useRouter();
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
+  const paged = useClientPaging(templates, 25);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -124,7 +126,7 @@ export default function TemplatesPage() {
               </tr>
             </thead>
             <tbody>
-              {templates.map((t) => (
+              {paged.rows.map((t) => (
                 <tr key={t.id} className="border-t hover:bg-elevated/60">
                   <td className="px-4 py-2">
                     <Link href={`/templates/${t.id}`} className="font-medium text-primary hover:underline">
@@ -155,6 +157,7 @@ export default function TemplatesPage() {
               ))}
             </tbody>
           </table>
+          <ListPager {...paged.pager} noun="templates" className="border-t px-3" />
         </div>
       )}
     </div>

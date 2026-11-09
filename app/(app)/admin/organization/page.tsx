@@ -23,11 +23,13 @@ const PERIODS = [7, 30, 90];
 export default async function AdminOrganizationPage({
   searchParams,
 }: {
-  searchParams: { days?: string };
+  searchParams: Record<string, string | string[] | undefined>;
 }) {
   const user = await requireSuperAdminPage();
   const organizationId = user.organizationId as string;
   const days = parseDays(searchParams.days);
+  // The period links keep every other filter on the page (the ledger's l… filters).
+  const keep = new URLSearchParams(Object.entries(searchParams).flatMap(([k, v]) => (k === 'days' || v === undefined ? [] : (Array.isArray(v) ? v : [v]).map((x) => [k, x] as [string, string]))));
   const scope = { organizationId };
 
   const [org, counts, t, series, campaigns, users, approvals] = await Promise.all([
@@ -65,7 +67,7 @@ export default async function AdminOrganizationPage({
             {org?.name ?? 'Organization'} — every workspace, every mailbox, live.
           </p>
         </div>
-        <PeriodPicker days={days} />
+        <PeriodPicker days={days} keep={keep.toString()} />
       </div>
 
       {/* Every email from every workspace, by type, user and mailbox, with filters. */}
@@ -92,7 +94,7 @@ export default async function AdminOrganizationPage({
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
-        <ChartCard title="Campaign emails by day" hint={`${series.emailsByDay.reduce((a, p) => a + p.value, 0)} sent in ${days} days`}>
+        <ChartCard title="Campaign & Quick Send emails by day" hint={`${series.emailsByDay.reduce((a, p) => a + p.value, 0)} sent in ${days} days`}>
           <DailyAreaChart series={series.emailsByDay} label="Sent" />
         </ChartCard>
         <ChartCard title="Replies by day" hint={`${series.repliesByDay.reduce((a, p) => a + p.value, 0)} human replies in ${days} days`}>
@@ -182,13 +184,13 @@ export default async function AdminOrganizationPage({
   );
 }
 
-function PeriodPicker({ days }: { days: number }) {
+function PeriodPicker({ days, keep }: { days: number; keep: string }) {
   return (
     <div className="flex items-center gap-1 rounded-full border border-border bg-card p-1">
       {PERIODS.map((p) => (
         <Link
           key={p}
-          href={`?days=${p}`}
+          href={`?${keep ? `${keep}&` : ''}days=${p}`}
           className={`rounded-full px-3 py-1 text-xs font-medium transition ${
             p === days ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
           }`}
@@ -228,7 +230,7 @@ async function UserRow({
         <span className={`badge ${user.status === 'ACTIVE' ? 'badge-neutral' : 'badge-danger'}`}>{user.role}</span>
       </td>
       <td className="px-4 py-2 text-muted-foreground">
-        {user.lastLoginAt ? user.lastLoginAt.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : 'never'}
+        {user.lastLoginAt ? user.lastLoginAt.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) : 'never'}
       </td>
       <td className="px-4 py-2 text-right tabular-nums">{user.actions}</td>
       <td className="px-4 py-2 text-right tabular-nums">{user.emailsSent}</td>

@@ -51,7 +51,7 @@ export default async function AdminSystemSettingsPage() {
       <section className="panel mt-4 max-w-3xl p-5">
         <div className="mb-4">
           <h2 className="font-heading text-base font-semibold">Automation</h2>
-          <p className="text-xs text-muted-foreground">Daily digest, weekly leadership report and AI inbox triage for the whole organisation.</p>
+          <p className="text-xs text-muted-foreground">Daily report (8 PM IST, Mon–Fri), weekly report and AI inbox triage for the whole organisation.</p>
         </div>
         <AutomationSettings readOnly={readOnly} />
       </section>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
@@ -18,6 +19,7 @@ export default function DataPage() {
   const searchParams = useSearchParams();
   const workspaceId = searchParams.get('workspaceId');
   const [datasets, setDatasets] = useState<DatasetRow[]>([]);
+  const paged = useClientPaging(datasets, 25);
   const [loading, setLoading] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -89,7 +91,7 @@ export default function DataPage() {
               </tr>
             </thead>
             <tbody>
-              {datasets.map((d) => (
+              {paged.rows.map((d) => (
                 <tr key={d.id} className="border-t hover:bg-elevated/60">
                   <td className="px-4 py-2">
                     <Link href={`/data/${d.id}`} className="font-medium text-primary hover:underline">
@@ -104,6 +106,7 @@ export default function DataPage() {
               ))}
             </tbody>
           </table>
+          <ListPager {...paged.pager} noun="datasets" className="border-t px-3" />
         </div>
       )}
 

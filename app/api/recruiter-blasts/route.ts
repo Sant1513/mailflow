@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
+import { pageInfo, parsePaging } from '@/lib/api/paging';
 import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
-import { requireBlastAdmin, sendableMailboxes } from '@/lib/recruiterSend/access';
+import { requireBlastAdmin, sendableMailboxes, requireBlastReader } from '@/lib/recruiterSend/access';
 import { waitUntil } from '@vercel/functions';
 import { nudgeStuckSends } from '@/lib/recruiterSend/worker';
 import { DEFAULT_GAP } from '@/lib/recruiterSend/core';
@@ -10,14 +11,18 @@ import { DEFAULT_GAP } from '@/lib/recruiterSend/core';
 /** Mail → Recruiter Bulk Send: the list of sends (GET) and a new draft (POST). Admins only. */
 export const dynamic = 'force-dynamic';
 
-export const GET = withErrorHandling(async () => {
-  const session = await requireBlastAdmin();
+export const GET = withErrorHandling(async (req) => {
+  const session = await requireBlastReader();
   // Watchdog: a send that should be moving but isn't gets a fresh run (in the background).
   try { waitUntil(nudgeStuckSends('page').catch(() => 0)); } catch { void nudgeStuckSends('page').catch(() => 0); }
+  const paging = parsePaging(new URL(req.url).searchParams, { pageSize: 25 });
+  const where = { organizationId: session.organizationId, ...(session.role === 'SUPER_ADMIN' ? {} : { workspaceId: session.workspaceId! }) };
+  const total = await prisma.recruiterBlast.count({ where });
   const blasts = await prisma.recruiterBlast.findMany({
-    where: { organizationId: session.organizationId, ...(session.role === 'SUPER_ADMIN' ? {} : { workspaceId: session.workspaceId! }) },
-    orderBy: { createdAt: 'desc' },
-    take: 100,
+    where,
+    orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+    skip: paging.skip,
+    take: paging.take,
     select: { id: true, name: true, mode: true, status: true, subject: true, createdAt: true, startedAt: true, completedAt: true, scheduledAt: true, note: true },
   });
   const ids = blasts.map((b) => b.id);
@@ -31,6 +36,7 @@ export const GET = withErrorHandling(async () => {
     ? await prisma.recruiterBlastRecipient.groupBy({ by: ['blastId'], where: { blastId: { in: ids }, openCount: { gt: 0 } }, _count: { _all: true } })
     : [];
   return NextResponse.json({
+    ...pageInfo(total, paging),
     blasts: blasts.map((b) => {
       const counts = Object.fromEntries(recipientCounts.filter((c) => c.blastId === b.id).map((c) => [c.status, c._count._all]));
       const g = groupStats.find((x) => x.blastId === b.id);

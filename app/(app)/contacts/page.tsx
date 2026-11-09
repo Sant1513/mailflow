@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
+import { ListPager } from '@/components/ui/ListPager';
 
 interface ContactRow {
   id: string;
@@ -18,6 +19,10 @@ export default function ContactsPage() {
   const [loading, setLoading] = useState(true);
   const [filling, setFilling] = useState(false);
   const [reload, setReload] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [total, setTotal] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   // Names for contacts without one, from their lists and their replies (never overwrites).
   async function fillNames() {
@@ -30,24 +35,37 @@ export default function ContactsPage() {
     setReload((n) => n + 1);
   }
 
+  // A new search starts again at page 1.
+  useEffect(() => setPage(1), [q, pageSize]);
+
   useEffect(() => {
+    let live = true;
     const t = setTimeout(async () => {
       setLoading(true);
-      const res = await fetch(`/api/contacts?q=${encodeURIComponent(q)}`);
-      const json = await res.json();
-      setContacts(json.contacts ?? []);
+      const res = await fetch(`/api/contacts?q=${encodeURIComponent(q)}&page=${page}&pageSize=${pageSize}`).catch(() => null);
+      const json = await res?.json().catch(() => ({}));
+      if (!live) return;
+      if (!res?.ok) setError(json?.error ?? 'Could not load contacts.');
+      else {
+        setError(null);
+        setContacts(json.contacts ?? []);
+        setTotal(json.total ?? json.contacts?.length ?? 0);
+      }
       setLoading(false);
     }, 250);
-    return () => clearTimeout(t);
-  }, [q, reload]);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [q, reload, page, pageSize]);
 
   return (
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="mb-1 text-xl font-semibold">Contacts</h1>
+          <h1 className="mb-1 text-xl font-semibold">Contacts{total ? <span className="ml-2 align-middle text-sm font-normal text-muted-foreground">{total.toLocaleString('en-IN')}{q ? ' found' : ' in all'}</span> : null}</h1>
           <p className="text-sm text-muted-foreground">
-            One person, resolved across every dataset and conversation (§18).
+            One person, resolved across every dataset and conversation.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -67,16 +85,19 @@ export default function ContactsPage() {
         className="mb-4 w-full max-w-sm btn-secondary"
       />
 
-      {loading ? (
+      {error ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{error} <button type="button" onClick={() => setReload((n) => n + 1)} className="ml-2 underline">Try again</button></div>
+      ) : loading && contacts.length === 0 ? (
         <div className="text-sm text-muted-foreground">Loading…</div>
       ) : contacts.length === 0 ? (
         <div className="mt-16 text-center text-sm text-muted-foreground">
-          No contacts yet — they&apos;re created automatically when you import a dataset with an
-          email column.
+          {q ? <>No contacts match “{q}”.</> : <>No contacts yet — they&apos;re created automatically when you import a dataset with an email column.</>}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border bg-card">
-          <table className="w-full text-sm">
+        <>
+        <ListPager page={page} pageSize={pageSize} total={total} onPage={setPage} onPageSize={setPageSize} noun="contacts" />
+        <div className={`overflow-x-auto rounded-lg border bg-card transition-opacity ${loading ? 'opacity-60' : ''}`}>
+          <table className="w-full min-w-[560px] text-sm">
             <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-4 py-2">Name</th>
@@ -102,6 +123,8 @@ export default function ContactsPage() {
             </tbody>
           </table>
         </div>
+        <ListPager page={page} pageSize={pageSize} total={total} onPage={setPage} noun="contacts" />
+        </>
       )}
     </div>
   );

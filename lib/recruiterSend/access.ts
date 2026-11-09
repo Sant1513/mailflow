@@ -11,6 +11,13 @@ export async function requireBlastAdmin(): Promise<AppSession> {
   return session;
 }
 
+/** Reading a send (list, detail, previews): also allowed while a Super Admin views another workspace (read-only). */
+export async function requireBlastReader(): Promise<AppSession> {
+  const session = await requireRole([Role.ADMIN, Role.SUPER_ADMIN]);
+  if (!session.workspaceId) throw new ForbiddenError('No workspace on your account.');
+  return session;
+}
+
 export async function loadBlast(session: AppSession, id: string) {
   const blast = await prisma.recruiterBlast.findUnique({ where: { id } });
   if (!blast) return null;

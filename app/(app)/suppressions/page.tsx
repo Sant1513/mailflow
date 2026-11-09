@@ -28,6 +28,10 @@ const SOURCE_LABEL: Record<string, string> = {
   COMPLAINT: 'Complaint',
 };
 
+const REASON_LABEL: Record<string, string> = { BOUNCED: 'Bounced', UNSUBSCRIBED: 'Unsubscribed', COMPLAINT: 'Marked as spam' };
+/** A copy of a bounce that happened on a teammate's send (lib/email/bounces.ts). */
+const isOrgCopy = (detail: string | null | undefined) => !!detail && /bounced on a teammate's send|known across the organisation/.test(detail);
+
 export default function SuppressionsPage() {
   const [rows, setRows] = useState<Suppression[]>([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageCount: 1 });
@@ -107,7 +111,7 @@ export default function SuppressionsPage() {
         <div>
           <h1 className="text-xl font-semibold">Suppression List</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Emails here are skipped on every future send — bounce auto-suppressions are added automatically.
+            Emails here are skipped on every future send. Bounces and spam reports are added automatically and apply to everyone in the organisation; unsubscribes are added when someone clicks Unsubscribe.
           </p>
         </div>
         <button className="btn-primary shrink-0" onClick={() => setShowAdd((v) => !v)}>
@@ -207,16 +211,21 @@ export default function SuppressionsPage() {
                   </span>
                 </td>
                 <td className="px-4 py-2 max-w-xs">
-                  <div className="text-xs text-muted-foreground">{row.reason}</div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    {REASON_LABEL[row.reason] ?? row.reason}
+                    {isOrgCopy(row.detail) && <span className="badge badge-neutral" title="Bounced on a teammate's send: blocked for everyone in the organisation">Org-wide</span>}
+                  </div>
                   {row.detail && (
-                    <div className="mt-0.5 truncate text-xs text-faint" title={row.detail}>
+                    <div className="mt-0.5 line-clamp-2 break-words text-xs text-faint" title={row.detail}>
                       {row.detail}
                     </div>
                   )}
                 </td>
                 <td className="px-4 py-2 text-xs text-muted-foreground">
                   {row.source === 'BOUNCE' && !row.addedBy
-                    ? <span className="italic">System (bounce)</span>
+                    ? <span className="italic">{row.reason === 'COMPLAINT' ? 'System (spam report)' : isOrgCopy(row.detail) ? 'System (teammate’s bounce)' : 'System (bounce)'}</span>
+                    : row.source === 'UNSUBSCRIBE' && !row.addedBy
+                    ? <span className="italic">The recipient (unsubscribe link)</span>
                     : row.addedBy
                     ? <span title={row.addedBy.email}>{row.addedBy.name}</span>
                     : <span className="text-faint">—</span>}

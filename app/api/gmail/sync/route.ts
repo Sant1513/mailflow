@@ -32,6 +32,8 @@ export const POST = withErrorHandling(async (req) => {
   });
 
   if (!account || account.status !== 'CONNECTED' || !account.refreshTokenEnc) {
+    // The quiet sync pages run on open: nothing to do without a mailbox (no error to show).
+    if (staleMinutes > 0) return NextResponse.json({ skipped: true, stored: 0, note: 'No connected Gmail mailbox.' });
     return NextResponse.json(
       { error: 'Connect your Gmail account in Settings before syncing.' },
       { status: 400 }

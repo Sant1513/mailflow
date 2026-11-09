@@ -25,6 +25,15 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
   if (target.id === session.userId && body.role && body.role !== Role.SUPER_ADMIN) {
     return NextResponse.json({ error: 'Cannot demote yourself' }, { status: 400 });
   }
+  if (target.id === session.userId && body.status && body.status !== target.status && body.status !== 'ACTIVE') {
+    return NextResponse.json({ error: "You can't disable your own account (you would be locked out)." }, { status: 400 });
+  }
+  // The organisation always keeps at least one active Super Admin.
+  const losesSuperAdmin = target.role === Role.SUPER_ADMIN && target.status === 'ACTIVE' && ((body.role && body.role !== Role.SUPER_ADMIN) || (body.status && body.status !== 'ACTIVE'));
+  if (losesSuperAdmin) {
+    const others = await prisma.user.count({ where: { organizationId: session.organizationId, role: Role.SUPER_ADMIN, status: 'ACTIVE', id: { not: target.id } } });
+    if (!others) return NextResponse.json({ error: 'This is the last active Super Admin. Make someone else a Super Admin first.' }, { status: 400 });
+  }
 
   const updated = await prisma.user.update({
     where: { id: target.id },

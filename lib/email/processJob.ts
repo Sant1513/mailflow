@@ -11,6 +11,7 @@ import { DocumentFileError } from '@/lib/documents/inspect';
 import { buildRsvpUrl, injectTracking } from '@/lib/email/tracking';
 import { placeRsvpBlock, readRsvpConfig, renderRsvpBlock, renderRsvpText, stripRsvpPlaceholder } from '@/lib/rsvp/config';
 import { appBaseUrl } from '@/lib/app-url';
+import { replyToHeader } from '@/lib/recruiterSend/core';
 import crypto from 'crypto';
 
 /**
@@ -168,7 +169,8 @@ export async function processEmailJob(
       bcc: job.bccEmails,
       fromName: job.fromName,
       fromEmail: job.fromEmail,
-      replyTo: job.replyTo ?? undefined,
+      // A custom Reply-To keeps the sending mailbox too, so replies still reach the Inbox.
+      replyTo: replyToHeader(job.replyTo, job.fromEmail),
       subject: job.subject,
       html: trackedHtml,
       plainText,
