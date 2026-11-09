@@ -1,17 +1,19 @@
 # Phase status
 
-> **Update 27 Sep 2026:** this file is the detailed log of Phases 1–7 up to
-> 10 Sep. Everything shipped since then — Mail round 3, MailFlow Sign (S1–S6),
-> the Mail/Sign product split, the 27 Sep automation pack (digest, weekly
-> report, send for signature from Data, signing write-back, Google Sheets
-> sync, AI triage, Word / Google Doc import) — and the current known gaps are
-> summarised in the [README](README.md#phase-status). Current unit-test
-> count: 585 across 48 files.
+> **Update 10 Nov 2026:** this file is the detailed log of Phases 1–7 up to
+> 10 Sep, followed by everything shipped from 27 Sep to 9 Nov (see
+> [October–November 2026](#octobernovember-2026)), what was
+> [replaced or removed](#replaced--removed), and the [open items](#open-items).
+> Mail round 3, MailFlow Sign (S1–S6), the Mail/Sign split and the 27 Sep
+> automation pack are summarised in the [README](README.md#phase-status).
+> Unit tests: 68 files in `tests/` (the count was not re-run for this update).
 
 ## Deployment
 
-- **Live:** https://mailflow-six-sooty.vercel.app (Vercel, production)
-- **Database:** Neon Postgres (schema migrated, `prisma/migrations/`)
+- **Live:** https://mailflow-six-sooty.vercel.app (Vercel Hobby, functions in Mumbai `bom1`, Node 26.x)
+- **Database:** Supabase Postgres (free plan, Mumbai), schema in `prisma/migrations/`, applied by the build (`prisma migrate deploy`)
+- **Files:** Supabase Storage; final signing files archived to the laptop
+- **Standby:** the laptop server (`laptop-server/`), switchable to active on Settings → Server
 - **Repo:** https://github.com/Sant1513/mailflow
 
 ## Verification status (last run: 10 Sep 2026, after the Gmail sync rework)
@@ -70,12 +72,12 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] Record change history on manual edits (`RecordChangeHistory`)
 - [x] Audit logging framework (`lib/audit/log.ts`) wired into every mutation
 - [x] Admin: Users (role/status management), Audit Logs, Organization stats, Workspaces list, All Data — real queries
-- [x] Deployed to Vercel against a live Neon Postgres, with integration tests run against the deployed instance
+- [x] Deployed to Vercel against a live Postgres (Neon then; Supabase since 2 Nov 2026), with integration tests run against the deployed instance
 - [x] Grid (7 Sep 2026): server-side **filter** (same AND/OR condition engine as automations, incl. `__emailStatus`-style system fields), **search** across all columns, **sort** by header click (up to 3 keys, empties always last), **group** with counts, **pagination** (25–200/page; the browser only ever gets one page, §135) — `lib/records/query.ts`, `GET /api/datasets/[id]?filter&sort&search&groupBy&page&viewId`
 - [x] **Saved views** (`SavedView`): create / update / save-as / delete, applied via `?viewId=`, explicit params override the view; audited
 - [x] **Columns**: show/hide, rename, delete, reorder (`PATCH /api/datasets/[id]/columns` with the full id order), resize by dragging the header edge (persisted width), freeze first column
 - [x] **Bulk select → bulk set value / bulk delete** (`POST /api/datasets/[id]/records/bulk`, ≤1000 ids, only ids inside the dataset): per-record change history, contact re-link, RECORD_UPDATED automations evaluate per record, audited with counts. **Duplicate row**
-- [ ] Virtualization — datasets above 5,000 rows are filtered over the first 5,000 (the page says so); a virtualized body is a Phase 8 item
+- [x] Virtualization (2 Nov 2026, `f3313d7`) — grid pages in the database and filters read only the columns they use, so the limit went from 5,000 to 100,000 rows; the grid draws only the visible rows; 500 / 1,000-row pages
 - [x] "View as" banner + Exit View UX — shipped in Phase 6 (signed cookie, read-only, audited)
 
 ## Phase 2 — Templates ✅ done
@@ -109,7 +111,7 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] Rate limiting from durable rows, so the cap survives restarts
 - [x] BullMQ + Redis worker (`npm run worker:email`) **and** a bounded drain endpoint for deployments without Redis — both call the same `processEmailJob`
 - [x] Test email (§26) — exactly one message, clearly marked, never to campaign recipients
-- [x] Scheduling (16 Sep): schedule picker on send; BullMQ delayed jobs when Redis is present, otherwise `/api/cron/scheduled-send` dispatches once a day (Vercel Hobby limit), so without Redis a scheduled campaign goes out at the next 00:00 UTC run
+- [x] Scheduling (16 Sep): schedule picker on send; BullMQ delayed jobs when Redis is present, otherwise the 15-minute `/api/cron/dispatch` starts the sender and it releases the campaign once `scheduledAt` passes (within about 15 minutes); `/api/cron/scheduled-send` stays as the daily backstop
 - [x] Per-recipient personalised PDF attachments on campaigns (15 Sep, PDF Library); arbitrary file attachments on campaigns are still not exposed
 
 ## Phase 4 — Automation builder ✅ mostly done
@@ -144,7 +146,7 @@ test. Nothing is marked done on UI alone (§139/§140).
 - [x] Tags, status, assignment (with notification), follow-ups (with record flag) — all audited (§56/§57/§59/§60)
 - [x] **Recipient timeline** (§61) on the contact page: campaign sends, replies, automated mail, notes, status changes, follow-ups, in order
 - [x] NEW_REPLY / ASSIGNMENT notifications (§87)
-- [ ] Gmail `users.watch` renewal worker — push subscriptions expire after 7 days and are not yet re-armed automatically (manual Sync Now still works)
+- [x] Gmail `users.watch` start and renewal (2 Nov 2026, `660a1b7`, `lib/gmail/watch.ts`, renewed from the gmail-sync cron) — **off until `GMAIL_PUBSUB_TOPIC` is set** and the Pub/Sub topic and push subscription exist; until then the 30-minute sync and auto-sync on open apply
 - [ ] `gmail-sync` BullMQ worker process (the webhook queues to it when Redis is present; without Redis it syncs inline)
 - [ ] Attachment *download* — metadata is stored; fetching the bytes via `attachments.get` is not wired yet
 
@@ -167,7 +169,7 @@ Spec: docs/requests/2026-09-09-inbox-composer-notifications.md
 - [x] **Slack member ID per user**: Users page (super admin) and each person's own Settings page (/api/me)
 - [x] **Saved replies** (ReplySnippet, /api/snippets): per workspace, {{Name}} / {{FirstName}} / {{Email}} / {{Sender}} / dataset columns resolved for the conversation's student at insert time, unknown variables kept visible; managed in Settings
 - [x] **Notification bell** (§87): unread count, list, mark read, in the sidebar and the mobile bar; polls every 60 s
-- [x] **Follow-up reminders**: /api/cron/follow-ups (CRON_SECRET) → one in-app notification + one Slack thread reply per due follow-up (remindedAt guarantees once). Scheduled every 15 min by GitHub Actions (.github/workflows/follow-up-reminders.yml) with a daily Vercel cron backstop at 09:00 IST, since Vercel Hobby allows only daily crons
+- [x] **Follow-up reminders**: /api/cron/follow-ups (CRON_SECRET) → one in-app notification + one Slack thread reply per due follow-up (remindedAt guarantees once). Scheduled hourly by GitHub Actions (every 15 min until Nov 2026) (.github/workflows/follow-up-reminders.yml) with a daily Vercel cron backstop at 09:00 IST, since Vercel Hobby allows only daily crons
 - [x] **Replies sent straight from Gmail now show in the thread** (10 Sep): the sync used to ingest only non-own INBOX messages, so a reply typed in Gmail (SENT label) never reached MailFlow. Now a message from the mailbox's own address in a known MailFlow thread is stored as OUTBOUND ("Replied from Gmail" in the student's history), and unknown threads stay untouched
 - [x] **Sync rework for busy mailboxes** (10 Sep, lib/gmail/sync.ts): the team mailbox sees ~900 new messages in two days, and fetching each in full took 15+ minutes and timed out on Vercel, so the cursor never advanced. The loop now triages from history.list's own thread + label data (drafts / spam / trash and already-stored ids dropped without a fetch, known threads fetched in full, own mail in unknown threads skipped), fetches only metadata (From / In-Reply-To / References) for the rest with six parallel calls, bulk-checks Contacts and sent Message-IDs per batch of 40, and runs under a wall-clock budget with the history cursor advanced to the last record fully processed, so a run that stops early resumes (`remaining` in the response; Sync Now / auto-sync / cron loop until drained). Measured: 925-message backlog drained in 68 s in two rounds, zero errors. Route `maxDuration = 60`
 - [x] **Auto-sync**: the Inbox list and every conversation page pull the mailbox on open when it was last synced more than 2 minutes ago (`POST /api/gmail/sync?ifStaleMinutes=2`, EmailProviderAccount.lastSyncAt); `/api/cron/gmail-sync` syncs every connected mailbox every 15 min from the GitHub Actions schedule (daily Vercel backstop). Sync Now still works as the explicit path
@@ -198,7 +200,93 @@ Spec: docs/requests/2026-09-07-approvals-theme-ux.md
 - [ ] Translate targets other than Hindi in the UI (API accepts any language)
 - [ ] Per-org AI on/off in the database (today it is the `AI_ENABLED` env flag)
 
-## Phase 8 — Advanced analytics / integrations — not started
+## Phase 8 — Advanced analytics / integrations 🟡 in progress
+- [x] Outbound webhooks, SLA rules, Performance, campaign analytics (17 Sep, see README)
+- [x] Mail → Deliverability (2 Nov): bounce and unsubscribe rates against thresholds, each mailbox's 24-hour usage, SPF / DKIM / DMARC check, recent bounces
+- [x] Grid virtualisation and Gmail push watch (2 Nov, see Phases 1 and 5)
+- [x] Organization → "Everything sent" ledger (6 Nov)
+- [ ] Spam-complaint tracking (see [Open items](#open-items))
+
+## October–November 2026
+
+Grouped by area; dates are commit dates. ✅ shipped · 🟡 partial · ⬜ open.
+
+### Sending at scale (7–16 Oct) ✅
+- ✅ Campaigns send automatically, 3 s apart, instead of stopping after 20 (`b5d2855`); the sender survives errors and stays inside Google Workspace limits (`184cdcf`, `a76d31a`: 1,500 messages / 1,800 unique / 9,000 total recipients per mailbox per rolling 24 h)
+- ✅ Backup sender mailboxes for campaigns, up to 5 in order (`ef69462`)
+- ✅ **Quick Send**: a whole campaign on one screen, with attachments, a test send, templates and approvals (`81bd589` … `9578736`)
+- ✅ Sent emails start as "Waiting for student" (`9c1cbbf`); pasted HTML renders as designed (`b0a0972`)
+
+### Hosting (19 Oct – 6 Nov) ✅
+- ✅ Laptop server with Vercel as the front door, Tailscale Funnel watch and repair, restart on request (`276964d`, `3ebf94c`, `e0259c2`, `a083b36`)
+- ✅ **Move to Supabase** (Mumbai) after Neon's free compute ran out on 19 Oct; Vercel functions in `bom1` next to it (`8887bcb`, export/import tools `4c14b9c`)
+- ✅ **Server switch**: MailFlow runs on the cloud or the laptop, one at a time (`SystemState`, `lib/system/serverState.ts`, `e1c7e9b`, `e423cbf`)
+- ✅ File storage: signing attachments and signed PDFs in Supabase Storage, archived to the laptop when final, cloud copy deleted (`031c5df`)
+- ✅ Stay inside Vercel Hobby (`2683e8c`, `a6b55a3`, `8d54d8f`): small `@googleapis/gmail` / `people` / `sheets` packages plus `google-auth-library` (`googleapis-common` pinned to 9.0.0), `ignoreCommand` (`scripts/vercel-ignore.sh`) skips builds for tests / laptop-server / workflows / docs, one cheap `/api/cron/dispatch` every 15 minutes, Gmail sync every 30 minutes, follow-ups and Sheets sync hourly, Node pinned to 26.x
+- 🟡 Gmail sync works through a big backlog window by window (`9a0df08`); Gmail push watch built but off until `GMAIL_PUBSUB_TOPIC` is set (`660a1b7`)
+
+### Inbox and deliverability (2–9 Nov) ✅
+- ✅ Bounce suppression from Gmail's later delivery-failure emails; one conversation access rule (FULL / REPLY / WORK / VIEW); **inbox sharing** with "My inbox / Shared with me" (`2efc830`)
+- ✅ Bot-click filtering, pre-send address checks (dead domains, typos, no-reply, throwaway), **Deliverability** page (`89d73f8`)
+- ✅ Hard bounces from any tool or user suppressed **org-wide** with the reason (`44863b3`); `syncOrgBounces` fills gaps from the daily-report cron (`f957766`)
+- ✅ Inbox replies and scheduled replies refuse bounced or complained addresses (`lib/email/replySuppression.ts`, `fbdb742`)
+- ✅ Deliverability bounce rate counts only the workspace's own campaign bounces (`fbdb742`)
+- ✅ **Unsubscribe button on every bulk email**: one-click https plus a mailto fallback for campaigns, Quick Send, automations and individual recruiter copies; BCC recruiter sends unsubscribe by email (`Unsubscribe rb-<token>` to the sending mailbox, read during ingest by `lib/email/unsubscribeByEmail.ts`) (`3b3933d`)
+
+### Campaigns and data (2 Nov) ✅
+- ✅ **RSVP buttons** in campaign and Quick Send emails, with seat limits, deadlines, answers written to a data column and a scanner-safe `/rsvp/<token>` page (`1c3ab61`)
+- ✅ **"When someone replies"** branches per campaign: rules by reply type (AI now also recognises Interested / Not interested) (`4a58b5b`)
+- ✅ Data grid up to 100,000 rows, virtualised (`f3313d7`)
+
+### Recruiter Bulk Send (4–6 Nov) ✅
+- ✅ BCC groups of up to 250 or individual copies, from chosen mailboxes (`90f4f09`); replies go to the sending admin's inbox, assigned to them, and Reply-To always includes the sending mailbox (`a6db99e`, `00791a6`)
+- ✅ CC, live email preview, "Who receives this" plan, batches shown before sending and updated live, QA fixes (no double sends, live suppression) (`5bcf57d`, `166e4ba`, `9bb8cb6`, `724dd30`)
+- ✅ Pasted or uploaded columns kept and choosable as the email column; `{{Column | fallback}}` personalisation including UTM links (variables need individual copies; empty values skipped) (`db387b3`)
+- ✅ `sendOrder` PARALLEL (default: all mailboxes together, each with its own pause, `MAX_PARALLEL` 5, failover) or SEQUENTIAL; click a recruiter to see their email (`0f29a7f`)
+- ✅ Can't stall: watchdog (`/api/cron/recruiter-watchdog`, called by the laptop only when the database shows a stuck send), awaited hand-over, no send started too close to the end of a run (`4000117`, `0cfceaa`)
+
+### Reports (6–9 Nov) ✅
+- ✅ **Daily report at 8 PM IST, Monday to Friday**, covering 8 PM to 8 PM; weekend work rolls into Monday's and after-hours work is marked; by type, user and mailbox, plus each person's inbox (received, pending, closed, FRT, ART) (`db387b3`, `f957766`)
+- ✅ Recipients To / CC (`digest.to` / `digest.cc`, no Bcc); Slack Block Kit to its own channel (`digest.slackChannel`), posted as "MailFlow Daily Report"; email and Slack previews in System Settings (`71f09d8`)
+- ✅ Weekly report (Monday 09:00 IST) in the same design, day by day, compared with last week (`71f09d8`)
+- ✅ Sent by the 15-minute dispatch when due; the Vercel cron `daily-digest` (`0 15 * * 1-5`) is the backstop
+
+### Analytics and admin (6–9 Nov) ✅
+- ✅ Organization → **"Everything sent"**: every email (campaign, Quick Send, recruiter, inbox reply) by who launched it and which mailbox carried it, filters, CSV export (`lib/analytics/sendLedger.ts`, `28d03eb`)
+- ✅ Product-wide audit (`fbdb742`): paging with real totals everywhere (`ListPager`, `useClientPaging`, `UrlListPager`, `lib/api/paging.ts`), honest errors with Try again (`LoadError`), IST date ranges (`lib/dates/istRange.ts`), no self-disable and the last Super Admin kept, signing send failures reported
+
+### Look and feel (5–9 Nov) ✅
+- ✅ New look: minimal light and glass dark themes, floating shell, animated dashboard (`8a057cc`, `5b52984`)
+- ✅ **Profile photos** wherever a person is shown (People API `otherContacts`, scope `contacts.other.readonly`, plus Google profiles; initials as fallback; `Avatar`) and **contact names** from lists, replies and Google (`b4c8c81`, `3c897c6`, `b27cef5`, `6f37847`)
+- ✅ Official Masai logo everywhere (`public/brand/`), round Masai "m" favicon (`51f8c6e`)
+- ✅ Settings, System Settings and Mailbox usage redesigned to match the sidebar (`SettingsLayout`, `PageHeader`) (`cc5cb9a`)
+
+## Replaced / removed
+
+Kept here so older entries above still make sense.
+
+| Was | Now | When |
+| --- | --- | --- |
+| **Neon Postgres** hosting | **Supabase Postgres** (Mumbai), plus Supabase Storage; Neon's free compute ran out on 19 Oct 2026 | 2 Nov 2026 (`8887bcb`) |
+| **Vercel Blob** for signing attachments | Supabase Storage (`SUPABASE_URL` / `SUPABASE_SERVICE_KEY`); `BLOB_READ_WRITE_TOKEN` is only a legacy fallback in `app/api/e-sign/attachments/route.ts` | 2 Nov 2026 (`031c5df`) |
+| **09:00 daily digest** (27 Sep automation pack) | **8 PM IST daily report**, Monday to Friday, email + Slack | 9 Nov 2026 (`f957766`) |
+| Old weekly report layout | Weekly report in the daily report's design | 9 Nov 2026 (`71f09d8`) |
+| Full **`googleapis`** package | `@googleapis/gmail`, `@googleapis/people`, `@googleapis/sheets` + `google-auth-library` | 6 Nov 2026 (`2683e8c`) |
+| GitHub Actions calling send-queue, gmail-sync, follow-ups and Sheets sync every 15 minutes | One `/api/cron/dispatch` every 15 minutes; gmail-sync every 30 minutes; follow-ups and Sheets sync hourly | 6 Nov 2026 (`2683e8c`) |
+| Laptop calling Vercel every 2 minutes for recruiter sends | Laptop checks the database and calls `/api/cron/recruiter-watchdog` only for a stuck send | 6 Nov 2026 (`2683e8c`) |
+| BCC unsubscribe only through a "type your address" page | Unsubscribe by email to the sending mailbox; the page is the fallback | 9 Nov 2026 (`3b3933d`) |
+| 5,000-row grid limit | 100,000 rows, virtualised | 2 Nov 2026 (`f3313d7`) |
+| Node 24 on Vercel | Node 26.x pinned in `package.json` | 6 Nov 2026 (`8d54d8f`) |
+
+## Open items
+
+- ⬜ **Spam-complaint tracking** — Gmail doesn't report who marked mail as spam; Google Postmaster Tools (aggregate rates) and other providers' feedback loops (e.g. Yahoo CFL) are not wired in
+- ⬜ **Gmail push live** — needs the Pub/Sub topic, push subscription and `GMAIL_PUBSUB_TOPIC`; until then replies arrive with the 30-minute sync
+- ⬜ **Redis** — without it automation WAIT steps are skipped, scheduled replies go out at the 00:00 UTC cron, and the SCHEDULED automation trigger doesn't run
+- ⬜ Attachment byte download for inbound mail (`attachments.get`)
+- ⬜ Retention enforcement (deliberately deferred) and workspace create / rename / disable actions
+- ⬜ Visual (drag-and-drop) template builder; per-org AI switch in the database; translate targets other than Hindi in the UI
+- ⬜ Free-tier headroom to watch: Supabase 500 MB database / 1 GB storage / 5 GB egress a month; Vercel Hobby function and deployment limits
 
 ---
 
