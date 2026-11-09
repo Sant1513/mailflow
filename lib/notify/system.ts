@@ -70,13 +70,18 @@ export async function sendSystemEmail(opts: {
 }
 
 /** Posts to the organisation's Slack channel (System Settings); never throws. */
-export async function postSystemSlack(organizationId: string, text: string): Promise<ChannelOutcome> {
+export async function postSystemSlack(organizationId: string, text: string, opts: { channel?: string; blocks?: unknown[]; username?: string; iconEmoji?: string } = {}): Promise<ChannelOutcome> {
   const slack = SlackClient.fromEnv();
   if (!slack) return 'SKIPPED: Slack is not configured';
-  const settings = await prisma.integrationSettings.findUnique({ where: { organizationId }, select: { slackChannelId: true } });
-  if (!settings?.slackChannelId) return 'SKIPPED: no Slack channel set in System Settings';
-  const res = await slack.postMessage({ channel: settings.slackChannelId, text });
-  return res.ok ? 'SENT' : `FAILED: ${res.error ?? 'unknown Slack error'}`;
+  let channel = opts.channel?.trim();
+  if (!channel) {
+    const settings = await prisma.integrationSettings.findUnique({ where: { organizationId }, select: { slackChannelId: true } });
+    channel = settings?.slackChannelId ?? '';
+  }
+  if (!channel) return 'SKIPPED: no Slack channel set in System Settings';
+  const res = await slack.postMessage({ channel, text, ...(opts.blocks ? { blocks: opts.blocks } : {}), ...(opts.username ? { username: opts.username } : {}), ...(opts.iconEmoji ? { iconEmoji: opts.iconEmoji } : {}) });
+  // not_in_channel: the MailFlow app has to be added to the channel (/invite @MailFlow).
+  return res.ok ? `SENT to ${channel}` : `FAILED: ${res.error ?? 'unknown Slack error'}${res.error === 'not_in_channel' ? ' (add the MailFlow app to the channel)' : ''}`;
 }
 
 /** Shared email layout for system mail. `body` is trusted HTML built by the caller. */

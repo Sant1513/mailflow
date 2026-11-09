@@ -19,6 +19,9 @@ export interface PostMessageInput {
   threadTs?: string | null;
   /** Also show a threaded reply in the channel. */
   broadcast?: boolean;
+  /** Post as this name / icon instead of the app's (Slack scope chat:write.customize). */
+  username?: string;
+  iconEmoji?: string;
 }
 
 export interface PostedMessage {
@@ -71,6 +74,8 @@ export class SlackClient {
       channel: input.channel,
       text: input.text,
       ...(input.blocks ? { blocks: input.blocks } : {}),
+      ...(input.username ? { username: input.username } : {}),
+      ...(input.iconEmoji ? { icon_emoji: input.iconEmoji } : {}),
       ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
       ...(input.threadTs && input.broadcast ? { reply_broadcast: true } : {}),
       unfurl_links: false,

@@ -2,15 +2,20 @@ import { Prisma, Role } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { getOrgSettings, updateOrgSettings } from '@/lib/settings/org';
 import { emailsForRoles, postSystemSlack, sendSystemEmail, type ChannelOutcome } from '@/lib/notify/system';
-import { collectNeedsAttention, digestTotal, renderDigestSlack } from '@/lib/digest/needsAttention';
-import { collectDailyActivity, dueReportDay, latestReportDay, reportWindow } from '@/lib/digest/dailyActivity';
-import { renderDailyEmail, renderDailySlackLine } from '@/lib/digest/dailyEmail';
-import { buildWeeklyReport, renderWeeklyReportEmail, renderWeeklyReportSlack } from '@/lib/reports/weekly';
+import { collectNeedsAttention, digestTotal } from '@/lib/digest/needsAttention';
+import { collectDailyActivity, dueReportDay, latestReportDay, reportWindow, weekWindow } from '@/lib/digest/dailyActivity';
+import { renderDailyEmail, renderReportSlack } from '@/lib/digest/dailyEmail';
 
 /** Today's date in India (YYYY-MM-DD), the unit for "once a day". */
 export function istDate(now: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
+
+/** The name and icon the reports post under in Slack. */
+export const SLACK_AS = {
+  daily: { username: 'MailFlow Daily Report', iconEmoji: ':bar_chart:' },
+  weekly: { username: 'MailFlow Weekly Report', iconEmoji: ':calendar:' },
+} as const;
 
 export interface DispatchResult {
   organizationId: string;
@@ -60,7 +65,8 @@ export async function dispatchDailyReport(organizationId: string, opts: { testTo
       subject: opts.testTo ? `[Test] ${subject}` : subject,
       html,
     });
-    const slack = !opts.testTo && settings.digest.slack ? await postSystemSlack(organizationId, `${renderDailySlackLine(activity)}\n\n${renderDigestSlack(needs)}`) : undefined;
+    const msg = renderReportSlack(activity, needs);
+    const slack = !opts.testTo && settings.digest.slack ? await postSystemSlack(organizationId, msg.text, { channel: settings.digest.slackChannel, blocks: msg.blocks, ...SLACK_AS.daily }) : undefined;
     // Nothing went out: release the day so the next run tries again.
     if (!opts.testTo && !email.startsWith('SENT') && !slack?.startsWith('SENT')) await releaseReportDay(organizationId, day, settings.lastDailyReportOn);
     return { organizationId, sent: email.startsWith('SENT') || !!slack?.startsWith('SENT'), items, email, slack, reason: `report for ${day}` };
@@ -87,7 +93,11 @@ async function releaseReportDay(organizationId: string, day: string, previous: s
     WHERE "organizationId" = ${organizationId} AND "settings"->>'lastDailyReportOn' = ${day}`;
 }
 
-/** Sends the weekly report: once per IST day, and a test goes to one address only. */
+/**
+ * The weekly report, Monday morning: last week, Monday to Sunday, in the same design as the
+ * daily report (day by day, compared with the week before). Once per IST day; a test goes to
+ * one address only and never touches Slack or the marker.
+ */
 export async function dispatchWeeklyReport(organizationId: string, opts: { testTo?: string; now?: Date } = {}): Promise<DispatchResult> {
   const now = opts.now ?? new Date();
   const settings = await getOrgSettings(organizationId);
@@ -97,14 +107,24 @@ export async function dispatchWeeklyReport(organizationId: string, opts: { testT
     if (settings.lastWeeklyReportOn === today) return { organizationId, sent: false, reason: 'already sent today' };
   }
 
-  const report = await buildWeeklyReport(organizationId, now);
-  const { subject, html } = renderWeeklyReportEmail(report);
+  const [needs, activity] = await Promise.all([collectNeedsAttention(organizationId, settings.digest, now), collectDailyActivity(organizationId, weekWindow(now))]);
+  const { subject, html } = renderDailyEmail(activity, needs);
   const to = opts.testTo
     ? [opts.testTo]
     : [...(settings.weeklyReport.emailSuperAdmins ? await emailsForRoles(organizationId, [Role.SUPER_ADMIN]) : []), ...settings.weeklyReport.extraEmails];
-  const email = await sendSystemEmail({ organizationId, senderAccountId: settings.senderAccountId, to, subject: opts.testTo ? `[Test] ${subject}` : subject, html });
-  const slack = !opts.testTo && settings.weeklyReport.slack ? await postSystemSlack(organizationId, renderWeeklyReportSlack(report)) : undefined;
+  const email = await sendSystemEmail({ organizationId, senderAccountId: settings.senderAccountId, to, visible: !!opts.testTo, subject: opts.testTo ? `[Test] ${subject}` : subject, html });
+  const msg = renderReportSlack(activity, needs);
+  const slack = !opts.testTo && settings.weeklyReport.slack ? await postSystemSlack(organizationId, msg.text, { channel: settings.weeklyReport.slackChannel, blocks: msg.blocks, ...SLACK_AS.weekly }) : undefined;
 
   if (!opts.testTo) await updateOrgSettings(organizationId, { lastWeeklyReportOn: today }, 'system');
   return { organizationId, sent: email.startsWith('SENT') || !!slack?.startsWith('SENT'), email, slack };
+}
+
+/** Posts a test of a report to its Slack channel (marked [Test]); nothing else is sent or marked. */
+export async function testReportSlack(organizationId: string, kind: 'daily' | 'weekly', now: Date = new Date()): Promise<ChannelOutcome> {
+  const settings = await getOrgSettings(organizationId);
+  const window = kind === 'weekly' ? weekWindow(now) : reportWindow(latestReportDay(now));
+  const [needs, activity] = await Promise.all([collectNeedsAttention(organizationId, settings.digest, now), collectDailyActivity(organizationId, window)]);
+  const msg = renderReportSlack(activity, needs, { test: true });
+  return postSystemSlack(organizationId, msg.text, { channel: kind === 'weekly' ? settings.weeklyReport.slackChannel : settings.digest.slackChannel, blocks: msg.blocks, ...SLACK_AS[kind] });
 }

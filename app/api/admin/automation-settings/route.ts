@@ -7,10 +7,9 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { getOrgSettings, orgSettingsSchema, updateOrgSettings, TRIAGE_INTENTS } from '@/lib/settings/org';
 import { collectNeedsAttention, digestTotal } from '@/lib/digest/needsAttention';
-import { buildWeeklyReport, renderWeeklyReportEmail } from '@/lib/reports/weekly';
-import { dispatchDailyReport, dispatchWeeklyReport } from '@/lib/digest/dispatch';
-import { collectDailyActivity, latestReportDay, reportWindow } from '@/lib/digest/dailyActivity';
-import { renderDailyEmail } from '@/lib/digest/dailyEmail';
+import { dispatchDailyReport, dispatchWeeklyReport, SLACK_AS, testReportSlack } from '@/lib/digest/dispatch';
+import { collectDailyActivity, latestReportDay, reportWindow, weekWindow } from '@/lib/digest/dailyActivity';
+import { renderDailyEmail, renderReportSlack } from '@/lib/digest/dailyEmail';
 
 /**
  * Super Admin → System Settings → Automation: daily digest, weekly report and
@@ -68,7 +67,7 @@ export const PUT = withErrorHandling(async (req) => {
 });
 
 const postSchema = z.object({
-  action: z.enum(['preview-digest', 'preview-report', 'test-digest', 'test-report']),
+  action: z.enum(['preview-digest', 'preview-report', 'test-digest', 'test-report', 'test-slack-digest', 'test-slack-report']),
 });
 
 export const POST = withErrorHandling(async (req) => {
@@ -81,10 +80,18 @@ export const POST = withErrorHandling(async (req) => {
     // The latest 8 PM report (today's once 8 PM has passed, else the last working day's).
     const day = latestReportDay(new Date());
     const [data, activity] = await Promise.all([collectNeedsAttention(orgId, settings.digest), collectDailyActivity(orgId, reportWindow(day))]);
-    return NextResponse.json({ items: digestTotal(data), day, ...renderDailyEmail(activity, data) });
+    return NextResponse.json({ items: digestTotal(data), day, ...renderDailyEmail(activity, data), slack: { ...renderReportSlack(activity, data), channel: await slackChannelFor(orgId, settings.digest.slackChannel), as: SLACK_AS.daily } });
   }
   if (action === 'preview-report') {
-    return NextResponse.json(renderWeeklyReportEmail(await buildWeeklyReport(orgId)));
+    const settings = await getOrgSettings(orgId);
+    // Last week, Monday to Sunday — what Monday morning's email and Slack post will show.
+    const [data, activity] = await Promise.all([collectNeedsAttention(orgId, settings.digest), collectDailyActivity(orgId, weekWindow(new Date()))]);
+    return NextResponse.json({ ...renderDailyEmail(activity, data), slack: { ...renderReportSlack(activity, data), channel: await slackChannelFor(orgId, settings.weeklyReport.slackChannel), as: SLACK_AS.weekly } });
+  }
+  if (action === 'test-slack-digest' || action === 'test-slack-report') {
+    const outcome = await testReportSlack(orgId, action === 'test-slack-report' ? 'weekly' : 'daily');
+    await audit(session, 'REPORT_SLACK_TEST_SENT', { targetType: 'Organization', targetId: orgId, metadata: { action, outcome } });
+    return NextResponse.json({ ok: outcome.startsWith('SENT'), outcome });
   }
 
   const result = action === 'test-digest'
@@ -97,3 +104,10 @@ export const POST = withErrorHandling(async (req) => {
   });
   return NextResponse.json({ ok: !!result.email?.startsWith('SENT'), outcome: result.email });
 });
+
+/** The channel a report posts to: its own, else the notifications channel from System Settings. */
+async function slackChannelFor(organizationId: string, own: string): Promise<string | null> {
+  if (own) return own;
+  const s = await prisma.integrationSettings.findUnique({ where: { organizationId }, select: { slackChannelId: true } });
+  return s?.slackChannelId ?? null;
+}

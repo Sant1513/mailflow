@@ -49,6 +49,8 @@ export const orgSettingsSchema = z.object({
       to: emailList.default([]),
       cc: emailList.default([]),
       slack: z.boolean().default(true),
+      /** Slack channel for the report (ID, e.g. C09FEU43FK8); empty = the notifications channel. */
+      slackChannel: z.string().trim().regex(/^$|^[CGD][A-Z0-9]{6,20}$/, 'A Slack channel ID looks like C09FEU43FK8').default(''),
       /** Hours before expiry that an unsigned document counts as "near expiry". */
       expiringWithinHours: z.number().int().min(1).max(24 * 14).default(48),
       /** A human reply with no answer for this long counts as unanswered. */
@@ -62,6 +64,8 @@ export const orgSettingsSchema = z.object({
       emailSuperAdmins: z.boolean().default(true),
       extraEmails: emailList.default([]),
       slack: z.boolean().default(false),
+      /** Slack channel for the weekly report; empty = the notifications channel. */
+      slackChannel: z.string().trim().regex(/^$|^[CGD][A-Z0-9]{6,20}$/, 'A Slack channel ID looks like C09FEU43FK8').default(''),
     })
     .default({}),
   triage: z

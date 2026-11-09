@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/db/client', () => ({ prisma: {} }));
 
-import { dueReportDay, latestReportDay, previousIstDay, reportWindow, responseTimes, type DailyActivity } from '@/lib/digest/dailyActivity';
-import { duration, renderDailyEmail } from '@/lib/digest/dailyEmail';
+import { dueReportDay, latestReportDay, previousIstDay, reportWindow, responseTimes, weekWindow, type DailyActivity } from '@/lib/digest/dailyActivity';
+import { duration, renderDailyEmail, renderReportSlack } from '@/lib/digest/dailyEmail';
 import type { NeedsAttention } from '@/lib/digest/needsAttention';
 
 const t = (iso: string) => new Date(iso);
@@ -22,6 +22,15 @@ describe('daily report', () => {
     // The parts cover the window exactly, with no gaps.
     mon.segments.forEach((seg, i) => i && expect(seg.from.getTime()).toBe(mon.segments[i - 1]!.to.getTime()));
     expect(mon.segments.at(-1)!.to.getTime()).toBe(mon.to.getTime());
+  });
+
+  it('the weekly report covers last Monday to Sunday, one line per day', () => {
+    const w = weekWindow(t('2026-11-09T03:30:00Z')); // Monday 9 AM IST
+    expect(w.kind).toBe('weekly');
+    expect(w.from.toISOString()).toBe('2026-11-01T18:30:00.000Z'); // Mon 2 Nov 00:00 IST
+    expect(w.to.toISOString()).toBe('2026-11-08T18:30:00.000Z'); // Mon 9 Nov 00:00 IST
+    expect(w.day).toBe('2026-11-08');
+    expect(w.segments.map((x) => x.label)).toEqual(['Monday, 2 Nov', 'Tuesday, 3 Nov', 'Wednesday, 4 Nov', 'Thursday, 5 Nov', 'Friday, 6 Nov', 'Saturday, 7 Nov', 'Sunday, 8 Nov']);
   });
 
   it('is due at 8 PM IST on working days only, and a late run catches up until 8 AM', () => {
@@ -68,6 +77,8 @@ describe('daily report', () => {
   it('leaves out people with nothing sent and columns that are 0 for everyone', () => {
     const zero = { CAMPAIGN: 0, QUICK_SEND: 0, RECRUITER: 0, INBOX_REPLY: 0 };
     const a: DailyActivity = {
+      kind: 'daily',
+      previous: null,
       from: t('2026-11-05T14:30:00Z'), // Thu 8 PM IST
       to: t('2026-11-06T14:30:00Z'), // Fri 8 PM IST
       ymd: '2026-11-06',
@@ -100,5 +111,23 @@ describe('daily report', () => {
     expect(html).toContain('30m'); // FRT of the day
     expect(html).toContain('lfrom=2026-11-05&amp;lto=2026-11-06');
     expect(html).not.toContain('Quick Send'); // types with nothing sent are left out
+
+    // Slack: the same report as Block Kit, with the after-hours line and nothing for zero rows.
+    const slack = renderReportSlack(a, d);
+    expect(slack.blocks[0]).toMatchObject({ type: 'header', text: { text: '📊 Daily report · Friday, 6 November' } });
+    const all = JSON.stringify(slack.blocks);
+    expect(all).toContain('Thursday after 8 PM');
+    expect(all).toContain('Sender One');
+    expect(all).not.toContain('*Lender Two*: 0 emails'); // nothing sent: not under By user
+    expect(all).toContain('Nothing needs attention');
+    expect(slack.text).toContain('46 emails to 6,365 people');
+    for (const b of slack.blocks as { text?: { text: string } }[]) expect((b.text?.text ?? '').length).toBeLessThanOrEqual(3000);
+
+    // Weekly: same design, day by day, compared with the week before.
+    const week = renderDailyEmail({ ...a, kind: 'weekly', previous: { emails: 23, people: 6365, replies: 0 }, ymd: '2026-11-08', from: t('2026-11-01T18:30:00Z'), to: t('2026-11-08T18:30:00Z') }, d);
+    expect(week.subject).toContain('Weekly report · 2 Nov – 8 Nov');
+    expect(week.html).toContain('Day by day');
+    expect(week.html).toContain('▲ 100% vs last week');
+    expect(week.html).not.toContain('added from after hours');
   });
 });

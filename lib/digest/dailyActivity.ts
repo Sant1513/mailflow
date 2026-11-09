@@ -28,7 +28,9 @@ const cutoff = (ymd: string) => new Date(`${ymd}T${String(REPORT_HOUR).padStart(
 const dayName = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'UTC' });
 
 export interface ReportWindow {
-  /** The working day the report is for (YYYY-MM-DD, IST). */
+  /** daily = 8 PM → 8 PM (after-hours lines are remarks); weekly = Monday → Sunday, day by day. */
+  kind?: 'daily' | 'weekly';
+  /** The working day the report is for (YYYY-MM-DD, IST); for a week, its Sunday. */
   day: string;
   from: Date;
   to: Date;
@@ -51,6 +53,22 @@ export function reportWindow(day: string): ReportWindow {
     : [{ label: `${dayName(prev)} after 8 PM`, from, to: midnight(day), main: false }];
   segments.push({ label: `${dayName(day)} until 8 PM`, from: midnight(day), to, main: true });
   return { day, from, to, segments };
+}
+
+/**
+ * The week before `now`'s week: Monday 00:00 → Monday 00:00 IST, one line per day (the
+ * Monday-morning weekly report).
+ */
+export function weekWindow(now: Date): ReportWindow {
+  const today = ymdOf(now);
+  const thisMonday = addDays(today, -((weekday(today) + 6) % 7));
+  const start = addDays(thisMonday, -7);
+  const fmt = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const segments = Array.from({ length: 7 }, (_, i) => {
+    const d = addDays(start, i);
+    return { label: fmt(d), from: midnight(d), to: midnight(addDays(d, 1)), main: true };
+  });
+  return { kind: 'weekly', day: addDays(start, 6), from: midnight(start), to: midnight(thisMonday), segments };
 }
 
 /**
@@ -105,8 +123,11 @@ export interface InboxRow {
 export interface SegmentCount { label: string; main: boolean; emails: number; people: number; replies: number }
 
 export interface DailyActivity {
+  kind: 'daily' | 'weekly';
   from: Date;
   to: Date;
+  /** Weekly: the week before, for "vs last week". */
+  previous: { emails: number; people: number; replies: number } | null;
   /** The report day (YYYY-MM-DD, IST). */
   ymd: string;
   /** What the window is made of, with counts per part (after-hours / weekend / the day). */
@@ -263,13 +284,28 @@ export async function collectDailyActivity(organizationId: string, window: Repor
     }),
   );
 
+  // A week is compared with the week before (same length, just before it).
+  let previous: DailyActivity['previous'] = null;
+  if (window.kind === 'weekly') {
+    const span = to.getTime() - from.getTime();
+    const pFrom = new Date(from.getTime() - span);
+    const before = await ledgerReport({ organizationId, from: pFrom, to: from });
+    const [r] = await prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT count(*) AS n FROM "ConversationMessage" m JOIN "Conversation" c ON c."id" = m."conversationId"
+      WHERE c."organizationId" = ${organizationId} AND m."direction"::text = 'INBOUND' AND ${noise}
+        AND COALESCE(m."receivedAt", m."sentAt") >= ${pFrom} AND COALESCE(m."receivedAt", m."sentAt") < ${from}`;
+    previous = { emails: before.totals.emails, people: before.totals.people, replies: Number(r?.n ?? 0) };
+  }
+
   const users = ledger.byUser
     .filter((u) => u.emails || u.people || u.othersUsedTheirMailbox || u.replies || u.failed)
     .map((u) => ({ ...u, image: person.get(u.userId)?.image ?? null }));
 
   return {
+    kind: window.kind ?? 'daily',
     from,
     to,
+    previous,
     ymd,
     segments,
     totals: ledger.totals,

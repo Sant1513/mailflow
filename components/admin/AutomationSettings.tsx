@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { INTENT_TAGS, type OrgSettings } from '@/lib/settings/org-schema';
+import { SlackPreview } from '@/components/admin/SlackPreview';
+
+type SlackPayload = { text: string; blocks: { type: string }[]; channel: string | null; as: { username: string; iconEmoji: string } };
+type Action = 'preview-digest' | 'preview-report' | 'test-digest' | 'test-report' | 'test-slack-digest' | 'test-slack-report';
 
 interface Loaded {
   settings: OrgSettings;
@@ -41,11 +45,30 @@ function EmailList({ value, disabled, onSave, label }: { value: string[]; disabl
   );
 }
 
+/** A Slack channel ID (e.g. C09FEU43FK8); empty = the notifications channel from System Settings. */
+function ChannelField({ value, disabled, onSave, label }: { value: string; disabled: boolean; onSave: (v: string) => void; label: string }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const clean = text.trim().toUpperCase();
+  const valid = clean === '' || /^[CGD][A-Z0-9]{6,20}$/.test(clean);
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <label className="text-xs">
+        <span className="mb-1 block font-medium">{label}</span>
+        <input value={text} disabled={disabled} onChange={(e) => setText(e.target.value)} placeholder="e.g. C09FEU43FK8 (empty = notifications channel)" className="w-72 font-mono text-sm" />
+      </label>
+      <button onClick={() => onSave(clean)} disabled={disabled || !valid || clean === value} className="btn-secondary !py-1.5 text-xs">Save channel</button>
+      {!valid && <span className="text-xs text-warning">A channel ID starts with C, G or D (Slack → channel → About → Channel ID).</span>}
+    </div>
+  );
+}
+
 /** Daily digest, weekly report and AI inbox triage settings (Super Admin). */
 export function AutomationSettings({ readOnly }: { readOnly: boolean }) {
   const [data, setData] = useState<Loaded | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
+  const [preview, setPreview] = useState<{ subject: string; html: string; slack?: SlackPayload } | null>(null);
+  const [tab, setTab] = useState<'email' | 'slack'>('email');
 
   const load = useCallback(async () => {
     const res = await fetch('/api/admin/automation-settings');
@@ -67,13 +90,16 @@ export function AutomationSettings({ readOnly }: { readOnly: boolean }) {
     toast.success('Saved');
   }
 
-  async function run(action: 'preview-digest' | 'preview-report' | 'test-digest' | 'test-report') {
+  async function run(action: Action) {
     setBusy(action);
     const res = await fetch('/api/admin/automation-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
     const j = await res.json().catch(() => ({}));
     setBusy(null);
     if (!res.ok) return toast.error(j.error ?? 'Request failed');
-    if (action.startsWith('preview')) setPreview({ subject: j.subject, html: j.html });
+    if (action.startsWith('preview')) {
+      setTab('email');
+      setPreview({ subject: j.subject, html: j.html, slack: j.slack });
+    }
     else if (j.ok) toast.success(`Test sent: ${j.outcome}`);
     else toast.error(j.outcome ?? 'Could not send the test');
   }
@@ -107,15 +133,17 @@ export function AutomationSettings({ readOnly }: { readOnly: boolean }) {
           <div className="flex gap-2">
             <button onClick={() => run('preview-digest')} disabled={busy !== null} className="btn-secondary !py-1.5 text-xs">{busy === 'preview-digest' ? 'Loading…' : 'Preview latest'}</button>
             <button onClick={() => run('test-digest')} disabled={busy !== null} className="btn-secondary !py-1.5 text-xs">{busy === 'test-digest' ? 'Sending…' : 'Send test to me'}</button>
+            <button onClick={() => run('test-slack-digest')} disabled={busy !== null || !s.digest.slack} className="btn-secondary !py-1.5 text-xs">{busy === 'test-slack-digest' ? 'Posting…' : 'Send test to Slack'}</button>
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
           <Toggle checked={s.digest.enabled} disabled={off} onChange={(v) => save({ digest: { enabled: v } })} label="Send the daily report" hint="Turn the 8 PM email and Slack post on or off." />
           <Toggle checked={s.digest.emailAdmins} disabled={off || !s.digest.enabled || (s.digest.to ?? []).length > 0} onChange={(v) => save({ digest: { emailAdmins: v } })} label="Email all admins (Bcc)" hint="Used only when no To address is set below." />
-          <Toggle checked={s.digest.slack} disabled={off || !s.digest.enabled} onChange={(v) => save({ digest: { slack: v } })} label="Post to Slack" hint="A short summary in the notifications channel." />
+          <Toggle checked={s.digest.slack} disabled={off || !s.digest.enabled} onChange={(v) => save({ digest: { slack: v } })} label="Post to Slack" hint="The same report in Slack, at the same time, as “MailFlow Daily Report”." />
         </div>
         <EmailList label="To (one visible email, no Bcc)" value={s.digest.to ?? []} disabled={off || !s.digest.enabled} onSave={(v) => save({ digest: { to: v } })} />
         <EmailList label="CC" value={s.digest.cc ?? []} disabled={off || !s.digest.enabled || !(s.digest.to ?? []).length} onSave={(v) => save({ digest: { cc: v } })} />
+        <ChannelField label="Slack channel for the daily report" value={s.digest.slackChannel ?? ''} disabled={off || !s.digest.enabled || !s.digest.slack} onSave={(v) => save({ digest: { slackChannel: v } })} />
         {!(s.digest.to ?? []).length && <EmailList label="Also email (Bcc)" value={s.digest.extraEmails} disabled={off || !s.digest.enabled} onSave={(v) => save({ digest: { extraEmails: v } })} />}
         <div className="flex flex-wrap gap-4 text-xs">
           <label>
@@ -137,19 +165,21 @@ export function AutomationSettings({ readOnly }: { readOnly: boolean }) {
       <div className="space-y-3 border-t border-border-subtle pt-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="text-sm font-semibold">Weekly leadership report</h3>
-            <p className="text-xs text-muted-foreground">Mondays at 09:00 IST: campaigns, e-signature and inbox response times for the last 7 days, compared with the week before.</p>
+            <h3 className="text-sm font-semibold">Weekly report</h3>
+            <p className="text-xs text-muted-foreground">Mondays at 09:00 IST, in the same design as the daily report: last week Monday to Sunday, day by day, by user and mailbox, each person&apos;s inbox, compared with the week before.</p>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => run('preview-report')} disabled={busy !== null} className="btn-secondary !py-1.5 text-xs">{busy === 'preview-report' ? 'Loading…' : 'Preview this week'}</button>
+            <button onClick={() => run('preview-report')} disabled={busy !== null} className="btn-secondary !py-1.5 text-xs">{busy === 'preview-report' ? 'Loading…' : 'Preview last week'}</button>
             <button onClick={() => run('test-report')} disabled={busy !== null} className="btn-secondary !py-1.5 text-xs">{busy === 'test-report' ? 'Sending…' : 'Send test to me'}</button>
+            <button onClick={() => run('test-slack-report')} disabled={busy !== null || !s.weeklyReport.slack} className="btn-secondary !py-1.5 text-xs">{busy === 'test-slack-report' ? 'Posting…' : 'Send test to Slack'}</button>
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
           <Toggle checked={s.weeklyReport.enabled} disabled={off} onChange={(v) => save({ weeklyReport: { enabled: v } })} label="Send the weekly report" hint="Turn the Monday email on or off." />
           <Toggle checked={s.weeklyReport.emailSuperAdmins} disabled={off || !s.weeklyReport.enabled} onChange={(v) => save({ weeklyReport: { emailSuperAdmins: v } })} label="Email Super Admins" hint="Every Super Admin in the organisation." />
-          <Toggle checked={s.weeklyReport.slack} disabled={off || !s.weeklyReport.enabled} onChange={(v) => save({ weeklyReport: { slack: v } })} label="Post to Slack" hint="Headline numbers in the notifications channel." />
+          <Toggle checked={s.weeklyReport.slack} disabled={off || !s.weeklyReport.enabled} onChange={(v) => save({ weeklyReport: { slack: v } })} label="Post to Slack" hint="The same report in Slack, as “MailFlow Weekly Report”." />
         </div>
+        <ChannelField label="Slack channel for the weekly report" value={s.weeklyReport.slackChannel ?? ''} disabled={off || !s.weeklyReport.enabled || !s.weeklyReport.slack} onSave={(v) => save({ weeklyReport: { slackChannel: v } })} />
         <EmailList label="Leadership emails (also receive it)" value={s.weeklyReport.extraEmails} disabled={off || !s.weeklyReport.enabled} onSave={(v) => save({ weeklyReport: { extraEmails: v } })} />
       </div>
 
@@ -194,11 +224,24 @@ export function AutomationSettings({ readOnly }: { readOnly: boolean }) {
             <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
               <div className="min-w-0">
                 <div className="eyebrow">Preview · nothing is sent</div>
-                <div className="truncate text-sm font-semibold">{preview.subject}</div>
+                <div className="truncate text-sm font-semibold">{tab === 'slack' && preview.slack ? `Slack · #${preview.slack.channel ?? 'no channel set'} · as ${preview.slack.as.username}` : preview.subject}</div>
               </div>
-              <button onClick={() => setPreview(null)} className="btn-secondary !py-1.5 text-xs">Close</button>
+              <div className="flex items-center gap-2">
+                {preview.slack && (
+                  <div className="segmented flex gap-1 rounded-full border border-border p-0.5 text-xs" role="tablist">
+                    {(['email', 'slack'] as const).map((t) => (
+                      <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={`rounded-full px-3 py-1 ${tab === t ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>{t === 'email' ? 'Email' : 'Slack'}</button>
+                    ))}
+                  </div>
+                )}
+                <button onClick={() => setPreview(null)} className="btn-secondary !py-1.5 text-xs">Close</button>
+              </div>
             </div>
-            <iframe title="Email preview" sandbox="" srcDoc={preview.html} className="min-h-[60vh] w-full flex-1 bg-white" />
+            {tab === 'slack' && preview.slack ? (
+              <div className="min-h-[60vh] flex-1 overflow-hidden"><SlackPreview {...(preview.slack as unknown as Parameters<typeof SlackPreview>[0])} /></div>
+            ) : (
+              <iframe title="Email preview" sandbox="" srcDoc={preview.html} className="min-h-[60vh] w-full flex-1 bg-white" />
+            )}
           </div>
         </div>
       )}
