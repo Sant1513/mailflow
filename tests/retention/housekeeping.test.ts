@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const db = {
   $executeRaw: vi.fn(),
   $queryRaw: vi.fn(),
+  $executeRawUnsafe: vi.fn(async () => 0),
   organization: { findMany: vi.fn(async () => [{ id: 'org1' }]) },
   retentionPolicy: { findMany: vi.fn(async (): Promise<any[]> => []) },
   verificationToken: { deleteMany: vi.fn(async () => ({ count: 2 })) },
@@ -28,9 +29,11 @@ const sqlOf = (call: any[]) => (call[0] as string[]).join('?');
 const MB = 1024 * 1024;
 const now = new Date('2026-11-10T20:30:00Z');
 
+let openTables: { name: string }[] = [];
 function usage(dbBytes: number, storageBytes: number | 'missing') {
   db.$queryRaw.mockImplementation(async (strings: string[]) => {
     const sql = strings.join('?');
+    if (sql.includes('relrowsecurity')) return openTables;
     if (sql.includes('pg_database_size')) return [{ bytes: BigInt(dbBytes) }];
     if (storageBytes === 'missing') throw new Error('relation "storage.objects" does not exist');
     return [{ bytes: BigInt(storageBytes) }];
@@ -39,11 +42,25 @@ function usage(dbBytes: number, storageBytes: number | 'missing') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  openTables = [];
   db.$executeRaw.mockResolvedValue(0);
   usage(48 * MB, 0);
 });
 
 describe('daily housekeeping', () => {
+  it('turns Row-Level Security on for any table that has it off (Supabase API lock)', async () => {
+    openTables = [{ name: 'NewTable' }];
+    const r = await runDailyHousekeeping({ now });
+    expect(r.rlsEnabled).toEqual(['NewTable']);
+    expect(db.$executeRawUnsafe).toHaveBeenCalledWith('ALTER TABLE public."NewTable" ENABLE ROW LEVEL SECURITY');
+  });
+
+  it('does nothing when every table already has RLS', async () => {
+    const r = await runDailyHousekeeping({ now });
+    expect(r.rlsEnabled).toEqual([]);
+    expect(db.$executeRawUnsafe).not.toHaveBeenCalled();
+  });
+
   it('deletes only notifications, audit log, finished webhook deliveries and expired sessions', async () => {
     db.$executeRaw.mockResolvedValueOnce(3).mockResolvedValueOnce(4).mockResolvedValueOnce(5).mockResolvedValueOnce(6);
     const r = await runDailyHousekeeping({ now });

@@ -28,6 +28,8 @@ export interface HousekeepingResult {
   usage: { databaseBytes: number | null; storageBytes: number | null };
   warnings: string[];
   alerts: string[];
+  /** Tables that had RLS off and were locked this run. */
+  rlsEnabled: string[];
 }
 
 const daysAgo = (now: Date, days: number) => new Date(now.getTime() - days * 86_400_000);
@@ -58,6 +60,7 @@ export async function runDailyHousekeeping(opts: { now?: Date; budgetMs?: number
     usage: { databaseBytes: null, storageBytes: null },
     warnings: [],
     alerts: [],
+    rlsEnabled: [],
   };
 
   const notifCutoff = daysAgo(now, KEEP_DAYS.notifications);
@@ -93,6 +96,9 @@ export async function runDailyHousekeeping(opts: { now?: Date; budgetMs?: number
   }
   result.outOfTime = outOfTime();
 
+  // Supabase's public API must never see a table: RLS on for any table a later migration added.
+  result.rlsEnabled = await lockNewTables();
+
   // Free-tier early warning.
   result.usage = await measureUsage();
   const db = result.usage.databaseBytes;
@@ -111,6 +117,26 @@ export async function runDailyHousekeeping(opts: { now?: Date; budgetMs?: number
 }
 
 const mb = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
+
+/**
+ * Turns Row-Level Security on for any table in `public` that has it off (migration
+ * 20261110140000_lock_supabase_api did the existing ones). With no policies, Supabase's REST API
+ * roles see nothing; the app connects as the table owner, which RLS does not restrict.
+ * Returns the tables it locked.
+ */
+export async function lockNewTables(): Promise<string[]> {
+  try {
+    const open = await prisma.$queryRaw<{ name: string }[]>`
+      SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity`;
+    for (const t of open) await prisma.$executeRawUnsafe(`ALTER TABLE public."${t.name.replace(/"/g, '""')}" ENABLE ROW LEVEL SECURITY`);
+    if (open.length) console.warn('[housekeeping] RLS turned on for', open.map((t) => t.name).join(', '));
+    return open.map((t) => t.name);
+  } catch (err) {
+    console.error('[housekeeping] RLS check failed', err);
+    return [];
+  }
+}
 
 /** Database size, and Supabase Storage's total (no storage schema locally: null). */
 export async function measureUsage(): Promise<HousekeepingResult['usage']> {
