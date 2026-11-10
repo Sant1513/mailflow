@@ -1,0 +1,536 @@
+/*
+ * Landing page only: Masai's "Leap" design language (dark, Poppins + IBM Plex Mono, coral
+ * accents, ruled kickers, 14px cards). Every rule is scoped to .leap-ui (or to <html> only while
+ * the landing page is on screen), so the app's own theme and globals are untouched.
+ */
+
+html:has(.leap-ui) {
+  background: #0d0d0d;
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--lp-nav-h, 111px) + 8px);
+}
+@media (prefers-reduced-motion: reduce) {
+  html:has(.leap-ui) { scroll-behavior: auto; }
+}
+
+.leap-ui {
+  --paper: #f7f4ee;
+  --deep: #0d0d0d;
+  --deep-2: #1b1b1b;
+  --deep-rule: hsla(40, 36%, 95%, 0.18);
+  --deep-rule-2: hsla(40, 36%, 95%, 0.3);
+  --accent: #d0351a;
+  --accent-dark: #b42c14;
+  --accent-hi: #f05a32;
+  --coral: #fb8671;
+  --on-deep-mu: #ada79d;
+  --on-deep-2: #d8d4cc;
+  --lp-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --fast: 0.15s;
+  --mid: 0.26s;
+  --t-h2: clamp(1.95rem, 1.2rem + 3.2vw, 3.5rem);
+  --t-label: 0.6875rem;
+  --gutter: clamp(1.15rem, 0.5rem + 2.8vw, 3.75rem);
+  --maxw: 1144px;
+  --nav-bar-h: 69px;
+  --ns-h: 42px;
+  --lp-nav-h: calc(var(--nav-bar-h) + var(--ns-h));
+
+  /* The app's tokens, re-pointed so the code-built mocks sit on this palette. */
+  --background: 0 0% 5%;
+  --card: 0 0% 10.6%;
+  --elevated: 0 0% 14%;
+  --muted: 0 0% 13%;
+  --muted-foreground: 37 7% 65%;
+  --faint: 37 5% 50%;
+  --foreground: 40 36% 95%;
+  --border: 40 36% 95% / 0.18;
+  --border-subtle: 40 36% 95% / 0.12;
+  --primary: 9 78% 46%;
+  --primary-hover: 9 80% 40%;
+  --ink: 9 78% 46%;
+  --ink-foreground: 0 0% 100%;
+  --accent-from: 9 78% 46%;
+  --accent-to: 9 94% 71%;
+  --destructive: 9 94% 71%;
+  --glass: 0 0% 10.6%;
+  --glass-alpha: 1;
+
+  background: var(--deep);
+  color: var(--paper);
+  font-family: var(--font-leap), ui-sans-serif, system-ui, sans-serif;
+  min-height: 100vh;
+  overflow-x: clip;
+  position: relative;
+  -webkit-font-smoothing: antialiased;
+}
+@media (max-width: 619px) {
+  .leap-ui { --ns-h: 36px; --nav-bar-h: 62px; }
+}
+
+.leap-ui h1,
+.leap-ui h2,
+.leap-ui h3,
+.leap-ui h4 {
+  color: var(--paper);
+  font-family: var(--font-leap), ui-sans-serif, system-ui, sans-serif;
+}
+.leap-ui .mono { font-family: var(--font-leap-mono), ui-monospace, monospace; }
+.leap-ui .wrap { margin-inline: auto; max-width: calc(var(--maxw) + 2 * var(--gutter)); padding-inline: var(--gutter); }
+.leap-ui .coral { color: var(--coral); }
+.leap-ui .hi { color: var(--accent-hi); }
+.leap-ui .muted { color: var(--on-deep-mu); }
+.leap-ui :focus-visible { outline: 2px solid var(--coral); outline-offset: 3px; }
+
+/* The mocks reuse the app's .panel / badges: flat deep cards here, no glass. */
+.leap-ui .panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: var(--deep-2);
+  border: 1px solid var(--deep-rule);
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+/* ---------- Skip link ---------- */
+.leap-ui .skip {
+  background: var(--paper);
+  border-radius: 6px;
+  color: #121212;
+  font-weight: 600;
+  left: 16px;
+  padding: 10px 16px;
+  position: fixed;
+  top: -100px;
+  transition: top var(--fast) var(--lp-ease);
+  z-index: 100;
+}
+.leap-ui .skip:focus { top: 12px; }
+
+/* ---------- Buttons ---------- */
+.leap-ui .btn {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  gap: 0.6em;
+  justify-content: center;
+  letter-spacing: 0.01em;
+  min-height: 52px;
+  padding: 1rem 1.6rem;
+  transition: background var(--fast) var(--lp-ease), color var(--fast) var(--lp-ease), border-color var(--fast) var(--lp-ease);
+  white-space: nowrap;
+}
+.leap-ui .btn-solid { background: var(--accent); color: #fff; }
+.leap-ui .btn-solid:hover:not(:disabled) { background: var(--accent-dark); }
+.leap-ui .btn-solid:disabled { cursor: wait; opacity: 0.75; }
+.leap-ui .btn-ghost { background: rgba(255, 255, 255, 0.06); border-color: var(--deep-rule); color: var(--paper); }
+.leap-ui .btn-ghost:hover { background: rgba(255, 255, 255, 0.1); border-color: var(--deep-rule-2); }
+.leap-ui .btn-sm { font-size: 0.875rem; min-height: 44px; padding: 0.7rem 1.35rem; }
+
+/* ---------- Pulse dot + counter landing ---------- */
+.leap-ui .dot {
+  animation: lp-pulse 1.6s ease-out infinite;
+  background: currentColor;
+  border-radius: 50%;
+  color: var(--coral);
+  display: inline-block;
+  flex: 0 0 auto;
+  height: 7px;
+  width: 7px;
+}
+@keyframes lp-pulse {
+  0% { box-shadow: 0 0 0 0 currentColor; }
+  70%, 100% { box-shadow: 0 0 0 7px transparent; }
+}
+.leap-ui .is-landed { animation: lp-land 0.6s var(--lp-ease); display: inline-block; }
+@keyframes lp-land {
+  0% { transform: scale(1); }
+  40% { text-shadow: 0 0 16px rgba(251, 134, 113, 0.7); transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+
+/* ---------- Nav ---------- */
+.leap-ui .nav {
+  -webkit-backdrop-filter: saturate(1.8) blur(12px);
+  backdrop-filter: saturate(1.8) blur(12px);
+  background: rgba(13, 13, 13, 0.9);
+  left: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 50;
+}
+.leap-ui .nav-bar { align-items: center; display: flex; gap: 16px; height: var(--nav-bar-h); justify-content: space-between; }
+.leap-ui .brand { align-items: center; color: var(--paper); display: inline-flex; gap: 10px; }
+.leap-ui .brand-sep { background: var(--deep-rule-2); height: 22px; width: 1px; }
+.leap-ui .brand-name { font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.01em; }
+.leap-ui .nav-links { align-items: center; display: flex; gap: 28px; }
+.leap-ui .nav-links a {
+  align-items: center;
+  border-bottom: 1px solid transparent;
+  color: var(--on-deep-mu);
+  display: inline-flex;
+  font-size: 0.9375rem;
+  min-height: 44px;
+  padding-inline: 0.25rem;
+  transition: color var(--fast), border-color var(--fast);
+}
+.leap-ui .nav-links a:hover { color: var(--paper); }
+.leap-ui .burger {
+  align-items: center;
+  border: 1px solid var(--deep-rule-2);
+  border-radius: 999px;
+  color: var(--paper);
+  display: none;
+  height: 44px;
+  justify-content: center;
+  width: 44px;
+}
+.leap-ui .nav-menu { border-top: 1px solid var(--deep-rule); padding: 8px 0 20px; }
+.leap-ui .nav-menu a { border-bottom: 1px solid var(--deep-rule); color: var(--on-deep-2); display: block; font-size: 1.0625rem; padding: 14px 0; }
+@media (max-width: 899px) {
+  .leap-ui .nav-links { display: none; }
+  .leap-ui .burger { display: inline-flex; }
+  .leap-ui .nav-cta { display: none; }
+}
+
+/* Announcement marquee under the nav */
+.leap-ui .nav-strip {
+  background: #2a1a16;
+  border-bottom: 1px solid var(--deep-rule);
+  border-top: 1px solid var(--deep-rule);
+  color: var(--paper);
+  height: var(--ns-h);
+  overflow: hidden;
+  position: relative;
+}
+.leap-ui .ns-marquee {
+  display: flex;
+  height: 100%;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+.leap-ui .ns-track { animation: lp-ns-scroll var(--ns-dur, 48s) linear infinite; display: flex; flex: 0 0 auto; height: 100%; }
+.leap-ui .nav-strip:hover .ns-track { animation-play-state: paused; }
+.leap-ui .ns-group { align-items: center; display: flex; flex: 0 0 auto; font-size: 0.875rem; font-weight: 600; gap: 56px; padding-right: 56px; white-space: nowrap; }
+.leap-ui .ns-item { align-items: center; display: inline-flex; gap: 56px; }
+.leap-ui .ns-item::after { color: var(--coral); content: "\25C6"; font-size: 0.5rem; opacity: 0.85; }
+@keyframes lp-ns-scroll { to { transform: translateX(-50%); } }
+@media (max-width: 619px) {
+  .leap-ui .ns-group { font-size: 0.8125rem; gap: 40px; padding-right: 40px; }
+  .leap-ui .ns-item { gap: 40px; }
+}
+
+/* ---------- Kickers + section heads ---------- */
+.leap-ui .kick {
+  align-items: center;
+  color: var(--on-deep-mu);
+  display: flex;
+  font-family: var(--font-leap-mono), ui-monospace, monospace;
+  font-size: var(--t-label);
+  gap: 12px;
+  letter-spacing: 0.18em;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+.leap-ui .kick-rule::after { background: var(--deep-rule-2); content: ""; flex: 1 1 auto; height: 1px; }
+.leap-ui .h2 {
+  font-size: var(--t-h2);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.06;
+  margin-top: 18px;
+}
+.leap-ui .lede { color: var(--on-deep-2); font-size: clamp(1rem, 0.9rem + 0.45vw, 1.25rem); line-height: 1.55; margin-top: 16px; max-width: 46rem; }
+.leap-ui .section { padding-block: clamp(4.5rem, 3rem + 5vw, 7.5rem); position: relative; isolation: isolate; }
+.leap-ui .card-kick {
+  align-items: center;
+  color: var(--coral);
+  display: inline-flex;
+  font-family: var(--font-leap-mono), ui-monospace, monospace;
+  font-size: var(--t-label);
+  gap: 8px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.leap-ui .card-kick::before { background: currentColor; border-radius: 50%; content: ""; height: 5px; width: 5px; }
+
+/* ---------- Cards ---------- */
+.leap-ui .card {
+  background: var(--deep-2);
+  border: 1px solid var(--deep-rule);
+  border-radius: 14px;
+  padding: clamp(1.25rem, 1rem + 1vw, 2rem);
+  transition: border-color var(--mid) var(--lp-ease), transform var(--mid) var(--lp-ease);
+}
+@media (hover: hover) {
+  .leap-ui .card-hover:hover { border-color: var(--deep-rule-2); transform: translateY(-2px); }
+}
+.leap-ui .card h3 { font-size: 1.1875rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; margin-top: 14px; }
+.leap-ui .card p { color: var(--on-deep-mu); font-size: 0.9375rem; line-height: 1.6; margin-top: 8px; }
+
+/* ---------- Hero ---------- */
+.leap-ui .hero { padding-top: calc(var(--lp-nav-h) + clamp(3rem, 2rem + 4vw, 6rem)); position: relative; text-align: center; }
+.leap-ui .hero-glow {
+  background: radial-gradient(60% 55% at 50% 30%, rgba(208, 53, 26, 0.28), rgba(208, 53, 26, 0) 70%);
+  inset: 0 0 auto 0;
+  height: 900px;
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
+}
+.leap-ui .hero-kick { color: var(--paper); justify-content: center; }
+.leap-ui .h1 {
+  font-size: clamp(2.35rem, 1.3rem + 4.4vw, 3.85rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.04;
+  margin: 22px auto 0;
+  max-width: 15ch;
+}
+.leap-ui .steps {
+  align-items: center;
+  color: var(--on-deep-mu);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: clamp(0.95rem, 0.85rem + 0.4vw, 1.1rem);
+  gap: 10px 18px;
+  justify-content: center;
+  margin-top: 24px;
+}
+.leap-ui .steps b { color: var(--paper); font-weight: 600; }
+.leap-ui .steps .rule { background: var(--deep-rule-2); height: 1px; width: 40px; }
+.leap-ui .hero-ctas { align-items: center; display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-top: 32px; }
+.leap-ui .live-pill {
+  align-items: center;
+  background: rgba(208, 53, 26, 0.12);
+  border: 1px solid rgba(251, 134, 113, 0.22);
+  border-radius: 10px;
+  color: var(--paper);
+  display: inline-flex;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 18px;
+}
+.leap-ui .live-pill b { color: var(--coral); font-size: 1.25rem; font-weight: 700; }
+.leap-ui .hero-note { color: var(--on-deep-mu); font-size: 0.8125rem; margin-top: 16px; }
+.leap-ui .hero-stats { display: flex; flex-wrap: wrap; justify-content: center; margin-top: 40px; row-gap: 16px; }
+.leap-ui .hero-stat { border-left: 1px solid var(--deep-rule); padding-inline: clamp(14px, 2.5vw, 32px); text-align: center; }
+.leap-ui .hero-stat:first-child { border-left: 0; }
+.leap-ui .hero-stat b { color: var(--paper); display: block; font-size: 1.5rem; font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -0.02em; }
+.leap-ui .hero-stat span { color: var(--on-deep-mu); font-family: var(--font-leap-mono), ui-monospace, monospace; font-size: var(--t-label); letter-spacing: 0.14em; text-transform: uppercase; }
+@media (max-width: 479px) {
+  .leap-ui .hero-stat { flex: 0 0 50%; }
+  .leap-ui .hero-stat:nth-child(odd) { border-left: 0; }
+}
+.leap-ui .hero-window {
+  background: var(--deep-2);
+  border: 1px solid var(--deep-rule);
+  border-radius: 14px;
+  box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(251, 134, 113, 0.06);
+  margin: clamp(3rem, 2rem + 4vw, 5rem) auto 0;
+  max-width: 1000px;
+  overflow: hidden;
+  text-align: left;
+}
+
+/* ---------- Tabs (feature switcher + FAQ categories) ---------- */
+.leap-ui .tabs { display: flex; gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; padding: 4px 2px; scrollbar-width: none; }
+.leap-ui .tabs::-webkit-scrollbar { display: none; }
+.leap-ui .tab {
+  background: #1e1e1e;
+  border-radius: 6px;
+  color: var(--paper);
+  flex: 0 0 auto;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.45;
+  padding: 14px 26px;
+  transition: background var(--fast) var(--lp-ease), color var(--fast) var(--lp-ease);
+  white-space: nowrap;
+}
+.leap-ui .tab:hover { background: #2a2a2a; }
+.leap-ui .tab[aria-selected="true"] { background: var(--accent); color: #fff; }
+
+/* ---------- Journey ---------- */
+.leap-ui .jr-body { display: grid; gap: 48px; grid-template-columns: 240px minmax(0, 1fr); margin-top: 48px; }
+.leap-ui .jr-rail { align-self: start; position: sticky; top: calc(var(--lp-nav-h) + 24px); }
+.leap-ui .jr-rail ol { display: grid; gap: 6px; }
+.leap-ui .jr-stop {
+  align-items: stretch;
+  border-radius: 2px;
+  display: flex;
+  gap: 16px;
+  padding: 12px 6px 12px 0;
+  text-align: left;
+  transition: background var(--mid) var(--lp-ease);
+  width: 100%;
+}
+.leap-ui .jr-stop::before { background: #232323; border-radius: 999px; content: ""; flex: 0 0 auto; min-height: 52px; transition: background var(--mid) var(--lp-ease); width: 4px; }
+.leap-ui .jr-stop[aria-current="step"] { background: linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0)); }
+.leap-ui .jr-stop[aria-current="step"]::before { background: var(--accent-hi); }
+.leap-ui .jr-stop-label { color: var(--paper); display: block; font-size: 1.125rem; font-weight: 600; line-height: 30px; text-transform: uppercase; }
+.leap-ui .jr-stop-meta { color: #838383; display: block; font-family: var(--font-leap-mono), ui-monospace, monospace; font-size: 0.75rem; letter-spacing: 0.03em; line-height: 20px; text-transform: uppercase; transition: color var(--mid) var(--lp-ease); }
+.leap-ui .jr-stop[aria-current="step"] .jr-stop-meta { color: var(--accent-hi); }
+.leap-ui .jr-panels { display: grid; gap: 32px; }
+.leap-ui .jr-panel {
+  background: #141414;
+  border: 1px solid var(--deep-rule);
+  border-radius: 14px;
+  display: grid;
+  gap: 28px;
+  padding: clamp(1.25rem, 0.8rem + 1.6vw, 2rem);
+  scroll-margin-top: calc(var(--lp-nav-h) + 16px);
+}
+.leap-ui .jr-chip {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  color: var(--accent-hi);
+  display: inline-block;
+  font-family: var(--font-leap-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 8px 12px;
+  text-transform: uppercase;
+}
+.leap-ui .jr-title { font-size: clamp(1.5rem, 1.1rem + 1.4vw, 2.1rem); font-weight: 700; letter-spacing: -0.03em; line-height: 1.12; margin-top: 18px; }
+.leap-ui .jr-title span { color: var(--accent-hi); display: block; }
+.leap-ui .jr-copy { color: var(--on-deep-2); font-size: 0.9375rem; line-height: 1.65; margin-top: 14px; max-width: 40rem; }
+.leap-ui .jr-points { display: grid; gap: 10px; margin-top: 18px; }
+.leap-ui .jr-points li { color: var(--on-deep-mu); display: flex; font-size: 0.875rem; gap: 12px; line-height: 1.55; }
+.leap-ui .jr-points li::before { color: var(--accent-hi); content: "\2014"; flex: 0 0 auto; }
+@media (max-width: 1023.98px) {
+  .leap-ui .jr-body { gap: 24px; grid-template-columns: minmax(0, 1fr); }
+  .leap-ui .jr-rail {
+    background: var(--deep);
+    border-bottom: 1px solid var(--deep-rule);
+    margin-inline: calc(var(--gutter) * -1);
+    padding: 10px var(--gutter);
+    top: var(--lp-nav-h);
+    z-index: 3;
+  }
+  .leap-ui .jr-rail ol { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  .leap-ui .jr-rail ol::-webkit-scrollbar { display: none; }
+  .leap-ui .jr-stop { background: #1e1e1e; border-radius: 6px; flex: 0 0 auto; padding: 8px 14px; width: auto; }
+  .leap-ui .jr-stop::before { display: none; }
+  .leap-ui .jr-stop[aria-current="step"] { background: var(--accent); }
+  .leap-ui .jr-stop-label { font-size: 0.8125rem; line-height: 20px; white-space: nowrap; }
+  .leap-ui .jr-stop-meta { display: none; }
+  .leap-ui .jr-panel { scroll-margin-top: calc(var(--lp-nav-h) + 76px); }
+}
+
+/* ---------- Always / Never ---------- */
+.leap-ui .an-grid { display: grid; gap: 40px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 28px; }
+@media (max-width: 767px) { .leap-ui .an-grid { grid-template-columns: minmax(0, 1fr); } }
+.leap-ui .an-head { border-bottom: 1px solid var(--deep-rule); font-family: var(--font-leap-mono), ui-monospace, monospace; font-size: 0.8125rem; letter-spacing: 0.14em; padding-bottom: 14px; text-transform: uppercase; }
+.leap-ui .an-always .an-head { border-color: var(--accent-hi); color: var(--accent-hi); }
+.leap-ui .an-never .an-head { color: var(--on-deep-2); }
+.leap-ui .an-list li { border-bottom: 1px solid rgba(247, 244, 238, 0.07); display: flex; font-size: 0.9375rem; gap: 14px; line-height: 1.5; padding: 16px 12px; }
+.leap-ui .an-always li { color: var(--paper); }
+.leap-ui .an-never li { color: var(--on-deep-mu); }
+.leap-ui .an-list svg { flex: 0 0 auto; margin-top: 3px; }
+
+/* ---------- Closing band ---------- */
+.leap-ui .closing {
+  background: radial-gradient(55% 70% at 50% 100%, rgba(208, 53, 26, 0.32), rgba(208, 53, 26, 0) 70%);
+  padding-block: clamp(5rem, 3rem + 7vw, 9rem);
+  text-align: center;
+}
+.leap-ui .closing h2 { font-size: clamp(2.2rem, 1.2rem + 4.4vw, 4.4rem); font-weight: 700; letter-spacing: -0.03em; line-height: 1.04; margin-inline: auto; max-width: 16ch; }
+
+/* ---------- FAQ ---------- */
+.leap-ui .faq-row { border-bottom: 1px solid var(--deep-rule); }
+.leap-ui .faq-row summary {
+  align-items: center;
+  color: var(--paper);
+  cursor: pointer;
+  display: flex;
+  font-size: 1.03rem;
+  font-weight: 600;
+  gap: 24px;
+  justify-content: space-between;
+  letter-spacing: -0.015em;
+  line-height: 1.6;
+  list-style: none;
+  padding: 24px 0;
+  transition: color var(--fast) var(--lp-ease);
+}
+.leap-ui .faq-row summary::-webkit-details-marker { display: none; }
+.leap-ui .faq-row summary:hover { color: var(--coral); }
+.leap-ui .faq-row summary svg { color: var(--on-deep-mu); flex: 0 0 auto; height: 15px; transition: transform var(--mid) var(--lp-ease), color var(--fast) var(--lp-ease); width: 15px; }
+.leap-ui .faq-row[open] summary svg { color: var(--paper); transform: rotate(45deg); }
+.leap-ui .faq-row .faq-a { color: var(--on-deep-mu); font-size: 0.9375rem; line-height: 1.7; max-width: 52rem; padding: 0 40px 26px 0; }
+
+/* ---------- Footer ---------- */
+.leap-ui .footer { border-top: 1px solid var(--deep-rule); padding-block: 48px 40px; }
+.leap-ui .foot-note { color: var(--on-deep-mu); font-family: var(--font-leap-mono), ui-monospace, monospace; font-size: var(--t-label); letter-spacing: 0.14em; text-transform: uppercase; }
+
+/* ---------- Sticky CTA bar ---------- */
+.leap-ui .cta-bar {
+  background: var(--deep);
+  border-top: 1px solid var(--deep-rule);
+  bottom: 0;
+  left: 0;
+  padding: 0.75rem 0 max(0.75rem, env(safe-area-inset-bottom));
+  position: fixed;
+  right: 0;
+  transform: translateY(100%);
+  transition: transform 0.32s var(--lp-ease), visibility 0s linear 0.32s;
+  visibility: hidden;
+  will-change: transform;
+  z-index: 60;
+}
+.leap-ui .cta-bar.is-on { transform: none; transition: transform 0.32s var(--lp-ease), visibility 0s; visibility: visible; }
+
+/* ---------- Scroll reveals (hidden only once JS + IntersectionObserver are known to work) ---------- */
+.lp-js .leap-ui [data-r] {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.6s var(--lp-ease), transform 0.6s var(--lp-ease);
+  transition-delay: var(--d, 0s);
+}
+.lp-js .leap-ui [data-r="l"] { transform: translateX(-24px); }
+.lp-js .leap-ui [data-r="r"] { transform: translateX(38px); }
+.lp-js .leap-ui [data-r="s"] { transform: scale(0.965); transform-origin: 50% 60%; }
+.lp-js .leap-ui [data-r].in { opacity: 1; transform: none; }
+
+/* Section backgrounds fade in on entry */
+.leap-ui .inv::before {
+  background: linear-gradient(180deg, #121212, #0f0f0f);
+  content: "";
+  inset: 0;
+  opacity: 1;
+  position: absolute;
+  z-index: -1;
+}
+.lp-js .leap-ui .inv::before { opacity: 0; transition: opacity 0.55s var(--lp-ease); }
+.lp-js .leap-ui .inv.in::before { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-js .leap-ui [data-r] { opacity: 1 !important; transform: none !important; transition: none; }
+  .lp-js .leap-ui .inv::before { opacity: 1 !important; transition: none; }
+  .leap-ui .dot,
+  .leap-ui .is-landed,
+  .leap-ui .ns-track { animation: none !important; }
+  .leap-ui .cta-bar,
+  .leap-ui .card,
+  .leap-ui .tab,
+  .leap-ui .faq-row summary svg { transition: none; }
+  .leap-ui .card-hover:hover { transform: none; }
+}
+
+/* "MailFlow by Masai" lockup (Leap style: wordmark, red full stop, spaced mono "BY MASAI"). */
+.leap-ui .lockup { display: inline-flex; flex-direction: column; line-height: 1; }
+.leap-ui .lockup-name { color: var(--paper); font-weight: 700; letter-spacing: -0.035em; font-size: 1.6rem; }
+.leap-ui .lockup--footer .lockup-name { font-size: 2rem; }
+.leap-ui .lockup-dot { color: var(--accent-hi); }
+.leap-ui .lockup-by { color: var(--paper); font-size: 0.56rem; font-weight: 600; letter-spacing: 0.42em; margin-top: 0.3rem; padding-left: 0.1rem; text-transform: uppercase; }
+.leap-ui .lockup--footer .lockup-by { font-size: 0.66rem; }

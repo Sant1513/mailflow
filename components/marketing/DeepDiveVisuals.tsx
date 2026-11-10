@@ -1,8 +1,8 @@
 'use client';
 
 import { motion, useReducedMotion } from 'framer-motion';
-import { ArrowDown, Bot, Check, CheckCircle2, Clock, Sheet } from 'lucide-react';
-import { EASE_OUT } from './Reveal';
+import { ArrowDown, Bot, Check, CheckCircle2, Clock, FileSpreadsheet, Link2, Sheet, ShieldCheck, ToggleRight } from 'lucide-react';
+const EASE_OUT = [0.22, 0.61, 0.36, 1] as const;
 
 /** Mock visuals for the three deep-dives. Made-up data; each plays once when first seen. */
 
@@ -179,6 +179,133 @@ export function SigningVisual() {
           <span className="truncate text-success">Signed</span>
           <span className="truncate">PDF + certificate</span>
         </div>
+      </motion.div>
+    </div>
+  );
+}
+
+export function ConnectVisual() {
+  const { view, t } = useOnce();
+  return (
+    <div aria-hidden className="panel p-5 sm:p-6">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium text-foreground">Settings · Gmail</span>
+        <span className="text-faint">your own mailbox</span>
+      </div>
+      <div className="mt-4 flex items-center gap-3 rounded-xl border border-border-subtle bg-background/60 px-3 py-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+          <Link2 size={16} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-medium text-foreground">you@yourteam</div>
+          <div className="truncate text-[11px] text-faint">Google sign-in · token encrypted at rest</div>
+        </div>
+        <motion.span className="badge badge-success shrink-0" initial={{ opacity: 0, scale: 0.85 }} whileInView={{ opacity: 1, scale: 1 }} viewport={view} transition={t(0.3, 0.35)}>
+          Connected
+        </motion.span>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-border-subtle bg-background/60 px-3 py-2.5 text-[12px] text-muted-foreground">
+        <span className="truncate">Allow my mailbox as a backup sender</span>
+        <ToggleRight size={20} className="shrink-0 text-primary" />
+      </div>
+    </div>
+  );
+}
+
+export function DataVisual() {
+  const { view, t } = useOnce();
+  const cols = ['Name', 'Email', 'Batch', 'Slot'];
+  const rows = [
+    ['Student A', 'a@example.com', 'B24', '4 PM'],
+    ['Student B', 'b@example.com', 'B24', '5 PM'],
+    ['Student C', 'c@example.com', 'B25', '4 PM'],
+  ];
+  return (
+    <div aria-hidden className="panel p-5 sm:p-6">
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+        <span className="badge badge-neutral gap-1"><FileSpreadsheet size={11} /> CSV / Excel</span>
+        <span className="badge badge-neutral gap-1"><Sheet size={11} /> Google Sheet · two-way</span>
+        <span className="badge badge-neutral">Segment</span>
+      </div>
+      <div className="mt-4 overflow-hidden rounded-xl border border-border-subtle text-[11px]">
+        <div className="grid grid-cols-4 gap-2 bg-muted px-3 py-1.5 font-medium text-faint">
+          {cols.map((c) => (
+            <span key={c} className="truncate">{c}</span>
+          ))}
+        </div>
+        {rows.map((r, i) => (
+          <motion.div
+            key={r[0]}
+            className="grid grid-cols-4 gap-2 border-t border-border-subtle bg-background/60 px-3 py-2 text-muted-foreground"
+            initial={{ opacity: 0, y: 6 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={view}
+            transition={t(0.1 + i * 0.1, 0.35)}
+          >
+            {r.map((v) => (
+              <span key={v} className="truncate">{v}</span>
+            ))}
+          </motion.div>
+        ))}
+      </div>
+      <div className="mt-3 rounded-lg bg-muted px-3 py-2 font-mono text-[11px] text-muted-foreground">
+        Hi <span className="text-primary">{'{{Name}}'}</span>, your interview is at <span className="text-primary">{'{{Slot}}'}</span>.
+      </div>
+    </div>
+  );
+}
+
+export function ApproveVisual() {
+  const { view, t } = useOnce();
+  const skipped = [
+    ['Unsubscribed', 3],
+    ['Bounced before', 2],
+    ['No-reply address', 1],
+  ] as const;
+  return (
+    <div aria-hidden className="panel p-5 sm:p-6">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium text-foreground">Dry run · Placement drive</span>
+        <span className="text-faint">nothing sent yet</span>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="rounded-xl border border-border-subtle bg-background/60 p-3">
+          <div className="text-[22px] font-bold tabular-nums text-foreground">412</div>
+          <div className="text-[11px] text-faint">will receive</div>
+        </div>
+        <div className="rounded-xl border border-border-subtle bg-background/60 p-3">
+          <div className="text-[22px] font-bold tabular-nums text-foreground">6</div>
+          <div className="text-[11px] text-faint">skipped, with the reason</div>
+        </div>
+      </div>
+      <ul className="mt-3 grid gap-1.5">
+        {skipped.map(([why, n], i) => (
+          <motion.li
+            key={why}
+            className="flex items-center justify-between rounded-lg bg-muted px-3 py-1.5 text-[11px] text-muted-foreground"
+            initial={{ opacity: 0, x: 10 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={view}
+            transition={t(0.1 + i * 0.1, 0.35)}
+          >
+            <span>{why}</span>
+            <span className="tabular-nums">{n}</span>
+          </motion.li>
+        ))}
+      </ul>
+      <motion.div
+        className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2.5"
+        initial={{ opacity: 0, y: 8 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={view}
+        transition={t(0.5, 0.4)}
+      >
+        <span className="flex items-center gap-1.5 text-[11px] text-primary">
+          <ShieldCheck size={13} /> Waiting for an admin
+        </span>
+        <span className="inline-flex items-center gap-1 rounded-full bg-ink px-3 py-1 text-[11px] font-semibold text-ink-foreground">
+          <Check size={12} /> Approve &amp; send
+        </span>
       </motion.div>
     </div>
   );

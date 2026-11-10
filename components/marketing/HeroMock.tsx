@@ -61,11 +61,8 @@ export function HeroMock() {
   const done = sent === TOTAL;
 
   return (
-    <div ref={ref} className="relative mx-auto w-full max-w-[520px]" aria-label="Illustration of MailFlow with example data" role="img">
-      {/* Soft red glow behind the mock */}
-      <div aria-hidden className="pointer-events-none absolute -inset-6 -z-10 rounded-[40px] bg-primary/10 blur-3xl" />
-
-      <div className="panel overflow-hidden !rounded-[20px]" aria-hidden>
+    <div ref={ref} className="relative w-full" aria-label="Illustration of MailFlow with example data" role="img">
+      <div aria-hidden>
         {/* Window chrome */}
         <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
           <span className="h-2.5 w-2.5 rounded-full bg-primary/70" />
@@ -74,9 +71,9 @@ export function HeroMock() {
           <span className="ml-2 truncate text-[11px] text-faint">MailFlow · Mail</span>
         </div>
 
-        <div className="grid gap-3 p-3 sm:p-4">
+        <div className="grid gap-3 p-3 sm:grid-cols-2 sm:p-5 lg:grid-cols-[1.15fr_1.25fr_0.9fr]">
           {/* Campaign card */}
-          <div className="rounded-xl border border-border-subtle bg-background/60 p-3.5">
+          <div className="rounded-xl sm:col-span-2 lg:col-span-1 border border-border-subtle bg-background/60 p-3.5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 text-[11px] text-faint">
@@ -116,7 +113,6 @@ export function HeroMock() {
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-[1.35fr_1fr]">
             {/* Inbox */}
             <div className="rounded-xl border border-border-subtle bg-background/60 p-3">
               <div className="mb-2 flex items-center justify-between">
@@ -186,7 +182,6 @@ export function HeroMock() {
                 </span>
               </div>
             </div>
-          </div>
         </div>
       </div>
     </div>

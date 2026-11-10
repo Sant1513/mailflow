@@ -1,57 +1,77 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { animate, useInView, useReducedMotion } from 'framer-motion';
 import { formatCounting } from '@/lib/marketing/format';
 import type { PublicStat } from '@/lib/marketing/stats';
 
-/** Counts up once to the rounded total, the first time it is seen. Final text from the server. */
-function Counter({ stat }: { stat: Pick<PublicStat, 'value' | 'display'> }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const inView = useInView(ref, { once: true, amount: 0.6 });
-  const reduce = useReducedMotion();
-  // Server HTML (and reduced motion) shows the real final value; the count-up starts from 0
-  // only once the strip is on screen in a browser that allows motion.
+/**
+ * A live total that counts up once, the first time it is on screen, then "lands" (a short
+ * scale + coral glow). Server HTML and reduced motion show the real final value directly.
+ * Space for the final text is reserved, so counting never moves anything around it.
+ */
+export function LiveCount({ stat, className = '' }: { stat: Pick<PublicStat, 'value' | 'display'>; className?: string }) {
+  const ref = useRef<HTMLElement>(null);
   const [text, setText] = useState(stat.display);
+  const [landed, setLanded] = useState(false);
 
   useEffect(() => {
-    if (!inView || reduce || stat.value < 10) return;
-    const controls = animate(0, stat.value, {
-      duration: 1.1,
-      ease: [0.22, 1, 0.36, 1],
-      onUpdate: (v) => setText(formatCounting(v, stat.value)),
-      onComplete: () => setText(stat.display),
-    });
-    return () => controls.stop();
-  }, [inView, reduce, stat.value, stat.display]);
+    const el = ref.current;
+    if (!el || stat.value < 10 || !('IntersectionObserver' in window)) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let raf = 0;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        io.disconnect();
+        const start = performance.now();
+        const dur = 1100;
+        const tick = (now: number) => {
+          const p = Math.min(1, (now - start) / dur);
+          const eased = 1 - Math.pow(1 - p, 3);
+          if (p < 1) {
+            setText(formatCounting(eased * stat.value, stat.value));
+            raf = requestAnimationFrame(tick);
+          } else {
+            setText(stat.display);
+            setLanded(true);
+          }
+        };
+        raf = requestAnimationFrame(tick);
+      },
+      { threshold: 0.6 },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [stat.value, stat.display]);
 
   return (
-    <span
-      ref={ref}
-      // Space for the final text is reserved, so counting never moves the label.
-      style={{ minWidth: `${stat.display.length}ch` }}
-      className="inline-block font-heading text-2xl font-bold tabular-nums tracking-tight text-foreground sm:text-[26px]"
-    >
+    <b ref={ref} style={{ minWidth: `${stat.display.length}ch` }} className={`${landed ? 'is-landed' : ''} ${className}`}>
       {text}
-    </span>
+    </b>
   );
 }
 
-export function StatsStrip({ stats }: { stats: PublicStat[] }) {
+/** Row of live totals under the hero, separated by thin vertical rules. */
+export function HeroStats({ stats }: { stats: PublicStat[] }) {
   if (!stats.length) return null;
   return (
-    <div className="mt-8">
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4 sm:gap-x-5">
+    <div data-r="" style={{ ['--d' as string]: '140ms' }}>
+      <dl className="hero-stats">
         {stats.map((s) => (
-          <div key={s.key} className="flex flex-col-reverse border-l-2 border-primary/70 pl-3">
-            <dt className="text-xs text-muted-foreground">{s.label}</dt>
+          <div key={s.key} className="hero-stat flex flex-col-reverse">
+            <dt>
+              <span>{s.label}</span>
+            </dt>
             <dd>
-              <Counter stat={s} />
+              <LiveCount stat={s} />
             </dd>
           </div>
         ))}
       </dl>
-      <p className="mt-3 text-[11px] text-faint">Live totals from MailFlow, rounded down and refreshed daily.</p>
+      <p className="foot-note mt-4 text-center">Live totals · rounded down · refreshed daily</p>
     </div>
   );
 }
