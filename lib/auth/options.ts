@@ -17,9 +17,24 @@ import { Role, UserStatus } from '@prisma/client';
  * The mechanism is kept rather than deleted so the restriction can be
  * restored with one env var before real student data is loaded.
  */
+export function allowedDomains(): string[] {
+  // A comma-separated list ("masaischool.com,neevlabs.ai"); the first is the organisation's own.
+  return (process.env.ALLOWED_EMAIL_DOMAIN ?? '')
+    .split(',')
+    .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
+    .filter(Boolean);
+}
+
+/** The organisation's own domain (the first allowed one), or null with open signup. */
 export function allowedDomain(): string | null {
-  const configured = process.env.ALLOWED_EMAIL_DOMAIN?.trim();
-  return configured ? configured.toLowerCase() : null;
+  return allowedDomains()[0] ?? null;
+}
+
+/** "@masaischool.com and @neevlabs.ai", for sign-in copy. */
+export function allowedDomainsLabel(): string | null {
+  const list = allowedDomains().map((d) => `@${d}`);
+  if (!list.length) return null;
+  return list.length === 1 ? list[0]! : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
 }
 
 export function isEmailAllowed(email: string | null | undefined): boolean {
@@ -27,12 +42,12 @@ export function isEmailAllowed(email: string | null | undefined): boolean {
   // An address is still required — open signup is not "no identity".
   if (!normalized || !normalized.includes('@')) return false;
 
-  const restriction = allowedDomain();
-  if (!restriction) return true;
+  const restriction = allowedDomains();
+  if (!restriction.length) return true;
 
   // Compare the full domain, never a suffix: "masaischool.com.evil.com"
   // must not pass a check for "masaischool.com".
-  return normalized.split('@')[1] === restriction;
+  return restriction.includes(normalized.split('@')[1] ?? '');
 }
 
 /**
@@ -63,7 +78,9 @@ const OPEN_SIGNUP_ORG_KEY = '*';
 /**
  * Resolves the organization a signing-in user belongs to.
  *
- * With a domain restriction, the organization is keyed by that domain. With
+ * With a domain restriction, the organization is keyed by the first allowed
+ * domain; people from the other allowed domains join that same organization
+ * (and still wait for approval). With
  * open signup, everyone shares one organization — and crucially it reuses
  * whichever organization already exists, so lifting the restriction does
  * not strand existing users and their workspaces in a separate tenant from

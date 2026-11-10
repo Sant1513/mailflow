@@ -1,12 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
+
+/** The public landing page (signed out) sells the product; the install banner is for people using the app. */
+const PUBLIC_PATHS = new Set(['/', '/login']);
 
 const DISMISSED_KEY = 'pwa-install-dismissed';
 
 export function InstallPrompt() {
   const [prompt, setPrompt] = useState<any>(null);
   const [visible, setVisible] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
     try {
@@ -42,7 +47,7 @@ export function InstallPrompt() {
     setPrompt(null);
   }
 
-  if (!visible) return null;
+  if (!visible || PUBLIC_PATHS.has(pathname ?? '')) return null;
 
   return (
     <div className="fixed bottom-4 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-lg">

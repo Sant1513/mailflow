@@ -1,77 +1,25 @@
-import { LoginButton } from './LoginButton';
-import { allowedDomain } from '@/lib/auth/options';
-import { MasaiLogo } from '@/components/brand/MasaiLogo';
-import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import type { Metadata } from 'next';
+import { allowedDomainsLabel } from '@/lib/auth/options';
+import { getPublicStats } from '@/lib/marketing/stats';
+import { appBaseUrl } from '@/lib/app-url';
+import { LandingPage } from '@/components/marketing/LandingPage';
 
-const PILLARS = [
-  { title: 'Mail · Campaigns', body: 'Personalised sends to any batch, with dry runs and approvals before anything goes out.' },
-  { title: 'Mail · Inbox', body: 'Every reply, bounce and out-of-office threaded back to the record it came from.' },
-  { title: 'Sign · E-signature', body: 'Send agreements for signature, one at a time or in bulk, and track every signer.' },
-];
+/**
+ * /login shows the same landing page as "/" (with "Continue with Google" in the hero) rather
+ * than redirecting: sign-out, the app's guards and /login/error all link here, and a page
+ * (not a redirect) keeps those flows one hop shorter. NextAuth only uses /login/error, which
+ * is unchanged. Not indexed; the canonical copy is "/".
+ */
+export function generateMetadata(): Metadata {
+  return {
+    metadataBase: new URL(appBaseUrl()),
+    title: 'Sign in — MailFlow',
+    alternates: { canonical: '/' },
+    robots: { index: false, follow: true },
+  };
+}
 
-export default function LoginPage() {
-  // Read on the server so the copy always matches the actual policy rather
-  // than promising a restriction that is not enforced.
-  const restriction = allowedDomain();
-
-  return (
-    <div className="relative flex min-h-screen flex-col bg-background">
-      {/* Red glow, top-left — the same accent wash masaischool.com uses behind its hero */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-40 -top-40 h-[32rem] w-[32rem] rounded-full bg-primary/20 blur-[120px]"
-      />
-
-      <header className="relative z-10 flex items-center justify-between px-6 py-5 sm:px-10">
-        <MasaiLogo height={30} />
-        <div className="flex items-center gap-3">
-          <div className="eyebrow hidden sm:block">Internal · MailFlow</div>
-          <ThemeToggle compact />
-        </div>
-      </header>
-
-      <main className="relative z-10 flex flex-1 items-center px-6 py-10 sm:px-10">
-        <div className="mx-auto grid w-full max-w-6xl items-center gap-12 lg:grid-cols-[1.2fr_1fr]">
-          <section className="rise-in">
-            <div className="eyebrow mb-5">MailFlow Mail &amp; MailFlow Sign</div>
-            <h1 className="font-heading text-4xl font-bold leading-[1.05] tracking-tight text-foreground sm:text-5xl lg:text-6xl">
-              Every email to every batch,
-              <br />
-              <span className="accent">sent from your Gmail.</span>
-            </h1>
-            <p className="mt-6 max-w-xl text-base text-muted-foreground sm:text-lg">
-              Campaigns, automations and conversations for the Masai team — on top of your own data,
-              with nothing going out until you have reviewed it.
-            </p>
-
-            <ul className="mt-10 grid gap-6 sm:grid-cols-3">
-              {PILLARS.map((p) => (
-                <li key={p.title} className="border-l-2 border-primary pl-4">
-                  <div className="font-heading text-sm font-semibold text-foreground">{p.title}</div>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{p.body}</p>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="rise-in panel p-8 [animation-delay:120ms]">
-            <div className="eyebrow mb-2">Sign in</div>
-            <h2 className="font-heading text-2xl font-bold tracking-tight text-foreground">Continue to MailFlow</h2>
-            <p className="mb-8 mt-2 text-sm text-muted-foreground">
-              Use the Google account you send from. After signing in you&apos;ll choose Mail or Sign, and you can switch any
-              time.
-            </p>
-            <LoginButton />
-            <p className="mt-5 text-xs text-faint">
-              {restriction ? `Only @${restriction} accounts can sign in.` : 'Any Google account can sign in.'}
-            </p>
-          </section>
-        </div>
-      </main>
-
-      <footer className="relative z-10 px-6 py-5 text-xs text-faint sm:px-10">
-        © {new Date().getFullYear()} Masai School · Internal tool
-      </footer>
-    </div>
-  );
+export default async function LoginPage() {
+  const stats = await getPublicStats();
+  return <LandingPage stats={stats} domains={allowedDomainsLabel()} />;
 }

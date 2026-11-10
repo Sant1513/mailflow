@@ -2,7 +2,7 @@ import { requireSuperAdminPage } from '@/lib/auth/adminGuard';
 import { getOptionalSession } from '@/lib/auth/session';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SettingsLayout, type SettingsSection } from '@/components/settings/SettingsLayout';
-import { allowedDomain } from '@/lib/auth/options';
+import { allowedDomainsLabel } from '@/lib/auth/options';
 import { RetentionPanel } from '@/components/admin/RetentionPanel';
 import { SlackSettings } from '@/components/admin/SlackSettings';
 import { AutomationSettings } from '@/components/admin/AutomationSettings';
@@ -24,7 +24,7 @@ export default async function AdminSystemSettingsPage() {
   const session = await getOptionalSession();
   const readOnly = Boolean(session?.viewingAs);
 
-  const domain = allowedDomain();
+  const domain = allowedDomainsLabel();
   const rateLimit = process.env.EMAIL_RATE_LIMIT_PER_MINUTE ?? '';
   const ai = aiStatus();
   const aiConfigured = ai.configured;
@@ -35,7 +35,7 @@ export default async function AdminSystemSettingsPage() {
   ]);
 
   const runtime = [
-    { label: 'Sign-in restriction', value: domain ? `@${domain} only` : 'Open — any Google account', env: 'ALLOWED_EMAIL_DOMAIN' },
+    { label: 'Sign-in restriction', value: domain ? `${domain} only` : 'Open — any Google account', env: 'ALLOWED_EMAIL_DOMAIN' },
     { label: 'Send rate limit', value: rateLimit ? `${rateLimit} emails / minute / mailbox` : 'Default', env: 'EMAIL_RATE_LIMIT_PER_MINUTE' },
     { label: 'AI provider', value: aiConfigured ? `Gemini · ${ai.model}${ai.fallbackModels.length ? ` (falls back to ${ai.fallbackModels.join(', ')})` : ''}` : 'Not configured', env: 'GEMINI_API_KEY / GEMINI_MODEL / GEMINI_FALLBACK_MODELS' },
     { label: 'AI enabled', value: ai.enabled ? (aiConfigured ? 'On' : 'On, but no key — features hidden') : 'Off (AI_ENABLED=false)', env: 'AI_ENABLED' },

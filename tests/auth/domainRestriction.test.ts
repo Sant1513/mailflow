@@ -234,3 +234,21 @@ describe('signIn callback — locked to a domain', () => {
     await expect(callSignIn(mod, 'rahul@masaischool.com')).resolves.toBe(true);
   });
 });
+
+describe('several allowed domains (ALLOWED_EMAIL_DOMAIN="masaischool.com,neevlabs.ai")', () => {
+  it('allows every listed domain and nothing else', async () => {
+    const { mod } = await load('masaischool.com, neevlabs.ai');
+    expect(mod.isEmailAllowed('a@masaischool.com')).toBe(true);
+    expect(mod.isEmailAllowed('b@NeevLabs.ai')).toBe(true);
+    expect(mod.isEmailAllowed('c@gmail.com')).toBe(false);
+    expect(mod.isEmailAllowed('d@neevlabs.ai.evil.com')).toBe(false);
+    expect(mod.allowedDomainsLabel()).toBe('@masaischool.com and @neevlabs.ai');
+  });
+
+  it('keeps everyone in the first domain\'s organisation', async () => {
+    const { mod, prisma } = await load('masaischool.com,neevlabs.ai');
+    expect(mod.allowedDomain()).toBe('masaischool.com');
+    await (mod.authOptions.adapter as any).createUser({ id: 'x', email: 'new@neevlabs.ai', emailVerified: null, name: 'New' });
+    expect((prisma.organization.upsert as any).mock.calls[0][0].where).toEqual({ allowedDomain: 'masaischool.com' });
+  });
+});
