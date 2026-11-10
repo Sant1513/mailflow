@@ -516,3 +516,7 @@ html:has(.leap-ui) {
 .leap-ui .lockup-dot { color: var(--accent-hi); }
 .leap-ui .lockup-by { color: var(--paper); font-size: 0.56rem; font-weight: 600; letter-spacing: 0.42em; margin-top: 0.3rem; padding-left: 0.1rem; text-transform: uppercase; }
 .leap-ui .lockup--footer .lockup-by { font-size: 0.66rem; }
+
+/* Embedded in the original landing page: a section block, not the whole page. The rail sticks
+   under the original top bar (no announcement strip). */
+.leap-ui.leap-embed { --nav-bar-h: 72px; --ns-h: 0px; background: transparent; min-height: 0; }

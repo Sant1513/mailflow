@@ -17,8 +17,8 @@ export const LEAP_JS_SCRIPT = `if("IntersectionObserver" in window)document.docu
  */
 export function RevealObserver() {
   useEffect(() => {
-    const root = document.querySelector('.leap-ui');
-    if (!root || !('IntersectionObserver' in window)) return;
+    // Every Leap-style block on the page (the landing embeds more than one).
+    if (!document.querySelector('.leap-ui') || !('IntersectionObserver' in window)) return;
     const io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
@@ -32,7 +32,7 @@ export function RevealObserver() {
     );
     const seen = new WeakSet<Element>();
     const scan = () => {
-      root.querySelectorAll('[data-r]:not(.in), .inv:not(.in)').forEach((el) => {
+      document.querySelectorAll('.leap-ui [data-r]:not(.in), .leap-ui .inv:not(.in)').forEach((el) => {
         if (seen.has(el)) return;
         seen.add(el);
         io.observe(el);
@@ -40,7 +40,7 @@ export function RevealObserver() {
     };
     scan();
     const mo = new MutationObserver(scan);
-    mo.observe(root, { childList: true, subtree: true });
+    mo.observe(document.body, { childList: true, subtree: true });
     return () => {
       io.disconnect();
       mo.disconnect();

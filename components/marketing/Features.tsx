@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { motion, useReducedMotion } from 'framer-motion';
+import { useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   BarChart3,
   Braces,
@@ -17,8 +17,8 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
-
-const EASE_OUT = [0.22, 0.61, 0.36, 1] as const;
+import { EASE_OUT, Reveal } from './Reveal';
+import { LIFT } from './scroll';
 
 type Product = 'mail' | 'sign';
 type Tile = { icon: LucideIcon; title: string; body: string; span?: string; art?: React.ReactNode };
@@ -228,94 +228,82 @@ const SIGN: Tile[] = [
   },
 ];
 
-const KICK: Record<string, string> = {
-  'Campaigns with a safety net': 'The campaign',
-  'Quick Send': 'Quick Send',
-  'Recruiter Bulk Send': 'Recruiters',
-  'One shared inbox': 'The inbox',
-  Automations: 'Automations',
-  'Two-way Google Sheets sync': 'Your sheet',
-  'Personalised PDFs': 'Attachments',
-  'Reports that arrive on time': 'Reports',
-  'Bulk send for signature': 'Bulk sign',
-  'Templates from Word or Google Docs': 'Templates',
-  'Reminders and live status': 'Tracking',
-  'Signed PDF, certificate, write-back': 'The paper trail',
-};
-
 function TileCard({ tile, index }: { tile: Tile; index: number }) {
   const Icon = tile.icon;
   return (
-    <div data-r="" style={{ ['--d' as string]: `${Math.min(index * 35, 175)}ms` }} className={`card card-hover flex h-full flex-col ${tile.span ?? ''}`}>
-      <div className="flex items-center justify-between gap-3">
-        <span className="card-kick">{KICK[tile.title] ?? tile.title}</span>
-        <Icon size={18} aria-hidden className="text-[var(--on-deep-mu)]" />
+    <Reveal index={index} className={tile.span ?? ''}>
+      <div className={`panel flex h-full flex-col p-5 sm:p-6 ${LIFT}`}>
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <Icon size={19} aria-hidden />
+        </span>
+        <h3 className="mt-4 font-heading text-base font-semibold tracking-tight text-foreground">{tile.title}</h3>
+        <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{tile.body}</p>
+        {tile.art}
       </div>
-      <h3>{tile.title}</h3>
-      <p>{tile.body}</p>
-      {tile.art}
-    </div>
+    </Reveal>
   );
 }
 
-/**
- * Mail | Sign switcher (Leap's tab pills: dark tabs, the active one in accent) and the
- * feature bento under it. The nav's "Mail" and "Sign" links land here (#mail / #sign) and
- * pick the matching tab.
- */
+/** Mail | Sign switcher (the sidebar's sliding pill) and the feature bento under it. */
 export function Features() {
   const [product, setProduct] = useState<Product>('mail');
+  const reduce = useReducedMotion();
   const tiles = product === 'mail' ? MAIL : SIGN;
-
-  useEffect(() => {
-    const sync = () => {
-      if (location.hash === '#sign') setProduct('sign');
-      else if (location.hash === '#mail') setProduct('mail');
-    };
-    sync();
-    window.addEventListener('hashchange', sync);
-    return () => window.removeEventListener('hashchange', sync);
-  }, []);
-
-  const tab = (p: Product, label: string) => {
-    const on = product === p;
-    return (
-      <button
-        key={p}
-        id={`tab-${p}`}
-        type="button"
-        role="tab"
-        aria-selected={on}
-        aria-controls="feature-panel"
-        tabIndex={on ? 0 : -1}
-        onClick={() => setProduct(p)}
-        onKeyDown={(e) => {
-          if (['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) {
-            e.preventDefault();
-            const next: Product = e.key === 'Home' ? 'mail' : e.key === 'End' ? 'sign' : p === 'mail' ? 'sign' : 'mail';
-            setProduct(next);
-            document.getElementById(`tab-${next}`)?.focus();
-          }
-        }}
-        className="tab"
-      >
-        {label}
-      </button>
-    );
-  };
 
   return (
     <div>
-      <div role="tablist" aria-label="Product" className="tabs">
-        {tab('mail', 'MailFlow Mail')}
-        {tab('sign', 'MailFlow Sign')}
-      </div>
-      <div id="feature-panel" role="tabpanel" aria-labelledby={`tab-${product}`} className="mt-8">
-        <div key={product} className="grid gap-4 md:grid-cols-3">
-          {tiles.map((tile, i) => (
-            <TileCard key={tile.title} tile={tile} index={i} />
-          ))}
+      <div className="flex justify-center">
+        <div role="tablist" aria-label="Product" className="segmented">
+          {(['mail', 'sign'] as const).map((p) => {
+            const on = product === p;
+            return (
+              <button
+                key={p}
+                id={`tab-${p}`}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                aria-controls="feature-panel"
+                tabIndex={on ? 0 : -1}
+                onClick={() => setProduct(p)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                    const next = p === 'mail' ? 'sign' : 'mail';
+                    setProduct(next);
+                    document.getElementById(`tab-${next}`)?.focus();
+                  }
+                }}
+                className={`relative rounded-full px-6 py-2 text-sm font-medium ${on ? 'text-white' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {on && (
+                  <motion.span
+                    layoutId="landing-product-pill"
+                    className="nav-pill absolute inset-0 rounded-full"
+                    transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 420, damping: 36 }}
+                  />
+                )}
+                <span className="relative">{p === 'mail' ? 'MailFlow Mail' : 'MailFlow Sign'}</span>
+              </button>
+            );
+          })}
         </div>
+      </div>
+
+      <div id="feature-panel" role="tabpanel" aria-labelledby={`tab-${product}`} className="mt-10">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={product}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduce ? 0 : 0.2 }}
+            className="grid gap-4 md:grid-cols-3"
+          >
+            {tiles.map((tile, i) => (
+              <TileCard key={tile.title} tile={tile} index={i % 3} />
+            ))}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </div>
   );
