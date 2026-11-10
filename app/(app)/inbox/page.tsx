@@ -119,14 +119,22 @@ export default function InboxPage() {
       .catch(() => undefined);
   }, []);
 
+  // The page the filter effect already loaded: a filter change resets to page 1 and loads it, so
+  // the page effect must not load page 1 again (one /api/inbox call per change, not two).
+  const loadedPage = useRef<number | null>(null);
   useEffect(() => {
     setPage(1);
+    loadedPage.current = 1;
     const t = setTimeout(() => load(1), q ? 250 : 0);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, scope, q, assigneeId, tag]);
 
-  useEffect(() => { load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (loadedPage.current === page) return;
+    loadedPage.current = page;
+    load(page);
+  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
   useAutoSync(() => load(page));
 
   useEffect(() => {

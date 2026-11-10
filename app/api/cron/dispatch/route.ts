@@ -6,6 +6,7 @@ import { kickSendWorker } from '@/lib/queue/sendWorker';
 import { kickRecruiterWorker } from '@/lib/recruiterSend/worker';
 import { dueReportDay } from '@/lib/digest/dailyActivity';
 import { dispatchDailyReport } from '@/lib/digest/dispatch';
+import { controlDb } from '@/lib/system/serverState';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -19,6 +20,9 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   if (!cronAuthorised(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const now = new Date();
+  // "The timer is alive" for the laptop's watch (start.mjs warns when this is hours old).
+  // Raw so SystemState.updatedAt, which marks real switch changes, is left alone.
+  await controlDb().$executeRaw`UPDATE "SystemState" SET "lastDispatchAt" = now() WHERE "id" = 'main'`.catch((err: unknown) => console.error('[dispatch] lastDispatchAt', err));
   const [campaignEmails, recruiterSends] = await Promise.all([
     prisma.emailJob.count({ where: { status: EmailJobStatus.QUEUED, batch: { status: { in: [BatchStatus.PREPARING, BatchStatus.QUEUED, BatchStatus.RUNNING] } } } }),
     prisma.recruiterBlast.count({ where: { OR: [{ status: 'SENDING' }, { status: 'SCHEDULED', scheduledAt: { lte: now } }] } }),

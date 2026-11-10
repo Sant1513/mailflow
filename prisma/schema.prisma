@@ -639,6 +639,8 @@ model EmailJob {
   @@unique([campaignId, recordId, templateVersionId])
   @@index([batchId])
   @@index([status])
+  /// Daily limits and pacing: what a mailbox sent in the last 24 hours (lib/queue/drain.ts).
+  @@index([emailProviderAccountId, status, sentAt])
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1392,6 +1394,8 @@ model SystemState {
   laptopUrl         String?
   /// Plain-language note about the last switch or problem, shown on the Server page.
   note              String?
+  /// Last run of the 15-minute /api/cron/dispatch; the laptop warns when it is hours old.
+  lastDispatchAt    DateTime?
   updatedAt         DateTime  @updatedAt
 }
 

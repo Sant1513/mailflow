@@ -107,8 +107,14 @@ export function NotificationBell({ compact }: { compact?: boolean }) {
   useEffect(() => {
     load();
     // Paused while the tab is hidden (saves the database's monthly data allowance).
-    const t = setInterval(() => { if (!document.hidden) load(); }, 60_000);
-    return () => clearInterval(t);
+    // Every 2 minutes, and straight away when the tab is shown again.
+    const t = setInterval(() => { if (!document.hidden) load(); }, 120_000);
+    const onVisible = () => { if (!document.hidden) load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [load]);
 
   // Update browser tab title with unread count.

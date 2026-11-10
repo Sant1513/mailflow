@@ -31,6 +31,8 @@ export const orgSettingsSchema = z.object({
   /** The report day (YYYY-MM-DD, IST) of the last 8 PM daily report sent. */
   lastDailyReportOn: z.string().nullable().default(null),
   lastWeeklyReportOn: z.string().nullable().default(null),
+  /** Day (YYYY-MM-DD, UTC) the free-plan usage warning last went out (lib/retention/housekeeping.ts). */
+  lastUsageAlertOn: z.string().nullable().default(null),
   /**
    * Gmail mailboxes (EmailProviderAccount ids) whose owners allow them to be used as a
    * fallback sender on teammates' campaigns. Changed only by each owner, in Settings.

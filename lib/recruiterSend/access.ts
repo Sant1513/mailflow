@@ -18,6 +18,18 @@ export async function requireBlastReader(): Promise<AppSession> {
   return session;
 }
 
+/** loadBlast's access rules, reading only the status columns (the live progress poll). */
+export async function loadBlastStatus(session: AppSession, id: string) {
+  const blast = await prisma.recruiterBlast.findUnique({
+    where: { id },
+    select: { id: true, organizationId: true, workspaceId: true, status: true, scheduledAt: true, startedAt: true, completedAt: true, updatedAt: true },
+  });
+  if (!blast) return null;
+  if (blast.organizationId !== session.organizationId) throw new ForbiddenError('Not your organisation');
+  if (blast.workspaceId !== session.workspaceId && session.role !== Role.SUPER_ADMIN) throw new ForbiddenError('Not your workspace');
+  return blast;
+}
+
 export async function loadBlast(session: AppSession, id: string) {
   const blast = await prisma.recruiterBlast.findUnique({ where: { id } });
   if (!blast) return null;

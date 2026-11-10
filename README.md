@@ -358,6 +358,7 @@ GitHub Actions (`.github/workflows/follow-up-reminders.yml`, workflow `scheduled
 | `/api/cron/signing-reminders`: remind unsigned signers, expire overdue links, refresh "Days waiting to sign" on rows | 09:00 daily | — |
 | `/api/cron/daily-digest`: backstop for the 8 PM daily report (email + Slack; sends only if dispatch hasn't); also fills org-wide bounce gaps (`syncOrgBounces`) | 15:00 Mon–Fri (8:30 PM IST) | — |
 | `/api/cron/weekly-report`: weekly report (09:00 IST) | 03:30 Mondays | — |
+| `/api/cron/housekeeping`: delete old notifications (90 days), audit entries (365 days), finished webhook deliveries (30 days) and expired sessions; free-tier size warning (DB 350 MB, storage 700 MB) | 20:30 daily (2 AM IST) | — |
 | `/api/cron/sheets-sync`: two-way Google Sheets sync | 03:15 daily | hourly |
 
 ## Testing

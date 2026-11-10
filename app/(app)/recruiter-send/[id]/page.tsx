@@ -124,17 +124,47 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
   useEffect(() => {
     load();
+  }, [load]);
+  // The pickers' lists: once per page open, not on every recruiter page change.
+  useEffect(() => {
     fetch('/api/datasets').then((r) => r.json()).then((j) => setDatasets(j.datasets ?? [])).catch(() => undefined);
     fetch('/api/documents').then((r) => r.json()).then((j) => setLibrary((j.documents ?? []).filter((d: { archived?: boolean }) => !d.archived))).catch(() => undefined);
-  }, [load]);
+  }, []);
 
-  // Live progress while sending (paused while the tab is hidden).
+  // Live progress while sending: the small /progress response every 15 s (paused while the tab is
+  // hidden, refreshed when it is shown); the full send is loaded again only when its status changes.
   const live = detail && ['SENDING', 'SCHEDULED'].includes(detail.blast.status);
+  const liveStatus = detail?.blast.status;
   useEffect(() => {
     if (!live) return;
-    const t = setInterval(() => { if (!document.hidden) load(); }, 5000);
-    return () => clearInterval(t);
-  }, [live, load]);
+    let stopped = false;
+    const tick = async () => {
+      if (stopped || document.hidden) return;
+      const res = await fetch(`/api/recruiter-blasts/${params.id}/progress`, { cache: 'no-store' }).catch(() => null);
+      if (stopped || !res?.ok) return;
+      const p = await res.json().catch(() => null);
+      if (!p?.blast) return;
+      if (p.blast.status !== liveStatus) {
+        load();
+        return;
+      }
+      setDetail((d) => (d ? {
+        ...d,
+        blast: { ...d.blast, ...p.blast },
+        counts: p.counts,
+        stats: p.stats,
+        groups: p.groups,
+      } : d));
+    };
+    const t = setInterval(tick, 15_000);
+    const onVisible = () => { if (!document.hidden) tick(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [live, liveStatus, load, params.id]);
 
   // Auto-save draft edits.
   function edit(patch: Partial<Blast>) {

@@ -266,6 +266,8 @@ const JOBS = [
   { name: 'sla-check', path: '/api/cron/sla-check', dailyAt: [8, 0] },
   { name: 'signing-reminders', path: '/api/cron/signing-reminders', dailyAt: [9, 0] },
   { name: 'weekly-report', path: '/api/cron/weekly-report', dailyAt: [3, 30], weekday: 1 },
+  // Old notifications / audit entries / sessions out, free-plan size warning (2 AM IST).
+  { name: 'housekeeping', path: '/api/cron/housekeeping', dailyAt: [20, 30] },
 ];
 // A daily job missed while the laptop was off still runs when it is back, unless it is
 // more than this late (a digest arriving in the evening helps nobody).
@@ -735,17 +737,38 @@ async function handoverToCloud(s) {
   }
 }
 
-// Active: keep the cloud at most 30 minutes behind, in case this laptop disappears.
+// Active: keep the cloud at most 30 minutes behind, in case this laptop disappears. A copy
+// rewrites the whole cloud database, so it is skipped when nothing changed here since the
+// last one (Postgres's own insert/update/delete counters for this database).
 let lastPush = Date.now();
 let pushing = false;
+let pushedFingerprint = null;
+const MB = 1024 * 1024;
+async function localWriteFingerprint() {
+  const c = new pg.Client({ connectionString: LOCAL_URL });
+  await c.connect();
+  try {
+    const { rows } = await c.query(`SELECT COALESCE(sum(n_tup_ins + n_tup_upd + n_tup_del), 0)::text AS n FROM pg_stat_user_tables`);
+    return rows[0]?.n ?? null;
+  } finally {
+    await c.end().catch(() => {});
+  }
+}
 async function tickPush() {
   if (role !== 'active' || handingOver || pushing || Date.now() - lastPush < PUSH_EVERY_MS) return;
   pushing = true;
   try {
+    const fingerprint = await localWriteFingerprint().catch(() => null);
+    if (fingerprint !== null && fingerprint === pushedFingerprint) {
+      lastPush = Date.now();
+      log('Nothing changed since the last copy to the cloud; skipped.');
+      return;
+    }
     const r = await copyDatabase(LOCAL_URL, CLOUD_URL);
     lastPush = Date.now();
+    pushedFingerprint = fingerprint;
     await setState('true', { lastSyncAt: NOW });
-    log(`Copied ${r.rows} rows to the cloud (standby copy).`);
+    log(`Copied ${r.rows} rows (${(r.bytes / MB).toFixed(1)} MB) to the cloud (standby copy).`);
   } catch (err) {
     log('Copy to the cloud failed (will retry):', String(err?.message ?? err));
   } finally {
@@ -753,8 +776,18 @@ async function tickPush() {
   }
 }
 
-// Standby: pull the cloud database every night at 03:00 IST, and on start-up if the last
-// pull is more than a day old.
+// Standby: pull the cloud database at 03:00 IST, and on start-up when a pull is overdue. Every
+// pull is Supabase egress the size of the whole database (free plan: 5 GB a month), so it is
+// nightly while the database is under 150 MB and every third night above that.
+const PULL_DAILY_BELOW_BYTES = 150 * 1024 * 1024;
+async function pullIntervalDays() {
+  try {
+    const { rows } = await control.query('SELECT pg_database_size(current_database())::bigint AS b');
+    return Number(rows[0]?.b ?? 0) < PULL_DAILY_BELOW_BYTES ? 1 : 3;
+  } catch {
+    return 1;
+  }
+}
 function state_lastPull(t) {
   const st = readState();
   st.lastPull = t;
@@ -770,16 +803,45 @@ async function tickPull() {
   if (last >= lastDueAt.getTime() && Date.now() - last < 86_400_000) return;
   pulling = true;
   try {
+    // Every N days: the last pull must be at least N days (less half a day of slack) old.
+    const days = await pullIntervalDays();
+    if (days > 1 && Date.now() - last < days * 86_400_000 - 12 * 3600_000) return;
     await backupBeforePull();
     const r = await copyDatabase(CLOUD_URL, LOCAL_URL);
     state_lastPull(Date.now());
     await setState('true', { lastSyncAt: NOW });
-    log(`Pulled ${r.rows} rows from the cloud (laptop backup copy).`);
+    log(`Pulled ${r.rows} rows (${(r.bytes / MB).toFixed(1)} MB of Supabase egress) from the cloud (laptop backup copy).`);
   } catch (err) {
     log('Pulling the cloud copy failed (will retry):', String(err?.message ?? err));
   } finally {
     pulling = false;
   }
+}
+
+// ---------- timer watch ----------
+// The 15-minute /api/cron/dispatch (GitHub Actions / Supabase timer) drives cloud sending and the
+// 8 PM report; it stamps SystemState.lastDispatchAt. If that is over 6 hours old while the cloud
+// is active, say so in the log and in Slack (at most every 6 hours). Free: the heartbeat already
+// reads the row.
+const DISPATCH_STALE_MS = 6 * 3600_000;
+let lastDispatchWarnAt = 0;
+async function watchDispatch(s) {
+  if (s.activeServer !== 'cloud' || !s.lastDispatchAt) return;
+  const age = Date.now() - new Date(s.lastDispatchAt).getTime();
+  if (age < DISPATCH_STALE_MS || Date.now() - lastDispatchWarnAt < DISPATCH_STALE_MS) return;
+  lastDispatchWarnAt = Date.now();
+  const text = `MailFlow's 15-minute timer hasn't run since ${fmtIst(s.lastDispatchAt)} (IST). Cloud sends rely on the laptop watchdog until it runs again: check the GitHub "scheduled-jobs" workflow or the Supabase timer.`;
+  log(`Warning: ${text}`);
+  const token = APP_ENV.SLACK_BOT_TOKEN?.trim();
+  if (!token) return;
+  const { rows } = await control.query(`SELECT "slackChannelId" FROM "IntegrationSettings" WHERE "slackChannelId" IS NOT NULL LIMIT 1`);
+  const channel = rows[0]?.slackChannelId;
+  if (!channel) return;
+  await fetch('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ channel, text: `:warning: ${text}` }),
+  });
 }
 
 async function controlTick() {
@@ -795,6 +857,7 @@ async function controlTick() {
     controlDownLogged = true;
     return;
   }
+  watchDispatch(s).catch(() => {});
   if (s.switchTo === 'laptop' && s.activeServer === 'cloud') return handoverToLaptop(s);
   if (s.switchTo === 'cloud' && s.activeServer === 'laptop') return handoverToCloud(s);
   if (s.switchTo) return; // the other side's move; wait

@@ -37,6 +37,10 @@
       "schedule": "30 3 * * 1"
     },
     {
+      "path": "/api/cron/housekeeping",
+      "schedule": "30 20 * * *"
+    },
+    {
       "path": "/api/cron/sheets-sync",
       "schedule": "15 3 * * *"
     },

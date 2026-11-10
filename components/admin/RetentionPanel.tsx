@@ -134,10 +134,12 @@ export function RetentionPanel({ readOnly }: { readOnly: boolean }) {
   return (
     <div className="space-y-5">
       <div className="rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
-        <div className="font-heading font-semibold text-warning">Configuration only — nothing is deleted automatically.</div>
+        <div className="font-heading font-semibold text-warning">Configuration only — emails, conversations and documents are never deleted automatically.</div>
         <p className="mt-1 text-muted-foreground">
           Saving records the policy and who set it. Enforcement is a separate, explicit, audited action that is not
-          enabled in this release (§130: never delete historical communication accidentally).
+          enabled in this release (§130: never delete historical communication accidentally). A nightly clean-up only
+          removes housekeeping rows: notifications older than 90 days, audit entries older than a year (or longer if
+          set below), finished webhook deliveries older than 30 days, and expired sign-in sessions.
         </p>
       </div>
 

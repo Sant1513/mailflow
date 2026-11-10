@@ -114,26 +114,39 @@ export interface DailyUsage {
  */
 export async function usageLast24h(emailProviderAccountId: string): Promise<DailyUsage> {
   const since = new Date(Date.now() - 24 * 3600_000);
-  const [rows, groups] = await Promise.all([
-    prisma.emailJob.findMany({
-      where: { emailProviderAccountId, status: EmailJobStatus.SENT, sentAt: { gte: since } },
-      select: { toEmail: true, ccEmails: true, bccEmails: true },
-    }),
-    prisma.recruiterBlastGroup.findMany({
-      // SENDING too: a message going out right now already counts (sentAt is its claim time).
-      where: { accountId: emailProviderAccountId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: since } },
-      select: { blast: { select: { mode: true, toAddress: true, ccAddresses: true } }, recipients: { select: { email: true } } },
-    }),
-  ]);
-  const usage: DailyUsage = { messages: 0, totalRecipients: 0, unique: new Set() };
-  for (const r of rows) addUsage(usage, r);
-  for (const g of groups) {
-    const emails = g.recipients.map((r) => r.email);
-    const visibleTo = g.blast.mode === 'BCC' ? g.blast.toAddress : null;
-    const cc = g.blast.ccAddresses ?? [];
-    addUsage(usage, visibleTo ? { toEmail: visibleTo, ccEmails: cc, bccEmails: emails } : { toEmail: emails[0] ?? '', ccEmails: cc, bccEmails: emails.slice(1) });
-  }
-  return usage;
+  // One aggregate in the database instead of loading every sent email and recruiter group of the
+  // day into the function: the same three numbers, the distinct addresses only (needed by
+  // wouldExceedDaily). Addresses are trimmed and lowercased, blanks dropped, exactly like
+  // addressesOf. A recruiter group counts as one message to (BCC: the visible To) + CC + its
+  // recipients; SENDING groups count too (sentAt is their claim time).
+  const rows = await prisma.$queryRaw<{ messages: bigint | number; total: bigint | number; uniq: string[] | null }[]>`
+    WITH msgs AS (
+      SELECT ARRAY[j."toEmail"] || j."ccEmails" || j."bccEmails" AS addrs
+      FROM "EmailJob" j
+      WHERE j."emailProviderAccountId" = ${emailProviderAccountId} AND j."status" = 'SENT' AND j."sentAt" >= ${since}
+      UNION ALL
+      SELECT (CASE WHEN b."mode" = 'BCC' AND COALESCE(b."toAddress", '') <> '' THEN ARRAY[b."toAddress"] ELSE ARRAY[]::text[] END)
+             || COALESCE(b."ccAddresses", ARRAY[]::text[])
+             || COALESCE((SELECT array_agg(r."email") FROM "RecruiterBlastRecipient" r WHERE r."groupId" = g."id"), ARRAY[]::text[])
+      FROM "RecruiterBlastGroup" g JOIN "RecruiterBlast" b ON b."id" = g."blastId"
+      WHERE g."accountId" = ${emailProviderAccountId} AND g."status" IN ('SENT', 'SENDING') AND g."sentAt" >= ${since}
+    ),
+    flat AS (
+      SELECT lower(btrim(a, E' \t\r\n')) AS a FROM msgs, unnest(msgs.addrs) AS a
+    )
+    SELECT (SELECT count(*) FROM msgs) AS messages,
+           (SELECT count(*) FROM flat WHERE a <> '') AS total,
+           (SELECT array_agg(DISTINCT a) FROM flat WHERE a <> '') AS uniq`;
+  return usageFromAggregate(rows[0]);
+}
+
+/** Maps the aggregate row to DailyUsage (exported for tests). */
+export function usageFromAggregate(row: { messages: bigint | number; total: bigint | number; uniq: string[] | null } | undefined): DailyUsage {
+  return {
+    messages: Number(row?.messages ?? 0),
+    totalRecipients: Number(row?.total ?? 0),
+    unique: new Set(row?.uniq ?? []),
+  };
 }
 
 export function addUsage(usage: DailyUsage, job: { toEmail: string; ccEmails: string[]; bccEmails: string[] }): void {

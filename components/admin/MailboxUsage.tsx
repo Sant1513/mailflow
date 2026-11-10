@@ -60,8 +60,13 @@ export function MailboxUsage() {
     load();
     const t = setInterval(() => {
       if (!document.hidden) load();
-    }, 60_000);
-    return () => clearInterval(t);
+    }, 120_000);
+    const onVisible = () => { if (!document.hidden) load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   // A failed refresh keeps the last numbers on screen (with a note); only a first load shows the error.

@@ -132,4 +132,12 @@ export async function middleware(req: NextRequest) {
   );
 }
 
-export const config = { matcher: '/:path*' };
+/**
+ * Everything except the fixed files in public/ (logo, icons, manifest, PDF worker): they are the
+ * same on the laptop and the cloud for a given commit, and the logo is fetched by every email
+ * that is opened, so skipping the front door for them saves an invocation each time.
+ * _next/static stays matched on purpose: the laptop and Vercel are separate builds (different
+ * build ids, and the laptop can be on another commit), so while the laptop is active its pages
+ * must load their own script chunks through the forward, not Vercel's.
+ */
+export const config = { matcher: '/((?!brand/|icons/|manifest.json|pdf.worker.min.mjs).*)' };

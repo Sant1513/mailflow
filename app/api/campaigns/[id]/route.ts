@@ -7,6 +7,7 @@ import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { loadCampaignForSession, senderAccountFor } from '@/lib/campaigns/context';
 import { CampaignStatus } from '@prisma/client';
+import { istDayStart, istYmd } from '@/lib/dates/istRange';
 
 export const GET = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
@@ -14,7 +15,12 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
   if (!campaign) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   if (campaign.workspaceId !== session.workspaceId) {
-    await audit(session, 'ADMIN_VIEW', { targetType: 'Campaign', targetId: campaign.id });
+    // Once per admin, campaign and IST day: the open page refreshes, and each refresh isn't a new view.
+    const seenToday = await prisma.auditLog.findFirst({
+      where: { actorId: session.userId, action: 'ADMIN_VIEW', targetId: campaign.id, createdAt: { gte: istDayStart(istYmd()) } },
+      select: { id: true },
+    });
+    if (!seenToday) await audit(session, 'ADMIN_VIEW', { targetType: 'Campaign', targetId: campaign.id });
   }
 
   const sender = await senderAccountFor(campaign);

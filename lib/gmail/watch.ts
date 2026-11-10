@@ -13,6 +13,8 @@ import { authorizedClientFor } from '@/lib/gmail/oauth';
  * sync keeps working either way.
  */
 export const RENEW_BEFORE_MS = 24 * 3600_000;
+/** Labels whose changes push a notification: replies land in the inbox. */
+export const WATCH_LABELS = ['INBOX'] as const;
 
 export function pushEnabled(): boolean {
   return !!process.env.GMAIL_PUBSUB_TOPIC?.trim();
@@ -27,10 +29,13 @@ export async function ensureWatch(account: EmailProviderAccount): Promise<Date |
   const topicName = process.env.GMAIL_PUBSUB_TOPIC?.trim();
   if (!topicName || account.status !== 'CONNECTED' || !account.refreshTokenEnc || !watchDue(account)) return null;
   const gmail = gmailApi({ version: 'v1', auth: await authorizedClientFor(account) });
-  // Inbox (replies) and Sent (replies the team sends straight from Gmail).
+  // Inbox only (replies). Watching Sent too would push one notification, and one function run,
+  // for every email MailFlow itself sends (a 1,500-email campaign = 1,500 runs), on the free
+  // plan. Replies the team sends straight from Gmail still arrive with the scheduled sync,
+  // which reads the whole history (all labels).
   const res = await gmail.users.watch({
     userId: 'me',
-    requestBody: { topicName, labelIds: ['INBOX', 'SENT'], labelFilterBehavior: 'include' },
+    requestBody: { topicName, labelIds: [...WATCH_LABELS], labelFilterBehavior: 'include' },
   });
   const expiresAt = res.data.expiration ? new Date(Number(res.data.expiration)) : new Date(Date.now() + 7 * 86_400_000);
   await prisma.emailProviderAccount.update({

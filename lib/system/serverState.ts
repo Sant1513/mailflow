@@ -77,7 +77,10 @@ export function autoTransition(s: StateFields, now: Date): Partial<SystemState> 
 
 /** Reads the switch, creating it on first use. */
 export async function readState(): Promise<SystemState> {
-  return controlDb().systemState.upsert({ where: { id: 'main' }, create: { id: 'main' }, update: {} });
+  // A plain read: the row exists after the first use, and an upsert is a write on every call
+  // (the front door asks on every cache miss). Created only when missing.
+  const row = await controlDb().systemState.findUnique({ where: { id: 'main' } });
+  return row ?? controlDb().systemState.upsert({ where: { id: 'main' }, create: { id: 'main' }, update: {} });
 }
 
 /** Reads the switch and applies any automatic move that is due (only one caller wins). */

@@ -92,19 +92,33 @@ export default function CampaignDetailPage() {
 
   const TERMINAL = new Set(['COMPLETED', 'FAILED', 'PARTIALLY_FAILED', 'CANCELLED']);
   const isLive = campaign && !TERMINAL.has(campaign.status) && campaign.status !== 'DRAFT' && campaign.status !== 'APPROVED' && campaign.status !== 'PENDING_APPROVAL' && campaign.status !== 'REJECTED' && campaign.status !== 'SCHEDULED';
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // While a batch is live, refresh only the batch (counts, status, one page of jobs) every 15 s,
+  // and the whole campaign only when the batch or campaign status changes. Paused while the tab
+  // is hidden, and refreshed as soon as it is shown again (free-tier requests and data transfer).
+  const lastStatusRef = useRef<string | null>(null);
   useEffect(() => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    if (!isLive) return;
-    // Paused while the tab is hidden (saves the database's monthly data allowance).
-    pollRef.current = setInterval(() => {
-      if (document.hidden) return;
-      load();
-      loadBatch();
-    }, 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLive]);
+    if (!isLive || !latestBatch?.id) return;
+    const id = latestBatch.id;
+    let stopped = false;
+    const tick = async () => {
+      if (stopped || document.hidden) return;
+      const res = await fetch(`/api/batches/${id}`).catch(() => null);
+      if (stopped || !res?.ok) return;
+      const json = await res.json();
+      setBatch(json);
+      const status = `${json?.batch?.status ?? ''}/${json?.batch?.campaign?.status ?? ''}`;
+      if (lastStatusRef.current !== null && status !== lastStatusRef.current) load();
+      lastStatusRef.current = status;
+    };
+    const t = setInterval(tick, 15_000);
+    const onVisible = () => { if (!document.hidden) tick(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [isLive, latestBatch?.id, load]);
 
   const autoSendRef = useRef(false);
   useEffect(() => {
@@ -122,7 +136,9 @@ export default function CampaignDetailPage() {
           body: JSON.stringify({ seconds: 40 }),
         });
         const json = await res.json().catch(() => ({}));
-        if (!res.ok || !json.remaining) stopped = true;
+        // Stop when done, on an error, or when the server's own sender already has it (busy) or
+        // every mailbox is on hold: calling again would only spend a request to hear the same.
+        if (!res.ok || !json.remaining || json.busy || json.held) stopped = true;
       } catch {
         /* network hiccup: the server keeps sending; try again on the next tick */
       } finally {
@@ -130,7 +146,7 @@ export default function CampaignDetailPage() {
       }
     };
     pass();
-    const t = setInterval(pass, 10_000);
+    const t = setInterval(pass, 15_000);
     return () => {
       stopped = true;
       clearInterval(t);
@@ -138,11 +154,14 @@ export default function CampaignDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, campaign?.status, latestBatch?.id]);
 
+  const latestBatchId = latestBatch?.id;
   const loadBatch = useCallback(async () => {
-    if (!latestBatch) return;
-    const res = await fetch(`/api/batches/${latestBatch.id}`);
+    if (!latestBatchId) return;
+    const res = await fetch(`/api/batches/${latestBatchId}`);
     if (res.ok) setBatch(await res.json());
-  }, [latestBatch]);
+  }, [latestBatchId]);
+  // The batch endpoint's copy is fresher than the campaign's while the poll above runs.
+  const liveBatch = latestBatch && batch?.batch?.id === latestBatch.id ? { ...latestBatch, ...batch.batch } : latestBatch;
 
   useEffect(() => {
     loadBatch();
@@ -745,11 +764,11 @@ export default function CampaignDetailPage() {
       )}
 
       {/* Batch progress */}
-      {latestBatch && (
+      {liveBatch && (
         <div className="rounded-lg border bg-card p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-sm font-semibold">
-              Batch {latestBatch.label} — {latestBatch.status.replace(/_/g, ' ')}
+              Batch {liveBatch.label} — {liveBatch.status.replace(/_/g, ' ')}
               {isLive && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[11px] text-success">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
@@ -783,16 +802,16 @@ export default function CampaignDetailPage() {
           </div>
 
           <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="Total" value={latestBatch.total} />
-            <Stat label="Sent" value={latestBatch.sentCount} tone="good" />
-            <Stat label="Failed" value={latestBatch.failedCount} tone={latestBatch.failedCount ? 'bad' : undefined} />
-            <Stat label="Skipped" value={latestBatch.skippedCount} />
+            <Stat label="Total" value={liveBatch.total} />
+            <Stat label="Sent" value={liveBatch.sentCount} tone="good" />
+            <Stat label="Failed" value={liveBatch.failedCount} tone={liveBatch.failedCount ? 'bad' : undefined} />
+            <Stat label="Skipped" value={liveBatch.skippedCount} />
           </div>
 
           <div className="mb-3 h-2 overflow-hidden rounded bg-muted">
             <div
               className="h-full bg-primary transition-all"
-              style={{ width: `${latestBatch.total ? (latestBatch.sentCount / latestBatch.total) * 100 : 0}%` }}
+              style={{ width: `${liveBatch.total ? (liveBatch.sentCount / liveBatch.total) * 100 : 0}%` }}
             />
           </div>
 

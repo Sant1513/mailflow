@@ -63,8 +63,13 @@ export default function BatchesPage() {
   useEffect(() => {
     if (meta.activeCount === 0) return;
     // Paused while the tab is hidden (saves the database's monthly data allowance).
-    const t = setInterval(() => { if (!document.hidden) load(); }, 5000);
-    return () => clearInterval(t);
+    const t = setInterval(() => { if (!document.hidden) load(); }, 15_000);
+    const onVisible = () => { if (!document.hidden) load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [meta.activeCount, load]);
 
   async function control(batch: BatchRow, action: 'PAUSE' | 'RESUME' | 'CANCEL' | 'RETRY_FAILED' | 'DRAIN') {

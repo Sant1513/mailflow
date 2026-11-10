@@ -9,6 +9,7 @@
  *
  *   node copy-db.mjs <fromUrl> <toUrl>          (also used by start.mjs for handovers)
  */
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -25,7 +26,7 @@ const tablesOf = async (c) =>
 const colsOf = async (c, t) =>
   (await c.query(`select column_name from information_schema.columns where table_schema='public' and table_name=$1 order by ordinal_position`, [t])).rows.map((r) => r.column_name);
 
-/** Returns { tables, rows }. Throws (target unchanged) on any problem. */
+/** Returns { tables, rows, bytes }. Throws (target unchanged) on any problem. */
 export async function copyDatabase(fromUrl, toUrl) {
   const src = new pg.Client({ connectionString: fromUrl, ssl: ssl(fromUrl) });
   const dst = new pg.Client({ connectionString: toUrl, ssl: ssl(toUrl) });
@@ -42,6 +43,7 @@ export async function copyDatabase(fromUrl, toUrl) {
     await dst.query('SET LOCAL session_replication_role = replica'); // load tables in any order
     await dst.query(`TRUNCATE ${targetTables.map(q).join(', ')}`);
     const expected = {};
+    let bytes = 0; // what crossed the wire: Supabase counts it as egress when the cloud is the source
     for (const t of tables) {
       // Only the columns both sides have, so a copy works across a pending migration.
       const dstCols = new Set(await colsOf(dst, t));
@@ -50,6 +52,7 @@ export async function copyDatabase(fromUrl, toUrl) {
       if (!expected[t]) continue;
       await pipeline(
         src.query(copyStreams.to(`COPY ${q(t)} (${cols}) TO STDOUT WITH (FORMAT binary)`)),
+        new Transform({ transform(chunk, _enc, done) { bytes += chunk.length; done(null, chunk); } }),
         dst.query(copyStreams.from(`COPY ${q(t)} (${cols}) FROM STDIN WITH (FORMAT binary)`)),
       );
     }
@@ -61,7 +64,7 @@ export async function copyDatabase(fromUrl, toUrl) {
     if (mismatches.length) throw new Error(`row counts differ: ${mismatches.join('; ')}`);
     await dst.query('COMMIT');
     await src.query('COMMIT');
-    return { tables: tables.length, rows: Object.values(expected).reduce((a, b) => a + b, 0) };
+    return { tables: tables.length, rows: Object.values(expected).reduce((a, b) => a + b, 0), bytes };
   } catch (err) {
     await dst.query('ROLLBACK').catch(() => {});
     await src.query('ROLLBACK').catch(() => {});

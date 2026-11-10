@@ -359,6 +359,7 @@ Daily Vercel crons (`vercel.json`, UTC) are the backstops and the daily jobs:
 | 08:00 | 13:30 | `sla-check` |
 | 09:00 | 14:30 | `signing-reminders` |
 | 15:00 Mon–Fri | 20:30 | `daily-digest` (the 8 PM report; the backstop after the 15-minute dispatch) |
+| 20:30 | 02:00 | `housekeeping` (deletes notifications > 90 days, audit entries > 365 days, finished webhook deliveries > 30 days, expired sessions; warns super admins when the database passes 350 MB or storage 700 MB; `lib/retention/housekeeping.ts`) |
 
 When the laptop is the active server, it runs the same jobs on its own
 timetable (§16) and Vercel crons are not forwarded to it.

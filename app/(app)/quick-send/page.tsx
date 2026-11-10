@@ -296,16 +296,29 @@ export default function QuickSendPage() {
   useEffect(() => {
     if (!current) return;
     let stop = false;
+    let t: ReturnType<typeof setInterval> | null = null;
     const tick = async () => {
-      const res = await fetch(`/api/quick-send/${current.id}`);
-      if (res.ok && !stop) setStats((await res.json()).stats);
+      const res = await fetch(`/api/quick-send/${current.id}`).catch(() => null);
+      if (!res?.ok || stop) return;
+      const next = (await res.json()).stats;
+      setStats(next);
+      // Once nothing is waiting to go out, stop the timer: opens and replies still update when
+      // the tab is shown again (free-tier requests).
+      const done = next && !next.queued && ['COMPLETED', 'FAILED', 'PARTIALLY_FAILED', 'CANCELLED'].includes(next.status);
+      if (done && t) {
+        clearInterval(t);
+        t = null;
+      }
     };
     tick();
-    // Paused while the tab is hidden (saves the database's monthly data allowance).
-    const t = setInterval(() => { if (!document.hidden) tick(); }, 5000);
+    // Every 15 s while sending, paused while the tab is hidden.
+    t = setInterval(() => { if (!document.hidden) tick(); }, 15_000);
+    const onVisible = () => { if (!document.hidden) tick(); };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       stop = true;
-      clearInterval(t);
+      if (t) clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [current]);
 

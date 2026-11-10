@@ -72,6 +72,7 @@ Without `mailflow-data\supabase.env` there is no switch, and the laptop is alway
 | `weekly-report` | Mondays 03:30 (09:00 IST) |
 | `sla-check` | 08:00 |
 | `signing-reminders` | 09:00 |
+| `housekeeping` | 20:30 (2 AM IST) |
 | `daily-digest`, the 8 PM IST daily report | 14:35 (20:05 IST). The route skips weekends and a day already sent. |
 
 Vercel's own crons are not forwarded to the laptop (`middleware.ts` skips `/api/cron/*`). When the cloud is active, GitHub Actions and the Vercel daily crons run these instead (see `ARCHITECTURE.md` §11).

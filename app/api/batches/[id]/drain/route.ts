@@ -33,11 +33,15 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   if (!result.busy && !result.held && result.remaining > 0) kickSendWorker('process-queue', { continuation: true });
 
   const after = await prisma.batch.findUnique({ where: { id: batch.id }, select: { status: true } });
-  await audit(session, 'BATCH_DRAIN', {
-    targetType: 'Batch',
-    targetId: batch.id,
-    metadata: { sent: result.sent, failed: result.failed, remaining: result.remaining },
-  });
+  // Only passes that did something are logged: the open campaign page calls this every few
+  // seconds, and an audit row per idle call would grow the database for nothing.
+  if (result.sent > 0 || result.failed > 0) {
+    await audit(session, 'BATCH_DRAIN', {
+      targetType: 'Batch',
+      targetId: batch.id,
+      metadata: { sent: result.sent, failed: result.failed, remaining: result.remaining },
+    });
+  }
 
   return NextResponse.json({
     ...result,

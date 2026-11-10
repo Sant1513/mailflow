@@ -11,6 +11,8 @@ const db = {
   campaign: { findUnique: vi.fn() },
   emailProviderAccount: { findUnique: vi.fn() },
   recruiterBlastGroup: { findMany: vi.fn(async () => []), findFirst: vi.fn(async () => null) },
+  // usageLast24h: one aggregate row (nothing sent in the last 24 hours).
+  $queryRaw: vi.fn(async () => [{ messages: 0n, total: 0n, uniq: null }]),
 };
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
 const processEmailJob = vi.fn();
