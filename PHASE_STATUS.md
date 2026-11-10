@@ -10,7 +10,7 @@
 
 ## Deployment
 
-- **Live:** https://mailflow-six-sooty.vercel.app (Vercel Hobby, functions in Mumbai `bom1`, Node 26.x)
+- **Live:** https://mailflowbymasai.vercel.app (Vercel Hobby, functions in Mumbai `bom1`, Node 26.x)
 - **Database:** Supabase Postgres (free plan, Mumbai), schema in `prisma/migrations/`, applied by the build (`prisma migrate deploy`)
 - **Files:** Supabase Storage; final signing files archived to the laptop
 - **Standby:** the laptop server (`laptop-server/`), switchable to active on Settings → Server

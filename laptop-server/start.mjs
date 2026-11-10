@@ -316,7 +316,7 @@ async function runJob(job) {
 // database for a Recruiter Bulk Send that stopped moving (a dropped hand-over between sender
 // runs) and only then ask the cloud to restart it. Checking the database directly means no
 // Vercel call at all while nothing is stuck (Vercel Hobby CPU limits).
-const CLOUD_APP = (APP_ENV.CLOUD_APP_URL || 'https://mailflow-six-sooty.vercel.app').replace(/\/+$/, '');
+const CLOUD_APP = (APP_ENV.CLOUD_APP_URL || 'https://mailflowbymasai.vercel.app').replace(/\/+$/, '');
 let lastCloudWatch = 0;
 async function stuckCloudSends() {
   if (!control) return 1; // can't look: ask the cloud, as before

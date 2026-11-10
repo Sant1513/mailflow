@@ -48,5 +48,18 @@
       "path": "/api/cron/send-queue",
       "schedule": "45 3 * * *"
     }
+  ],
+  "redirects": [
+    {
+      "source": "/((?!api/).*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "mailflow-six-sooty.vercel.app"
+        }
+      ],
+      "destination": "https://mailflowbymasai.vercel.app/$1",
+      "permanent": true
+    }
   ]
 }

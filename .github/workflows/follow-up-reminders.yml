@@ -19,14 +19,14 @@ jobs:
         continue-on-error: true
         run: |
           curl -fsS -m 30 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://mailflow-six-sooty.vercel.app/api/cron/dispatch?reason=github"
+            "https://mailflowbymasai.vercel.app/api/cron/dispatch?reason=github"
       - name: Sync every connected Gmail mailbox (every 30 minutes)
         continue-on-error: true
         run: |
           M=$((10#$(date -u +%M)))
           if [ "${{ github.event_name }}" != "schedule" ] || [ $((M % 30)) -lt 15 ]; then
             curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-              "https://mailflow-six-sooty.vercel.app/api/cron/gmail-sync"
+              "https://mailflowbymasai.vercel.app/api/cron/gmail-sync"
           else
             echo "Not this quarter-hour (runs at :00 and :30)."
           fi
@@ -36,7 +36,7 @@ jobs:
           M=$((10#$(date -u +%M)))
           if [ "${{ github.event_name }}" != "schedule" ] || [ "$M" -lt 15 ]; then
             curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-              "https://mailflow-six-sooty.vercel.app/api/cron/follow-ups"
+              "https://mailflowbymasai.vercel.app/api/cron/follow-ups"
           else
             echo "Runs once an hour (first quarter)."
           fi
@@ -46,7 +46,7 @@ jobs:
           M=$((10#$(date -u +%M)))
           if [ "${{ github.event_name }}" != "schedule" ] || [ "$M" -lt 15 ]; then
             curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-              "https://mailflow-six-sooty.vercel.app/api/cron/sheets-sync"
+              "https://mailflowbymasai.vercel.app/api/cron/sheets-sync"
           else
             echo "Runs once an hour (first quarter)."
           fi

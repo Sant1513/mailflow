@@ -7,7 +7,7 @@ Masai School's internal platform for talking to students and getting paperwork s
 | **MailFlow Mail** | Personalised email campaigns from your own Gmail, a shared inbox for replies, contacts and data, automations, dashboards |
 | **MailFlow Sign** | Send agreements for e-signature: one at a time or in bulk from a CSV, with multiple signers, placed signatures and tracked reminders |
 
-- **Live:** https://mailflow-six-sooty.vercel.app
+- **Live:** https://mailflowbymasai.vercel.app
 - **Repo:** https://github.com/Sant1513/mailflow
 - **Status (10 Nov 2026):** Phases 1–7, Sign (S1–S6), the Mail/Sign split, Quick Send, Recruiter Bulk Send, the Supabase move with the laptop server switch, the 8 PM daily report and the new look are all shipped. 68 unit-test files (`tests/`). See [Phase status](#phase-status).
 

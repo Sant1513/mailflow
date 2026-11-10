@@ -1,6 +1,6 @@
 # MailFlow — Team Guide
 
-_Updated 10 November 2026 · Live at https://mailflow-six-sooty.vercel.app · Styled version: [team-guide.html](team-guide.html) (also as [PDF](MailFlow-Team-Guide.pdf) and [Word](MailFlow-Team-Guide.docx))_
+_Updated 10 November 2026 · Live at https://mailflowbymasai.vercel.app · Styled version: [team-guide.html](team-guide.html) (also as [PDF](MailFlow-Team-Guide.pdf) and [Word](MailFlow-Team-Guide.docx))_
 
 MailFlow is Masai's internal tool for emailing students and recruiters from your own Gmail, and for collecting e-signatures. Import a list, write one email, check it per person, send it, and see every reply threaded back to the person it came from. Every bulk email carries an Unsubscribe button.
 
@@ -8,7 +8,7 @@ MailFlow is Masai's internal tool for emailing students and recruiters from your
 
 ## 1. Day-one setup (do these in order)
 
-1. **Sign in** at https://mailflow-six-sooty.vercel.app with "Continue with Google". The first time, your account waits until a Super Admin approves it (Approvals → User Registrations).
+1. **Sign in** at https://mailflowbymasai.vercel.app with "Continue with Google". The first time, your account waits until a Super Admin approves it (Approvals → User Registrations).
 2. **Connect Gmail**: Settings → Gmail → Connect, and approve the permissions. Emails are sent **from your own address**; MailFlow never sends as anyone else.
 3. **Add your email signature** in Settings → Email signature. Quick Send and Recruiter Bulk Send can add it for you.
 4. **Optional, in Settings → Gmail**:

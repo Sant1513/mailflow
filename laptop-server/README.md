@@ -2,7 +2,7 @@
 
 MailFlow runs on **one server at a time**: the cloud (Vercel + Supabase) or this Windows laptop. The switch is the `SystemState` row in the cloud database. You change it in **Settings → Server** (`lib/system/serverState.ts`). Vercel always stays the public front door, so these never change:
 
-- the address the team uses (https://mailflow-six-sooty.vercel.app);
+- the address the team uses (https://mailflowbymasai.vercel.app);
 - Google sign-in;
 - the unsubscribe and tracking links in sent emails.
 

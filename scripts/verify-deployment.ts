@@ -13,7 +13,7 @@
  *
  * Usage: BASE_URL=https://... npx tsx scripts/verify-deployment.ts
  */
-const BASE_URL = process.env.BASE_URL ?? 'https://mailflow-six-sooty.vercel.app';
+const BASE_URL = process.env.BASE_URL ?? 'https://mailflowbymasai.vercel.app';
 
 let pass = 0;
 let fail = 0;
