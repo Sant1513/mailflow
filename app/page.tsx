@@ -15,8 +15,10 @@ const CREATOR = 'Abhishesh Kumar';
 
 export function generateMetadata(): Metadata {
   const base = appBaseUrl();
-  // Google Search Console's HTML-tag verification: put the token in GOOGLE_SITE_VERIFICATION.
-  const google = process.env.GOOGLE_SITE_VERIFICATION?.trim();
+  // Google Search Console's HTML-tag verification for https://mailflowbymasai.vercel.app (the
+  // token is public by design; GOOGLE_SITE_VERIFICATION overrides it). Keep it: removing the tag
+  // un-verifies the property.
+  const google = process.env.GOOGLE_SITE_VERIFICATION?.trim() || 'gfozl0obk5BdtdSw-qNKM6eOc5EmpEgsOy3DlsJQnyk';
   return {
     metadataBase: new URL(base),
     title: TITLE,
