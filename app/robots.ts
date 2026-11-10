@@ -32,7 +32,7 @@ const PRIVATE = [
   // signed-in or per-person pages outside the group
   '/choose',
   '/pending',
-  '/login',
+  // /login is NOT listed: it carries noindex + canonical '/', which Google can only read if it may crawl it.
   '/sign/',
   '/rsvp/',
   '/unsubscribe',
@@ -43,6 +43,5 @@ export default function robots(): MetadataRoute.Robots {
   return {
     rules: [{ userAgent: '*', allow: '/', disallow: PRIVATE }],
     sitemap: `${base}/sitemap.xml`,
-    host: base,
   };
 }
