@@ -6,6 +6,7 @@ import {
   renderSigningContent,
 } from '@/lib/signing/fields';
 import { browserPdfEnabled, renderHtmlToPdf } from '@/lib/documents/browser-pdf';
+import { sanitizeSigningHtml } from '@/lib/signing/sanitize';
 import { anchorIdFromUri, buildPrintableHtml, withAnchorMarkers } from '@/lib/documents/printable';
 import {
   parseSignatureToken,
@@ -708,9 +709,11 @@ function extractAnchors(doc: PDFDocument): AnchorPosition[] {
  */
 async function generateWithBrowser(input: SignedPdfInput): Promise<SignedPdfResult> {
   const { publicValues, renderValues } = renderValuesFor(input);
-  const content = stripSignatureTokens(input.content, placedSignerIndices(input.placements ?? []));
+  // Sanitised here too: documents saved before sanitising existed may carry script, frames or
+  // event handlers, and the renderer must never print what such content fetches.
+  const content = stripSignatureTokens(sanitizeSigningHtml(input.content), placedSignerIndices(input.placements ?? []));
   const body = renderSignatureTokensHtml(
-    renderSigningContent(content, renderValues).replace(/<script[\s\S]*?<\/script>/gi, ''),
+    renderSigningContent(content, renderValues),
     input.signatureSlots ?? [],
     {
       highlightSigner: input.preview ? input.highlightSigner : undefined,

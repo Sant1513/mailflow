@@ -80,6 +80,7 @@ function DocumentActions({
   onRestart,
   onVoid,
   onResend,
+  busy = false,
 }: {
   doc: SigningRequest;
   onView: (format: 'html' | 'pdf') => void;
@@ -87,6 +88,8 @@ function DocumentActions({
   onRestart: () => void;
   onVoid: () => void;
   onResend: () => void;
+  /** An action on this row is running: its emailing buttons are off until it finishes. */
+  busy?: boolean;
 }) {
   const status = doc.documentStatus;
   const multi = !!doc.signers;
@@ -121,18 +124,18 @@ function DocumentActions({
         )
       )}
       {!multi && (status === 'SIGNED' || status === 'VOIDED' || status === 'EXPIRED') && (
-        <button onClick={onRestart} className="text-muted-foreground hover:text-foreground">
+        <button onClick={onRestart} disabled={busy} className="text-muted-foreground hover:text-foreground disabled:opacity-50">
           Re-request
         </button>
       )}
       {open && (
-        <button onClick={onVoid} className="text-muted-foreground hover:text-primary">
+        <button onClick={onVoid} disabled={busy} className="text-muted-foreground hover:text-primary disabled:opacity-50">
           Void
         </button>
       )}
       {open && someoneWaiting && (
-        <button onClick={onResend} className="text-muted-foreground hover:text-foreground" title="Remind whoever needs to sign next">
-          Resend
+        <button onClick={onResend} disabled={busy} className="text-muted-foreground hover:text-foreground disabled:opacity-50" title="Remind whoever needs to sign next">
+          {busy ? 'Sending…' : 'Resend'}
         </button>
       )}
     </div>
@@ -192,11 +195,27 @@ export default function ESignDocumentsPage() {
     setSelectedIds((prev) => (prev.length === requests.length ? [] : requests.map((r) => r.id)));
   }
 
+  // One row action at a time per row, and the bulk bar locked while it runs: every click on
+  // Resend emails the signers, so a double-click must not send twice.
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  async function rowAction(id: string, run: () => Promise<void>) {
+    if (busyId) return;
+    setBusyId(id);
+    try {
+      await run();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   /** Runs one action on every selected request and reports how many really worked. */
   async function bulkAction(action: 'void' | 'resend') {
+    if (bulkBusy) return;
     const n = selectedIds.length;
     const verb = action === 'void' ? 'Void' : 'Resend';
     if (!confirm(`${verb} ${n} selected request${n > 1 ? 's' : ''}?`)) return;
+    setBulkBusy(true);
     const results = await Promise.all(
       selectedIds.map((id) =>
         fetch(`/api/e-sign/${id}`, {
@@ -213,6 +232,7 @@ export default function ESignDocumentsPage() {
     const past = action === 'void' ? 'Voided' : 'Resent';
     if (failed.length === 0) toast.success(`${past} ${done} request${done !== 1 ? 's' : ''}`);
     else toast.error(`${past} ${done} of ${n}; ${failed.length} failed (${failed[0]})`);
+    setBulkBusy(false);
     setSelectedIds([]);
     load(page);
   }
@@ -391,11 +411,11 @@ export default function ESignDocumentsPage() {
           <span className="text-sm font-medium text-foreground">
             {selectedIds.length} selected
           </span>
-          <button onClick={bulkVoid} className="btn-secondary !px-3 !py-1 text-xs">
+          <button onClick={bulkVoid} disabled={bulkBusy} className="btn-secondary !px-3 !py-1 text-xs disabled:opacity-50">
             Void Selected
           </button>
-          <button onClick={bulkResend} className="btn-secondary !px-3 !py-1 text-xs">
-            Resend Selected
+          <button onClick={bulkResend} disabled={bulkBusy} className="btn-secondary !px-3 !py-1 text-xs disabled:opacity-50">
+            {bulkBusy ? 'Working…' : 'Resend Selected'}
           </button>
           <button
             onClick={() => setSelectedIds([])}
@@ -517,9 +537,10 @@ export default function ESignDocumentsPage() {
                         doc={req}
                         onView={(format) => viewPdf(req.id, format)}
                         onEdit={() => setEditingId(req.id)}
-                        onRestart={() => restartRequest(req.id)}
-                        onVoid={() => voidRequest(req)}
-                        onResend={() => resendRequest(req.id)}
+                        onRestart={() => rowAction(req.id, () => restartRequest(req.id))}
+                        onVoid={() => rowAction(req.id, () => voidRequest(req))}
+                        onResend={() => rowAction(req.id, () => resendRequest(req.id))}
+                        busy={busyId === req.id}
                       />
                     </td>
                   </tr>

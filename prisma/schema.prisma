@@ -428,6 +428,8 @@ model EmailProviderAccount {
   watchExpiresAt  DateTime?
   status          String        @default("CONNECTED") // CONNECTED | DISCONNECTED | EXPIRED
   lastSyncAt      DateTime?
+  /// Since when Gmail sync has been held on one message that keeps failing (lib/gmail/sync.ts skips it after 6 h).
+  syncStuckSince  DateTime?
   /// When this mailbox's Google "Other contacts" photos were last read (lib/profilePhotos).
   photosSyncedAt  DateTime?
   lastVerifiedAt  DateTime?
@@ -475,6 +477,9 @@ model Campaign {
   /// Backup mailboxes, in order, used when the main sender hits Google's daily limit, is
   /// told to back off, or is disconnected. Only mailboxes whose owners opted in can be added.
   fallbackAccountIds       String[]       @default([])
+  /// Quick Send's idempotency key (one per compose, from the browser): a retried or double
+  /// submitted send finds the campaign it already made instead of emailing the list again.
+  clientRequestId          String?        @unique
   // Â§22 sender/recipient settings. The From ADDRESS is never configurable â€”
   // it is pinned to the connected mailbox (Â§28) â€” but the display name,
   // Reply-To and Cc/Bcc are. Cc/Bcc are added to every message in the

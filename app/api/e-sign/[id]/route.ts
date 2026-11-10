@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { appBaseUrl } from '@/lib/app-url';
 import { emailBrandHeader } from '@/lib/email/brand';
 import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
@@ -19,6 +20,7 @@ import {
 import { placementsOf } from '@/lib/signing/placements';
 import { pdfBase64 } from '@/lib/storage/files';
 import { syncSigningStatusToRecord } from '@/lib/signing/writeback';
+import { sanitizeSigningHtml } from '@/lib/signing/sanitize';
 
 /** GET /api/e-sign/[id] — fetch a single signing request for the current workspace. */
 export const GET = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
@@ -73,6 +75,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
   return NextResponse.json({
     request: {
       ...rest,
+      content: sanitizeSigningHtml(request.content),
       ...(signedPdfData !== undefined ? { signedPdfData } : {}),
       fieldValues: publicSigningFieldValues(request.fieldValues as Record<string, unknown>),
       lockedFields: lockedFieldsOf(request.fieldValues),
@@ -179,7 +182,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       data: {
         workspaceId,
         title: existing.title,
-        content: existing.content,
+        content: sanitizeSigningHtml(existing.content),
         recipientName: existing.recipientName,
         recipientEmail: existing.recipientEmail,
         fieldValues: existing.fieldValues ?? {},
@@ -192,13 +195,13 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     });
 
     const account = await prisma.emailProviderAccount.findFirst({
-      where: { workspaceId },
+      where: { workspaceId, status: 'CONNECTED' },
       orderBy: { createdAt: 'asc' },
     });
 
     if (account) {
-      const signingUrl = `${process.env.NEXTAUTH_URL}/sign/${newRequest.token}`;
-      const expiresDateStr = expiresAt.toLocaleDateString('en-IN', {
+      const signingUrl = `${appBaseUrl()}/sign/${newRequest.token}`;
+      const expiresDateStr = expiresAt.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata',
         year: 'numeric',
         month: 'long',
         day: 'numeric',
@@ -278,23 +281,31 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
   });
 
   const account = await prisma.emailProviderAccount.findFirst({
-    where: { workspaceId },
+    where: { workspaceId, status: 'CONNECTED' },
     orderBy: { createdAt: 'asc' },
   });
 
-  for (const target of account ? targets : []) {
-    await sendReminder(account!, target, session.name);
+  // Report what actually went out, not how many were attempted.
+  const failed: { email: string; error: string }[] = [];
+  for (const target of targets) {
+    const error = account ? await sendReminder(account, target, session.name) : 'No connected Gmail mailbox in this workspace. Connect Gmail in Settings.';
+    if (error) failed.push({ email: target.recipientEmail, error });
   }
+  const delivered = targets.filter((t) => !failed.some((f) => f.email === t.recipientEmail));
 
   await audit(session, 'SIGNING_REQUEST_RESENT', {
     targetType: 'SigningRequest',
     targetId: existing.id,
-    metadata: { remindedIds: targets.map((t) => t.id) },
+    metadata: { remindedIds: delivered.map((t) => t.id), ...(failed.length ? { failed } : {}) },
   });
 
+  if (delivered.length === 0) {
+    return NextResponse.json({ error: `The reminder could not be sent: ${failed[0]?.error ?? 'unknown error'}`, failed }, { status: 502 });
+  }
   return NextResponse.json({
-    resent: targets.length,
-    recipients: targets.map((t) => t.recipientEmail),
+    resent: delivered.length,
+    recipients: delivered.map((t) => t.recipientEmail),
+    ...(failed.length ? { failed } : {}),
   });
 });
 
@@ -304,9 +315,9 @@ async function sendReminder(
   senderName: string,
 ) {
   const session = { name: senderName };
-  const signingUrl = `${process.env.NEXTAUTH_URL}/sign/${existing.token}`;
+  const signingUrl = `${appBaseUrl()}/sign/${existing.token}`;
   const expiresDateStr = existing.expiresAt
-    ? existing.expiresAt.toLocaleDateString('en-IN', {
+    ? existing.expiresAt.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata',
         year: 'numeric',
         month: 'long',
         day: 'numeric',
@@ -352,8 +363,10 @@ async function sendReminder(
       subject: `[Reminder] Please sign: ${existing.title}`,
       html,
     });
+    return null;
   } catch (err) {
     console.error('[e-sign] failed to resend invitation email', err);
+    return (err instanceof Error ? err.message : String(err)).slice(0, 300);
   }
 }
 
@@ -463,7 +476,7 @@ async function updateRequest(session: AppSession, existing: SigningRequest, body
     const active = outcome.targets.filter((t) => t.status === 'SENT' || t.status === 'VIEWED');
     const account = active.length
       ? await prisma.emailProviderAccount.findFirst({
-          where: { workspaceId: existing.workspaceId },
+          where: { workspaceId: existing.workspaceId, status: 'CONNECTED' },
           orderBy: { createdAt: 'asc' },
         })
       : null;
@@ -479,7 +492,7 @@ async function updateRequest(session: AppSession, existing: SigningRequest, body
             html: buildUpdatedHtml({
               recipientName: t.recipientName,
               title: t.title,
-              signingUrl: `${process.env.NEXTAUTH_URL}/sign/${t.token}`,
+              signingUrl: `${appBaseUrl()}/sign/${t.token}`,
               senderName: session.name,
               expiresAt: t.expiresAt,
             }),
@@ -516,7 +529,7 @@ function buildUpdatedHtml(opts: {
   expiresAt: Date | null;
 }): string {
   const expires = opts.expiresAt
-    ? opts.expiresAt.toLocaleDateString('en-IN', {
+    ? opts.expiresAt.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata',
         year: 'numeric',
         month: 'long',
         day: 'numeric',

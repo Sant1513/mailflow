@@ -15,10 +15,12 @@ const tx = {
       return c;
     }),
     update: vi.fn(),
+    deleteMany: vi.fn(),
   },
-  conversationMessage: { create: vi.fn(async () => ({ id: 'msg1' })) },
+  conversationMessage: { create: vi.fn(async () => ({ id: 'msg1' })), delete: vi.fn() },
+  attachment: { deleteMany: vi.fn() },
   record: { updateMany: vi.fn() },
-  recipientHistory: { create: vi.fn() },
+  recipientHistory: { create: vi.fn(), deleteMany: vi.fn() },
   notification: { create: vi.fn(async ({ data }: any) => notifications.push(data)) },
 };
 const db = {
@@ -41,7 +43,7 @@ vi.mock('@/lib/email/bounces', () => ({
 }));
 vi.mock('@/lib/replyRules/apply', () => ({ applyReplyRules: vi.fn() }));
 
-const { ingestInboundMessage } = await import('@/lib/gmail/ingest');
+const { ingestInboundMessage, RetryLaterError } = await import('@/lib/gmail/ingest');
 const { gmailThreadOf, recruiterThreadKey } = await import('@/lib/recruiterSend/replies');
 const { suppressBounced } = await import('@/lib/email/bounces');
 
@@ -146,6 +148,42 @@ describe('recruiter replies', () => {
       data: { status: 'BOUNCED', skipReason: 'Bounced: 550 5.1.1 address not found' },
     });
   });
+
+  it('a recruiter bounce whose suppression fails is handed back to the sync to retry, not dropped', async () => {
+    vi.mocked(suppressBounced).mockRejectedValueOnce(new Error('P1001 can’t reach database'));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(
+      ingestInboundMessage(mailbox, reply('mailer-daemon@googlemail.com', { subject: 'Delivery Status Notification (Failure)' }))
+    ).rejects.toBeInstanceOf(RetryLaterError);
+    errSpy.mockRestore();
+    expect(db.recruiterBlastRecipient.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('an unsubscribe email whose suppression fails is handed back to the sync to retry', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // db has no emailSuppression in this suite, so writing the suppression throws.
+    await expect(
+      ingestInboundMessage(mailbox, reply('priya@corp.com', { subject: 'Unsubscribe cj-0123456789abcdef', inReplyTo: null, references: null }))
+    ).rejects.toBeInstanceOf(RetryLaterError);
+    errSpy.mockRestore();
+    expect(created).toHaveLength(0);
+  });
+
+  it('a stored bounce notice is taken back out when suppression keeps failing, so the next sync retries it', async () => {
+    // A known (non-recruiter) conversation: the notice is stored there, then suppression fails.
+    db.conversation.findUnique.mockResolvedValue({ id: 'c-known', contactId: 'contact-1', workspaceId: 'w-teammate', ownerId: 'u-teammate', assigneeId: null, recruiterBlastId: null, recipientEmail: 'gone@corp.com' });
+    vi.mocked(suppressBounced).mockRejectedValue(new Error('connection reset'));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(
+      ingestInboundMessage(mailbox, reply('mailer-daemon@googlemail.com', { subject: 'Delivery Status Notification (Failure)' }))
+    ).rejects.toBeInstanceOf(RetryLaterError);
+    errSpy.mockRestore();
+    expect(suppressBounced).toHaveBeenCalledTimes(3);
+    expect(tx.conversationMessage.delete).toHaveBeenCalledWith({ where: { id: 'msg1' } });
+    expect(tx.recipientHistory.deleteMany).toHaveBeenCalledWith({ where: { refId: 'msg1' } });
+    vi.mocked(suppressBounced).mockReset().mockResolvedValue(['gone@corp.com']);
+    db.conversation.findUnique.mockReset().mockResolvedValue(null);
+  }, 10_000);
 
   it('leaves unrelated mail alone', async () => {
     db.recruiterBlastGroup.findFirst.mockResolvedValue(null);

@@ -8,7 +8,7 @@
  * worker. Both call processEmailJob, so behaviour is identical.
  */
 import 'dotenv/config';
-import { Worker, type Job } from 'bullmq';
+import { DelayedError, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { QUEUE_NAMES, type EmailJobPayload } from '../lib/queue/queues';
 import { processEmailJob, reconcileBatchStatus } from '../lib/email/processJob';
@@ -39,9 +39,10 @@ const worker = new Worker<EmailJobPayload>(
     if (row?.emailProviderAccountId) {
       const budget = await remainingRateBudget(row.emailProviderAccountId);
       if (budget <= 0) {
-        // Re-queue with a delay rather than burning an attempt.
+        // Re-queue with a delay rather than burning an attempt. BullMQ requires DelayedError
+        // after moveToDelayed; returning instead would mark the job completed.
         await job.moveToDelayed(Date.now() + 30_000, job.token);
-        return { deferred: true };
+        throw new DelayedError();
       }
     }
 

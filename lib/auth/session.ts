@@ -109,14 +109,21 @@ async function applyViewAs(session: AppSession): Promise<AppSession> {
  */
 export async function requireSession(): Promise<AppSession> {
   const session = await baseSession();
-  if (!session) throw new UnauthorizedError();
+  if (!session || session.status === 'DISABLED') throw new UnauthorizedError();
+  // A PENDING account has a real session (NextAuth creates it on first sign-in) but must not use
+  // any API until a super admin approves it; only the /pending page and sign-out work for it.
+  if (session.status !== 'ACTIVE') throw new ForbiddenError('Your account is waiting for approval');
   return applyViewAs(session);
 }
 
-/** Same as requireSession but resolves to null instead of throwing. */
+/**
+ * Same as requireSession but resolves to null instead of throwing. PENDING sessions are returned
+ * (the /pending page and the layouts redirect on `status`); DISABLED ones count as signed out.
+ */
 export async function getOptionalSession(): Promise<AppSession | null> {
   const session = await baseSession();
-  return session ? applyViewAs(session) : null;
+  if (!session || session.status === 'DISABLED') return null;
+  return applyViewAs(session);
 }
 
 export async function requireRole(allowed: Role[]): Promise<AppSession> {

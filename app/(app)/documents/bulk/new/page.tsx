@@ -606,7 +606,11 @@ export default function NewBulkSendPage() {
       .map((s) => s.trim())
       .filter(Boolean);
 
+    const docs = validRecipients.length;
+    if (!window.confirm(`Send this document to ${docs} recipient${docs === 1 ? '' : 's'}? Everyone gets a signing email now.`)) return;
+
     setSubmitting(true);
+    // Stays disabled after a success (the page moves on): only a failure re-enables Send.
     const res = await fetch('/api/signing-batches', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -630,12 +634,12 @@ export default function NewBulkSendPage() {
         ccEmails: ccList,
         expiresInDays,
       }),
-    });
-    setSubmitting(false);
+    }).catch(() => null);
 
-    if (!res.ok) {
-      const json = (await res.json().catch(() => ({}))) as { error?: string };
-      toast.error(json.error ?? 'Failed to create bulk send');
+    if (!res || !res.ok) {
+      setSubmitting(false);
+      const json = (await res?.json().catch(() => ({}))) as { error?: string } | undefined;
+      toast.error(json?.error ?? 'Failed to create bulk send');
       return;
     }
 

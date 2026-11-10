@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { cronAuthorised } from '@/lib/cron/auth';
 import { prisma } from '@/lib/db/client';
 import { syncAccountToCompletion } from '@/lib/gmail/sync';
 import { ensureWatch, pushEnabled, watchDue } from '@/lib/gmail/watch';
@@ -14,12 +15,8 @@ export const maxDuration = 60;
  * anyone pressing a button. Push delivery (Pub/Sub) remains the faster path
  * when configured.
  */
-function authorised(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return process.env.NODE_ENV !== 'production';
-  const header = req.headers.get('authorization') ?? '';
-  return header === `Bearer ${secret}` || new URL(req.url).searchParams.get('secret') === secret;
-}
+/** Shared header-only, constant-time check (lib/cron/auth.ts). */
+const authorised = cronAuthorised;
 
 export async function GET(req: Request) {
   if (!authorised(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

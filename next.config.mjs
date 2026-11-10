@@ -20,6 +20,22 @@ const nextConfig = {
       '/api/e-sign/preview': ['./node_modules/@sparticuz/chromium/bin/**'],
     },
   },
+  // Basic hardening on every response. Framing is limited to our own pages (the app's PDF
+  // previews are same-origin), so another site can't load MailFlow in a hidden frame and
+  // trick an admin into clicking. No script CSP: Next.js and the theme script use inline code.
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

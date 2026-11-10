@@ -406,4 +406,4 @@ BASE_URL=https://<deployed-url> npx tsx scripts/verify-deployment.ts   # run aft
 | `npm run db:migrate:deploy` | Apply pending migrations |
 | `npm run db:studio` | Browse the database |
 | `npm run db:seed` | Seed an org and a sample dataset |
-| `npm run worker:email` · `worker:gmail-sync` · `worker:automation` | Queue workers (need Redis) |
+| `npm run worker:email` · `worker:automation` | Queue workers (need Redis) |

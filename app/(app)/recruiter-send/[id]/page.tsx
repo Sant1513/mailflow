@@ -75,7 +75,9 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<Blast | null>(null);
-  const [saving, setSaving] = useState<'idle' | 'saving' | 'saved'>('idle');
+  // 'error' = the last change didn't save: sending is blocked until a later save succeeds, so an
+  // email never goes out without the edit the person just made.
+  const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [check, setCheck] = useState<Check | null>(null);
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -159,7 +161,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
         if (affectsPlan || affectsVariables) runCheck();
       }
       else {
-        setSaving('idle');
+        setSaving('error');
         toast.error(j?.error ?? 'Could not save.');
       }
     }, 700);
@@ -270,6 +272,9 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
   async function start(scheduled: boolean) {
     if (!check) return toast.error('Run the check first.');
+    // Never send without the latest edit: wait for the autosave, refuse if it failed.
+    if (saving === 'saving') return toast.error('Still saving your last change. Try again in a moment.');
+    if (saving === 'error') return toast.error('Your last change wasn’t saved. Edit it again or reload the page before sending.');
     const when = scheduled && scheduleAt ? new Date(scheduleAt).toISOString() : null;
     const msg = `${scheduled ? 'Schedule' : 'Send'} this to ${check.eligible.toLocaleString()} recruiter${check.eligible === 1 ? '' : 's'} in ${check.messages.toLocaleString()} email${check.messages === 1 ? '' : 's'}?`;
     if (!confirm(msg)) return;
@@ -331,7 +336,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className={`rounded px-1.5 py-0.5 ${STATUS_STYLE[b.status] ?? ''}`}>{b.status.toLowerCase()}</span>
             <span>{b.mode === 'BCC' ? 'BCC groups' : 'Individual copies'}</span>
-            {draft && <span>{saving === 'saving' ? 'Saving…' : saving === 'saved' ? 'Saved' : ''}</span>}
+            {draft && <span className={saving === 'error' ? 'text-red-600' : undefined}>{saving === 'saving' ? 'Saving…' : saving === 'saved' ? 'Saved' : saving === 'error' ? 'Not saved' : ''}</span>}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -674,9 +679,9 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                   </details>
                 )}
                                 <div className="flex flex-wrap items-end gap-2 border-t pt-3">
-                  <button type="button" onClick={() => start(false)} disabled={busy === 'start' || check.eligible === 0} className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy === 'start' ? 'Starting…' : 'Send now'}</button>
+                  <button type="button" onClick={() => start(false)} disabled={busy === 'start' || check.eligible === 0 || saving === 'saving' || saving === 'error'} title={saving === 'saving' ? 'Saving your last change…' : saving === 'error' ? 'Your last change wasn’t saved' : undefined} className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy === 'start' ? 'Starting…' : 'Send now'}</button>
                   <label className="text-xs">or schedule for <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} className="ml-1 rounded border bg-background px-1 py-0.5" /></label>
-                  <button type="button" onClick={() => start(true)} disabled={!scheduleAt || busy === 'start' || check.eligible === 0} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">Schedule</button>
+                  <button type="button" onClick={() => start(true)} disabled={!scheduleAt || busy === 'start' || check.eligible === 0 || saving === 'saving' || saving === 'error'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">Schedule</button>
                 </div>
               </div>
             )}

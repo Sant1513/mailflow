@@ -2,6 +2,21 @@ import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { UnauthorizedError, ForbiddenError } from '@/lib/auth/session';
 
+const GENERIC_ERROR = 'Something went wrong on our side. Please try again; if it keeps happening, tell an admin.';
+
+/**
+ * What a 500 may tell the browser. Our own errors carry messages written for people (e.g. "Gmail
+ * needs reconnecting") and are kept; database and library errors can carry table names, queries
+ * and connection details, so those are replaced (the full error is in the server log).
+ */
+export function publicErrorMessage(err: unknown): string {
+  if (!(err instanceof Error)) return GENERIC_ERROR;
+  const name = err.name || err.constructor?.name || '';
+  if (/^Prisma/.test(name) || /prisma|invalid `|SELECT |INSERT |UPDATE |postgres(ql)?:\/\//i.test(err.message)) return GENERIC_ERROR;
+  if (err.message.length > 300 || err.message.includes('\n')) return GENERIC_ERROR;
+  return err.message || GENERIC_ERROR;
+}
+
 /**
  * Wraps an API route handler so auth/validation errors map to the right
  * HTTP status instead of leaking a 500 or, worse, a fake 200. Never used to
@@ -27,8 +42,7 @@ export function withErrorHandling(
         );
       }
       console.error('[api]', err);
-      const message = err instanceof Error ? err.message : 'Internal error';
-      return NextResponse.json({ error: message }, { status: 500 });
+      return NextResponse.json({ error: publicErrorMessage(err) }, { status: 500 });
     }
   };
 }

@@ -10,20 +10,20 @@ import { SendEmailError } from '@/lib/email/provider';
 
 const db = {
   emailJob: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-  batch: { update: vi.fn(), findUniqueOrThrow: vi.fn() },
+  batch: { update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn() },
   record: { update: vi.fn() },
-  campaign: { update: vi.fn() },
+  campaign: { update: vi.fn(), updateMany: vi.fn() },
   conversation: { upsert: vi.fn() },
   conversationMessage: { create: vi.fn() },
   recipientHistory: { create: vi.fn() },
-  emailSuppression: { findUnique: vi.fn() },
+  emailSuppression: { findFirst: vi.fn() },
   $transaction: vi.fn(),
 };
 
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
 vi.mock('@/lib/email/gmail', () => ({ GmailProvider: class {} }));
 
-const { processEmailJob } = await import('@/lib/email/processJob');
+const { processEmailJob, reconcileBatchStatus } = await import('@/lib/email/processJob');
 
 function jobFixture(overrides: Record<string, any> = {}) {
   return {
@@ -62,8 +62,138 @@ beforeEach(() => {
   db.emailJob.update.mockResolvedValue({ id: 'job1', batchId: 'batch1', recordId: 'rec1' });
   db.batch.update.mockResolvedValue({});
   db.record.update.mockResolvedValue({});
-  db.emailSuppression.findUnique.mockResolvedValue(null);
+  db.emailSuppression.findFirst.mockResolvedValue(null);
+  db.emailJob.updateMany.mockResolvedValue({ count: 1 });
+  db.batch.updateMany.mockResolvedValue({ count: 1 });
+  db.campaign.updateMany.mockResolvedValue({ count: 1 });
   db.$transaction.mockImplementation(async (fn: any) => (typeof fn === 'function' ? fn(db) : Promise.all(fn)));
+});
+
+describe('processEmailJob — claiming (no two consumers send the same job)', () => {
+  it('claims QUEUED → SENDING before sending', async () => {
+    db.emailJob.findUnique.mockResolvedValue(jobFixture());
+    const send = vi.fn(async () => ({ providerMessageId: 'm', threadId: 't', messageIdHeader: '<m@x>' }));
+    await processEmailJob('job1', { providerFactory: fakeProvider(send) });
+    expect(db.emailJob.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'job1', status: { in: ['QUEUED', 'FAILED'] } }),
+        data: expect.objectContaining({ status: 'SENDING' }),
+      })
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('steps aside without sending when another consumer already claimed the job', async () => {
+    db.emailJob.findUnique.mockResolvedValue(jobFixture({ status: 'SENDING' }));
+    db.emailJob.updateMany.mockResolvedValueOnce({ count: 0 });
+    const send = vi.fn();
+    const result = await processEmailJob('job1', { providerFactory: fakeProvider(send) });
+    expect(result).toMatchObject({ status: 'SKIPPED', reason: expect.stringContaining('Another sender') });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('a caller that already claimed it (the drain) sends without claiming again', async () => {
+    db.emailJob.findUnique.mockResolvedValue(jobFixture({ status: 'SENDING' }));
+    const send = vi.fn(async () => ({ providerMessageId: 'm', threadId: 't', messageIdHeader: '<m@x>' }));
+    const result = await processEmailJob('job1', { providerFactory: fakeProvider(send), claimed: true });
+    expect(result.status).toBe('SENT');
+    expect(db.emailJob.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'SENDING' }) }));
+  });
+
+  it('claimed: true but the job is no longer SENDING → nothing is sent', async () => {
+    db.emailJob.findUnique.mockResolvedValue(jobFixture({ status: 'QUEUED' }));
+    const send = vi.fn();
+    const result = await processEmailJob('job1', { providerFactory: fakeProvider(send), claimed: true });
+    expect(result.status).toBe('SKIPPED');
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('processEmailJob — after Gmail accepted the email', () => {
+  it('a failing bookkeeping write never marks the job FAILED (Retry failed would resend it)', async () => {
+    db.emailJob.findUnique.mockResolvedValue(jobFixture());
+    db.$transaction.mockRejectedValue(new Error('P2028 transaction timeout'));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const result = await processEmailJob('job1', {
+      providerFactory: fakeProvider(async () => ({ providerMessageId: 'gm-1', threadId: 'th-1', messageIdHeader: '<m@x>' })),
+    });
+    errSpy.mockRestore();
+    expect(result).toMatchObject({ status: 'SENT', providerMessageId: 'gm-1' });
+    expect(db.$transaction).toHaveBeenCalledTimes(3);
+    // Nothing wrote FAILED…
+    for (const call of db.emailJob.update.mock.calls) expect(call[0].data.status).not.toBe('FAILED');
+    expect(db.batch.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: { failedCount: { increment: 1 } } }));
+    // …and the job keeps Gmail's id while SENDING, so recovery marks it SENT.
+    expect(db.emailJob.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'job1', status: 'SENDING' },
+        data: expect.objectContaining({ gmailMessageId: 'gm-1', gmailThreadId: 'th-1' }),
+      })
+    );
+  }, 10_000);
+
+  it('saves the unsubscribe token before sending, so the delivered link always works', async () => {
+    db.emailJob.findUnique.mockResolvedValue(jobFixture({ unsubscribeToken: null }));
+    const order: string[] = [];
+    db.emailJob.update.mockImplementation(async (args: any) => {
+      if (args.data.unsubscribeToken && !args.data.status) order.push('token');
+      return { id: 'job1', batchId: 'batch1', recordId: 'rec1' };
+    });
+    await processEmailJob('job1', {
+      providerFactory: fakeProvider(async () => {
+        order.push('send');
+        return { providerMessageId: 'm', threadId: 't', messageIdHeader: '<m@x>' };
+      }),
+    });
+    expect(order).toEqual(['token', 'send']);
+  });
+
+  it('a retry after a transient bookkeeping error records the send once', async () => {
+    db.emailJob.findUnique.mockResolvedValue(jobFixture());
+    db.$transaction
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockImplementation(async (fn: any) => fn(db));
+    const result = await processEmailJob('job1', {
+      providerFactory: fakeProvider(async () => ({ providerMessageId: 'gm-2', threadId: 't', messageIdHeader: '<m@x>' })),
+    });
+    expect(result.status).toBe('SENT');
+    expect(db.$transaction).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('processEmailJob — suppression check', () => {
+  it('matches an unsubscribe saved with different capitals', async () => {
+    db.emailJob.findUnique.mockResolvedValue(jobFixture({ toEmail: 'Rahul@Example.com' }));
+    db.emailSuppression.findFirst.mockResolvedValue({ reason: 'UNSUBSCRIBED' });
+    const send = vi.fn();
+    const result = await processEmailJob('job1', { providerFactory: fakeProvider(send) });
+    expect(result.status).toBe('SKIPPED');
+    expect(send).not.toHaveBeenCalled();
+    expect(db.emailSuppression.findFirst).toHaveBeenCalledWith({
+      where: { workspaceId: 'w1', email: { equals: 'Rahul@Example.com', mode: 'insensitive' } },
+    });
+  });
+});
+
+describe('reconcileBatchStatus — never undoes a Pause or Cancel', () => {
+  it('leaves the batch PAUSED when a pause lands between the read and the write', async () => {
+    db.batch.findUniqueOrThrow.mockResolvedValue({ id: 'b1', campaignId: 'c1', status: 'RUNNING', jobs: [{ status: 'QUEUED' }] });
+    db.batch.updateMany.mockResolvedValueOnce({ count: 0 });
+    db.batch.findUnique.mockResolvedValue({ status: 'PAUSED' });
+    await expect(reconcileBatchStatus('b1')).resolves.toBe('PAUSED');
+    expect(db.batch.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'b1', status: { notIn: ['PAUSED', 'CANCELLED'] } } })
+    );
+    expect(db.campaign.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('finishing a batch does not overwrite a paused campaign', async () => {
+    db.batch.findUniqueOrThrow.mockResolvedValue({ id: 'b1', campaignId: 'c1', status: 'RUNNING', jobs: [{ status: 'SENT' }] });
+    await expect(reconcileBatchStatus('b1')).resolves.toBe('COMPLETED');
+    expect(db.campaign.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'c1', status: { notIn: ['PAUSED', 'CANCELLED'] } }, data: { status: 'COMPLETED' } })
+    );
+  });
 });
 
 describe('processEmailJob — idempotency and guards', () => {

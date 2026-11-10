@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { cronAuthorised } from '@/lib/cron/auth';
 import { blockedReplyRecipient } from '@/lib/email/replySuppression';
 import { prisma } from '@/lib/db/client';
 import { GmailProvider } from '@/lib/email/gmail';
@@ -8,12 +9,8 @@ import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 import { gmailThreadOf } from '@/lib/recruiterSend/replies';
 import { MessageDirection, EmailProvider as EmailProviderEnum } from '@prisma/client';
 
-function authorised(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return process.env.NODE_ENV !== 'production';
-  const header = req.headers.get('authorization') ?? '';
-  return header === `Bearer ${secret}` || new URL(req.url).searchParams.get('secret') === secret;
-}
+/** Shared header-only, constant-time check (lib/cron/auth.ts). */
+const authorised = cronAuthorised;
 
 /**
  * Cron: fire PENDING scheduled replies whose scheduledFor has passed.

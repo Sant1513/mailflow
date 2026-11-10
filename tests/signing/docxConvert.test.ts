@@ -3,6 +3,8 @@ import JSZip from 'jszip';
 import { docxToHtml, formatNumber, mapSymbol } from '@/lib/signing/docx/convert';
 import { fontImports, fontStack } from '@/lib/signing/docx/fonts';
 import { documentPageGeometry } from '@/lib/documents/browser-pdf';
+import { sanitizeSigningHtml } from '@/lib/signing/sanitize';
+import * as cheerio from 'cheerio';
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"';
 
@@ -223,5 +225,34 @@ describe('helpers', () => {
     expect(documentPageGeometry('<div data-mf-page="816 1056 0 0 0 0">')?.margins.top).toBe(18);
     expect(documentPageGeometry('<div data-mf-page="99999 1056 96 96 96 96">')).toBeNull();
     expect(documentPageGeometry('<p>plain template</p>')).toBeNull();
+  });
+});
+
+describe('imported documents survive the signing sanitizer unchanged', () => {
+  it('keeps every element, style, span and placeholder of a real conversion', async () => {
+    const tc = (t: string, pr = '') => `<w:tc><w:tcPr>${pr}</w:tcPr>${p(r(t))}</w:tc>`;
+    const li = (t: string, id: string) => p(r(t), `<w:pStyle w:val="List"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="${id}"/></w:numPr>`);
+    const body =
+      p(r('Offer Letter'), '<w:pStyle w:val="Heading1"/><w:jc w:val="center"/>') +
+      p(r('Dear {{student_name}},') + r(' bold', '<w:b/><w:color w:val="C00000"/>')) +
+      li('First', '1') + li('Second', '1') + li('Bullet', '2') +
+      `<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>
+        <w:tr>${tc('Role', '<w:shd w:fill="D9E2F3"/>')}${tc('{{role}}')}</w:tr></w:tbl>` +
+      p(r('[[signature]]'));
+    const { html } = await docxToHtml(await makeDocx(body));
+    const clean = sanitizeSigningHtml(html);
+    // Compare as parsed documents (the sanitizer writes <br /> where the converter writes <br>,
+    // and drops empty attributes such as style="").
+    const shape = (h: string) => {
+      const $ = cheerio.load(h, null, false);
+      return $('*')
+        .toArray()
+        .map((el) => {
+          const e = el as unknown as { tagName: string; attribs: Record<string, string> };
+          return `${e.tagName} ${JSON.stringify(Object.entries(e.attribs).filter(([, v]) => v !== '').sort())}`;
+        });
+    };
+    expect(shape(clean)).toEqual(shape(html));
+    expect(cheerio.load(clean).text()).toBe(cheerio.load(html).text());
   });
 });

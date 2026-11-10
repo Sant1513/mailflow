@@ -40,6 +40,12 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     data: { ...body, ...(body.slackUserId !== undefined ? { slackUserId: body.slackUserId || null } : {}) },
   });
 
+  // Disabling (or sending back to pending) signs them out everywhere at once. Role changes need
+  // no sign-out: the role is re-read from the database on every request.
+  if (body.status && body.status !== 'ACTIVE' && target.status === 'ACTIVE') {
+    await prisma.session.deleteMany({ where: { userId: target.id } });
+  }
+
   await audit(session, body.role ? 'ROLE_CHANGE' : 'USER_STATUS_CHANGE', {
     targetType: 'User',
     targetId: target.id,

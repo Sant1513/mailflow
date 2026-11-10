@@ -166,12 +166,12 @@ async function main() {
 
     console.log('-- §4.3 follow-up reminders --');
     await prisma.followUp.create({ data: { conversationId: conversation.id, dueDate: new Date(Date.now() - 60_000), note: 'Ping about offer letter' } });
-    r = await call(`/api/cron/follow-ups?secret=${encodeURIComponent(process.env.CRON_SECRET ?? '')}`, null);
+    r = await call('/api/cron/follow-ups', null, { headers: { Authorization: `Bearer ${process.env.CRON_SECRET ?? ''}` } });
     check('cron runs and reminds exactly the due follow-up', r.status === 200 && r.json.results.some((x: any) => x.inApp === 'SENT'), r.json);
-    const again = await call(`/api/cron/follow-ups?secret=${encodeURIComponent(process.env.CRON_SECRET ?? '')}`, null);
+    const again = await call('/api/cron/follow-ups', null, { headers: { Authorization: `Bearer ${process.env.CRON_SECRET ?? ''}` } });
     const ours = await prisma.followUp.findFirst({ where: { conversationId: conversation.id } });
     check('second run does not remind twice (remindedAt set)', !!ours?.remindedAt && !again.json.results.some((x: any) => x.id === ours?.id), { remindedAt: ours?.remindedAt });
-    r = await call('/api/cron/follow-ups?secret=wrong', null);
+    r = await call('/api/cron/follow-ups', null, { headers: { Authorization: 'Bearer wrong' } });
     check('wrong secret is refused (401)', process.env.CRON_SECRET ? r.status === 401 : true, r.status);
     r = await call('/api/notifications', assignee.cookie);
     check('assignee has the FOLLOW_UP_DUE notification', r.json?.notifications?.some((n: any) => n.type === 'FOLLOW_UP_DUE'), r.json?.notifications?.map((n: any) => n.type));

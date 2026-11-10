@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { appBaseUrl } from '@/lib/app-url';
+import type { Prisma } from '@prisma/client';
 import { emailBrandHeader } from '@/lib/email/brand';
 import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
@@ -11,6 +13,7 @@ import { generateSignedPdf } from '@/lib/documents/pdf';
 import { lockedFieldsOf, publicSigningFieldValues, mergeGroupFieldValues } from '@/lib/signing/fields';
 import { placementsOf } from '@/lib/signing/placements';
 import { syncSigningStatusToRecord } from '@/lib/signing/writeback';
+import { sanitizeSigningHtml } from '@/lib/signing/sanitize';
 
 // First PDF on a cold server starts Chromium, which can take several seconds.
 export const maxDuration = 60;
@@ -102,7 +105,8 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { token:
   return NextResponse.json({
     id: request.id,
     title: request.title,
-    content: request.content,
+    // Shown on our own origin: never trust stored HTML, even documents saved before sanitising.
+    content: sanitizeSigningHtml(request.content),
     recipientName: request.recipientName,
     fieldValues: publicSigningFieldValues(request.fieldValues as Record<string, unknown>),
     lockedFields: lockedFieldsOf(request.fieldValues),
@@ -215,8 +219,29 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
     'unknown';
   const signerAgent = req.headers.get('user-agent') ?? 'unknown';
 
-  // Generate signed PDF with merged field values
-  const pdfBuffer = await generateSignedPdf({
+  // Claim the signature first, in one conditional write: a double-click or two tabs submitting
+  // at once must not sign twice (or count twice towards the group). Only the request that
+  // flips the status goes on; the other gets "already signed".
+  const claimed = await prisma.signingRequest.updateMany({
+    where: { id: request.id, status: { notIn: ['SIGNED', 'VOIDED', 'EXPIRED'] } },
+    data: {
+      status: 'SIGNED',
+      signedAt: now,
+      signatureImage: body.signatureImage,
+      fieldValues: mergedFieldValues,
+      signerIp,
+      signerAgent,
+    },
+  });
+  if (claimed.count === 0) {
+    return NextResponse.json({ error: 'Document is already signed.' }, { status: 409 });
+  }
+
+  // Generate signed PDF with merged field values. If that fails, the claim is undone so the
+  // signer can simply try again.
+  let pdfBuffer: Buffer;
+  try {
+    pdfBuffer = await generateSignedPdf({
     title: request.title,
     content: request.content,
     recipientName: request.recipientName,
@@ -242,23 +267,22 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
         signedAt: now,
       },
     ],
-  });
+    });
+  } catch (err) {
+    await prisma.signingRequest.update({
+      where: { id: request.id },
+      data: { status: request.status, signedAt: null, signatureImage: null, fieldValues: (request.fieldValues ?? {}) as Prisma.InputJsonValue, signerIp: null, signerAgent: null },
+    }).catch(() => undefined);
+    throw err;
+  }
 
   // Stored in Supabase Storage when set up (the laptop archives it once final), else inline.
   const signedPdfStored = await storePdf(`signed/${request.id}.pdf`, pdfBuffer);
 
-  // Persist the signature
+  // The signature itself was saved by the claim above; now the signed PDF.
   await prisma.signingRequest.update({
     where: { id: request.id },
-    data: {
-      status: 'SIGNED',
-      signedAt: now,
-      signatureImage: body.signatureImage,
-      signedPdfData: signedPdfStored,
-      fieldValues: mergedFieldValues,
-      signerIp,
-      signerAgent,
-    },
+    data: { signedPdfData: signedPdfStored },
   });
   if (request.batchId) {
     const signedCount = await prisma.signingRequest.count({
@@ -283,18 +307,20 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
     });
 
     if (group) {
-      const newSignedCount = group.signedCount + 1;
-      const allDone = newSignedCount >= group.totalSigners;
-
-      await prisma.signingGroup.update({
-        where: { id: group.id },
+      // Counted, not incremented: two signers finishing at the same moment both see the true
+      // number. Only the call that flips the group to COMPLETED builds the combined PDF.
+      const newSignedCount = await prisma.signingRequest.count({ where: { groupId: group.id, status: 'SIGNED' } });
+      const reachedAll = newSignedCount >= group.totalSigners;
+      const flipped = await prisma.signingGroup.updateMany({
+        where: { id: group.id, status: { notIn: ['COMPLETED', 'VOIDED'] } },
         data: {
           signedCount: newSignedCount,
-          status: allDone ? 'COMPLETED' : 'IN_PROGRESS',
+          status: reachedAll ? 'COMPLETED' : 'IN_PROGRESS',
         },
       });
+      const allDone = reachedAll && flipped.count === 1;
 
-      if (!allDone && group.signingOrder === 'SEQUENTIAL') {
+      if (!reachedAll && group.signingOrder === 'SEQUENTIAL') {
         // Activate the next signer in order
         nextSignerRequest = await prisma.signingRequest.findFirst({
           where: {
@@ -398,8 +424,9 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
   }
 
   // Retrieve workspace email account for sending confirmations
+  const emailFailures: string[] = [];
   const account = await prisma.emailProviderAccount.findFirst({
-    where: { workspaceId: request.workspaceId },
+    where: { workspaceId: request.workspaceId, status: 'CONNECTED' },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -490,7 +517,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
         : [];
       const allAttachments = [pdfAttachment, ...extraAttachments];
 
-      await Promise.allSettled([
+      const sent = await Promise.allSettled([
         new GmailProvider(account).sendEmail({
           to: request.recipientEmail,
           fromName: account.displayName || 'MailFlow',
@@ -509,8 +536,12 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
           attachments: allAttachments,
         }),
       ]);
+      // allSettled never throws: look at each result, or failures vanish without a trace.
+      sent.forEach((r, i) => {
+        if (r.status === 'rejected') emailFailures.push(`${i === 0 ? 'signer confirmation' : 'team notification'}: ${errorText(r.reason)}`);
+      });
     } catch (err) {
-      console.error('[sign] failed to send confirmation emails', err);
+      emailFailures.push(`confirmation emails: ${errorText(err)}`);
     }
 
     // When all signers complete a group, send the combined PDF to every signer
@@ -526,7 +557,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
           title: request.title,
           signers: groupCompletionSigners,
         });
-        await Promise.allSettled(
+        const sent = await Promise.allSettled(
           groupCompletionSigners.map((s) =>
             new GmailProvider(account).sendEmail({
               to: s.email,
@@ -538,18 +569,21 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
             })
           )
         );
+        sent.forEach((r, i) => {
+          if (r.status === 'rejected') emailFailures.push(`completed copy to ${groupCompletionSigners[i]!.email}: ${errorText(r.reason)}`);
+        });
       } catch (err) {
-        console.error('[sign] failed to send group completion emails', err);
+        emailFailures.push(`completed copies: ${errorText(err)}`);
       }
     }
 
     // Send invitation to the next signer in the group (sequential advancement)
     if (nextSignerRequest) {
       try {
-        const signingUrl = `${process.env.NEXTAUTH_URL}/sign/${nextSignerRequest.token}`;
+        const signingUrl = `${appBaseUrl()}/sign/${nextSignerRequest.token}`;
         const nextValues = nextSignerRequest.fieldValues as Record<string, string>;
         const expiresDateStr = nextSignerRequest.expiresAt
-          ? nextSignerRequest.expiresAt.toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' })
+          ? nextSignerRequest.expiresAt.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', year: 'numeric', month: 'long', day: 'numeric' })
           : '';
         const nextInviteHtml = buildNextSignerHtml({
           recipientName: nextSignerRequest.recipientName,
@@ -568,10 +602,14 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
           html: nextInviteHtml,
         });
       } catch (err) {
-        console.error('[sign] failed to send next-signer invitation', err);
+        // The next signer's request stays SENT, so "Resend" on the Documents page delivers it.
+        emailFailures.push(`invitation to the next signer (${nextSignerRequest.recipientEmail}): ${errorText(err)}`);
       }
     }
+  } else {
+    emailFailures.push('no connected Gmail mailbox in this workspace, so no confirmation or next-signer email was sent');
   }
+  if (emailFailures.length) console.error('[sign] emails not sent', { requestId: request.id, emailFailures });
 
   // Audit log — resolve organizationId from the workspace
   const workspace = await prisma.workspace.findUnique({
@@ -600,7 +638,8 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
     await audit(orgCtx, 'SIGNING_REQUEST_SIGNED', {
       targetType: 'SigningRequest',
       targetId: request.id,
-      metadata: { signerIp, signerAgent, signedAt: now.toISOString() },
+      // Emails that didn't go out are kept with the signature, so the team can see and resend.
+      metadata: { signerIp, signerAgent, signedAt: now.toISOString(), ...(emailFailures.length ? { emailFailures } : {}) },
     });
   }
 
@@ -609,6 +648,10 @@ export const POST = withErrorHandling(async (req, { params }: { params: { token:
 
   return NextResponse.json({ signed: true });
 });
+
+function errorText(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).slice(0, 300);
+}
 
 function buildGroupCompletionHtml({
   title,

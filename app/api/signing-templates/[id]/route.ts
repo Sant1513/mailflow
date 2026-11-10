@@ -8,6 +8,7 @@ import { audit } from '@/lib/audit/log';
 import { mergeSigningFieldDefs } from '@/lib/signing/fields';
 import { signaturePlacementsSchema } from '@/lib/signing/placements';
 import type { Prisma } from '@prisma/client';
+import { sanitizeSigningHtml } from '@/lib/signing/sanitize';
 
 /** GET /api/signing-templates/[id] — fetch one template for the current workspace. */
 export const GET = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
@@ -25,7 +26,7 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
     return NextResponse.json({ error: 'Not found.' }, { status: 404 });
   }
 
-  return NextResponse.json({ template });
+  return NextResponse.json({ template: { ...template, content: sanitizeSigningHtml(template.content) } });
 });
 
 const fieldDefSchema = z.object({
@@ -48,7 +49,7 @@ const signerPresetSchema = z.object({
 const patchSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().nullable().optional(),
-  content: z.string().min(1).optional(),
+  content: z.string().min(1).transform(sanitizeSigningHtml).optional(),
   fieldDefs: z.array(fieldDefSchema).optional(),
   signerPresets: z.array(signerPresetSchema).max(3).optional(),
   signaturePlacements: signaturePlacementsSchema.optional(),

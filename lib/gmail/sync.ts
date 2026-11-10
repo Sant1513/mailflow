@@ -2,7 +2,8 @@ import { gmail as gmailApi, type gmail_v1 } from '@googleapis/gmail';
 import { prisma } from '@/lib/db/client';
 import { authorizedClientFor, markAccountExpired } from '@/lib/gmail/oauth';
 import { parseAddressList, parseGmailMessage, type GmailMessage } from '@/lib/gmail/parseMessage';
-import { ingestInboundMessage, type IngestOutcome } from '@/lib/gmail/ingest';
+import { ingestInboundMessage, RetryLaterError, type IngestOutcome } from '@/lib/gmail/ingest';
+import { parseUnsubscribeSubject } from '@/lib/email/unsubscribeByEmail';
 import { recruiterSendRefs } from '@/lib/recruiterSend/replies';
 import type { EmailProviderAccount } from '@prisma/client';
 
@@ -51,6 +52,8 @@ export interface MessageMetadata {
   fromEmail: string | null;
   inReplyTo: string | null;
   references: string | null;
+  /** Subject header: an "Unsubscribe <code>" email starts a new thread from someone who may not be a contact. */
+  subject?: string | null;
 }
 
 export interface GmailSource {
@@ -163,7 +166,7 @@ export function gmailSourceFor(account: EmailProviderAccount): GmailSource {
           userId: 'me',
           id,
           format: 'metadata',
-          metadataHeaders: ['From', 'In-Reply-To', 'References'],
+          metadataHeaders: ['From', 'In-Reply-To', 'References', 'Subject'],
         });
         const headers = res.data.payload?.headers ?? undefined;
         return {
@@ -172,6 +175,7 @@ export function gmailSourceFor(account: EmailProviderAccount): GmailSource {
           fromEmail: parseAddressList(headerValue(headers, 'from'))[0]?.email?.toLowerCase() ?? null,
           inReplyTo: headerValue(headers, 'in-reply-to'),
           references: headerValue(headers, 'references'),
+          subject: headerValue(headers, 'subject'),
         };
       } catch (err) {
         const status = Number((err as { code?: number }).code);
@@ -235,6 +239,8 @@ const DEFAULT_BUDGET_MS = 40_000;
 const DEFAULT_MAX_MESSAGES = 600;
 const DEFAULT_CONCURRENCY = 6;
 const BATCH = 40;
+/** How long one message that keeps failing may hold a mailbox's sync before it is skipped. */
+const STUCK_SKIP_MS = 6 * 3_600_000;
 const SKIP_LABELS = new Set(['DRAFT', 'SPAM', 'TRASH']);
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -254,6 +260,25 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   });
   await Promise.all(workers);
   return results;
+}
+
+function isCodedUnsubscribe(subject: string | null | undefined): boolean {
+  const code = parseUnsubscribeSubject(subject);
+  return !!code && code.kind !== 'plain';
+}
+
+/**
+ * A per-message error that may pass on its own (Gmail rate limit or 5xx, network, database
+ * timeout, or ingest asking to retry). The cursor is held before such a message so the next run
+ * retries it; a permanent error is logged and skipped so one bad message can't stall the mailbox.
+ */
+export function isTransientSyncError(err: unknown): boolean {
+  if (err instanceof RetryLaterError) return true;
+  const e = err as { code?: unknown; status?: unknown; response?: { status?: unknown }; message?: unknown };
+  const status = Number(e?.response?.status ?? e?.status ?? e?.code);
+  if ([408, 429, 500, 502, 503, 504].includes(status)) return true;
+  const message = String(e?.message ?? err ?? '');
+  return /ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|socket hang up|fetch failed|network|rate ?limit|backend error|P1001|P1002|P1008|P1017|P2024|P2028|can't reach database|timed out/i.test(message);
 }
 
 function referencedIds(meta: { inReplyTo: string | null; references: string | null }): string[] {
@@ -353,6 +378,9 @@ export async function syncAccount(
   const outOfBudget = () => Date.now() - startedAt > budgetMs;
   let lastDoneRecordId: string | null = null;
   let processed = 0;
+  // The first message keeps failing in a way that may pass (cursor held with no progress).
+  let stuckNow = false;
+  let stuckCleared = false;
 
   const ingestFull = async (messageId: string) => {
     const raw = await source.getMessage(messageId);
@@ -394,18 +422,25 @@ export async function syncAccount(
     }
 
     // Cheap look at the rest: who sent it and what it answers.
+    // Messages that failed in a way that may pass: the cursor stops before the first of them.
+    const retryIds = new Set<string>();
+    const noteError = (messageId: string, err: unknown) => {
+      result.errors.push(`${messageId}: ${(err as Error)?.message ?? String(err)}`);
+      if (isTransientSyncError(err)) retryIds.add(messageId);
+    };
+
     const metas = await mapLimit(needMeta, concurrency, async (e) => {
       try {
-        return { entry: e, meta: await source.getMessageMetadata(e.messageId), error: null as string | null };
+        return { entry: e, meta: await source.getMessageMetadata(e.messageId), error: null as unknown };
       } catch (err) {
-        return { entry: e, meta: null, error: (err as Error).message ?? String(err) };
+        return { entry: e, meta: null, error: err as unknown };
       }
     });
 
     const candidates: { entry: HistoryEntry; meta: MessageMetadata }[] = [];
     for (const m of metas) {
       if (m.error) {
-        result.errors.push(`${m.entry.messageId}: ${m.error}`);
+        noteError(m.entry.messageId, m.error);
         continue;
       }
       if (!m.meta) continue; // deleted between list and fetch
@@ -415,6 +450,11 @@ export async function syncAccount(
         toIngest.push(m.entry.messageId);
       } else if (m.meta.fromEmail === ownAddress) {
         result.outbound += 1;
+      } else if (isCodedUnsubscribe(m.meta.subject)) {
+        // "Unsubscribe rb-…/cj-…" from the Unsubscribe button in our emails: a new thread, usually
+        // from someone who isn't a contact yet (a BCC recruiter), so it would never pass the rules
+        // below. A plain "Unsubscribe" with no code still has to pass them.
+        toIngest.push(m.entry.messageId);
       } else {
         candidates.push({ entry: m.entry, meta: m.meta });
       }
@@ -456,25 +496,62 @@ export async function syncAccount(
         await ingestFull(id);
         // A stored message makes its thread known for the rest of the run.
       } catch (err) {
-        result.errors.push(`${id}: ${(err as Error).message ?? String(err)}`);
+        noteError(id, err);
       }
     });
+
+    let firstRetry = retryIds.size ? batch.findIndex((e) => retryIds.has(e.messageId)) : -1;
+    if (firstRetry >= 0 && processed === 0 && firstRetry === 0) {
+      // Nothing before the failed message: holding the cursor makes no progress. After
+      // STUCK_SKIP_MS of that, the message is passed like a permanent error so one message
+      // that keeps failing can't stop the mailbox's replies for good.
+      const since = account.syncStuckSince ? new Date(account.syncStuckSince).getTime() : null;
+      if (since !== null && Date.now() - since > STUCK_SKIP_MS) {
+        result.errors.push(`${batch[0]!.messageId}: skipped after ${STUCK_SKIP_MS / 3_600_000} h of retries`);
+        firstRetry = -1;
+        stuckCleared = true;
+      } else {
+        stuckNow = true;
+      }
+    }
+    if (firstRetry >= 0) {
+      // Hold the cursor on the last history record wholly before the failed message (records
+      // can hold several messages), so the next run fetches it again. Ingestion is idempotent,
+      // so anything re-read after that point is recorded once.
+      const failedRecord = batch[firstRetry]?.historyRecordId ?? null;
+      for (let i = firstRetry - 1; i >= 0; i--) {
+        const rec = batch[i]?.historyRecordId;
+        if (rec && rec !== failedRecord) {
+          lastDoneRecordId = rec;
+          break;
+        }
+      }
+      processed += firstRetry;
+      result.remaining = entries.length - processed;
+      break;
+    }
 
     processed += batch.length;
     lastDoneRecordId = batch[batch.length - 1]?.historyRecordId ?? lastDoneRecordId;
   }
 
   // Cursor: the newest history id when the whole window was attempted,
-  // otherwise the last record we finished (history path). A run with errors
-  // still advances: the failed ids are logged above, and stalling the cursor
-  // forever on one bad message would stop every future reply from syncing.
+  // otherwise the last record we finished (history path). A message that
+  // failed for good (permanent error) is logged and passed, so one bad message
+  // can't stop every future reply from syncing; one that failed for a reason
+  // that may pass (isTransientSyncError) holds the cursor before it.
   const cursor = result.remaining > 0 ? (result.path === 'history' ? lastDoneRecordId : null) : historyId;
   if (cursor) {
     await prisma.emailProviderAccount.update({
       where: { id: account.id },
-      data: { gmailHistoryId: cursor, lastVerifiedAt: new Date(), lastSyncAt: new Date() },
+      data: { gmailHistoryId: cursor, lastVerifiedAt: new Date(), lastSyncAt: new Date(), ...(stuckNow ? {} : { syncStuckSince: null }) },
     });
     result.newHistoryId = cursor;
+  }
+  if (stuckNow && !account.syncStuckSince) {
+    await prisma.emailProviderAccount.update({ where: { id: account.id }, data: { syncStuckSince: new Date() } });
+  } else if (stuckCleared && !cursor) {
+    await prisma.emailProviderAccount.update({ where: { id: account.id }, data: { syncStuckSince: null } });
   }
 
   return finish();

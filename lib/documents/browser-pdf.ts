@@ -83,12 +83,48 @@ export function documentPageGeometry(html: string) {
   return { width, height, margins };
 }
 
+/**
+ * What the PDF renderer may load while printing a document: inline data, and public https
+ * (web fonts, images hosted online). Never plain http, localhost, or a private-network
+ * address — the renderer runs inside our servers (and on the laptop), so a document must not
+ * be able to read internal services and print the answer into a PDF.
+ */
+export function pdfRequestAllowed(rawUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (url.protocol === 'data:' || url.protocol === 'about:' || url.protocol === 'blob:') return true;
+  if (url.protocol !== 'https:') return false;
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
+  if (!host.includes('.') && !host.includes(':')) return false; // single-label names resolve on the LAN
+  const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return false;
+  }
+  if (host.includes(':')) {
+    // IPv6 literals: loopback, link-local, unique-local, and IPv4-mapped.
+    if (host === '::1' || host === '::' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith('::ffff:')) return false;
+  }
+  return true;
+}
+
 export async function renderHtmlToPdf(html: string, opts: { footerLabel: string }): Promise<Buffer> {
   const browser = await getBrowser();
   const page = await browser.newPage();
   try {
     // Templates are rendered as documents, never run as programs.
     await page.setJavaScriptEnabled(false);
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      if (request.isInterceptResolutionHandled()) return;
+      if (pdfRequestAllowed(request.url())) void request.continue().catch(() => undefined);
+      else void request.abort('blockedbyclient').catch(() => undefined);
+    });
     await page.setContent(html, { waitUntil: 'load', timeout: 20_000 });
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     // Templates imported from Word carry the document's own page size and margins, so the

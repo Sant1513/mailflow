@@ -6,7 +6,8 @@ import { authOptions } from '@/lib/auth/options';
 export async function requireSuperAdminPage() {
   const session = await getServerSession(authOptions);
   const user = session?.user as any;
-  if (!user) redirect('/login');
+  if (!user || user.status === 'DISABLED') redirect('/login');
+  if (user.status === 'PENDING') redirect('/pending');
   if (user.role !== 'SUPER_ADMIN') redirect('/');
   return user;
 }

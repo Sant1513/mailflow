@@ -5,6 +5,7 @@ import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { ConversationStatus } from '@prisma/client';
 import { audit } from '@/lib/audit/log';
+import { requireCanWrite } from '@/lib/permissions/workspace';
 
 const bulkSchema = z.object({
   ids: z.array(z.string().cuid()).min(1).max(100),
@@ -15,6 +16,8 @@ const bulkSchema = z.object({
 
 export const POST = withErrorHandling(async (req) => {
   const session = await requireSession();
+  // Resolving, assigning and tagging change conversations: viewers and view-as are read-only.
+  requireCanWrite(session);
   if (!session.workspaceId) return NextResponse.json({ error: 'No workspace.' }, { status: 403 });
   const workspaceId = session.workspaceId;
   const body = bulkSchema.parse(await req.json());

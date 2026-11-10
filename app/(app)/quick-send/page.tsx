@@ -75,6 +75,15 @@ const REASONS: Record<string, string> = {
 };
 
 const DRAFT_KEY = 'mf.quickSend.draft';
+
+/** A fresh idempotency key for one Quick Send (letters, digits, dashes: what the server accepts). */
+function newRequestId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+}
 const FIELD = 'w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none';
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
 const mb = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
@@ -135,6 +144,9 @@ export default function QuickSendPage() {
   const [recent, setRecent] = useState<Stats[]>([]);
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
   const restored = useRef(false);
+  // One key per compose: a second click, or a retry after a network error or timeout, reaches
+  // the server with the same key and gets the send it already made instead of a second one.
+  const requestId = useRef<string>(newRequestId());
 
   useEffect(() => {
     const get = (url: string, set: (j: any) => void) =>
@@ -376,13 +388,23 @@ export default function QuickSendPage() {
         : `Send this${att} to ${who}${when}? Emails go out 3 seconds apart from ${check.sender?.emailAddress}.`;
     if (!confirm(msg)) return;
     setSending(true);
-    const res = await fetch('/api/quick-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload('send')) });
-    const json = await res.json().catch(() => ({}));
+    const res = await fetch('/api/quick-send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload('send'), requestId: requestId.current }),
+    }).catch(() => null);
+    const json = res ? await res.json().catch(() => ({})) : {};
     setSending(false);
+    if (!res) {
+      toast.error('Network problem: the send may or may not have started. Click Send again; it won’t send twice.');
+      return;
+    }
     if (!res.ok) {
       toast.error(json.issues?.[0]?.message ?? json.error ?? 'Could not send');
       return;
     }
+    // Done: the next send is a new one.
+    requestId.current = newRequestId();
     setCurrent({ id: json.campaignId, state: json.state, note: json.note });
     try {
       localStorage.removeItem(DRAFT_KEY);

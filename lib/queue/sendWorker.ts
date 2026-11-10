@@ -38,7 +38,11 @@ export async function recoverStuckJobs(limit = 20): Promise<{ markedSent: number
     let foundId: string | null = null;
     let threadId: string | null = null;
     let checked = false;
-    if (job.emailProviderAccount && job.emailProviderAccount.status === 'CONNECTED') {
+    // Gmail accepted it but the bookkeeping couldn't be written (lib/email/processJob.ts): it was sent.
+    if (job.gmailMessageId) {
+      foundId = job.gmailMessageId;
+      threadId = job.gmailThreadId;
+    } else if (job.emailProviderAccount && job.emailProviderAccount.status === 'CONNECTED') {
       try {
         const auth = await authorizedClientFor(job.emailProviderAccount);
         const gmail = gmailApi({ version: 'v1', auth });

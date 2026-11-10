@@ -99,12 +99,14 @@ export async function POST(_req: Request, { params }: { params: { token: string 
   if (!job) return notFoundPage();
 
   const workspaceId = job.campaign.workspaceId;
+  // Stored lowercase, like every other suppression, so the send-time check always finds it.
+  const email = job.toEmail.trim().toLowerCase();
 
   await prisma.emailSuppression.upsert({
-    where: { workspaceId_email: { workspaceId, email: job.toEmail } },
+    where: { workspaceId_email: { workspaceId, email } },
     create: {
       workspaceId,
-      email: job.toEmail,
+      email,
       reason: 'UNSUBSCRIBED',
       source: 'UNSUBSCRIBE',
       // Where it came from, for the suppression list.

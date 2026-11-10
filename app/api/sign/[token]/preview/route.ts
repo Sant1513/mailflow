@@ -5,6 +5,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { generateSignedPdf } from '@/lib/documents/pdf';
 import { lockedFieldsOf, publicSigningFieldValues } from '@/lib/signing/fields';
 import { placementsOf } from '@/lib/signing/placements';
+import { allowRequest } from '@/lib/api/throttle';
 
 // First PDF on a cold server starts Chromium, which can take several seconds.
 export const maxDuration = 60;
@@ -19,6 +20,10 @@ const previewSchema = z.object({
  * Public: the token is the proof of access, and nothing is saved.
  */
 export const POST = withErrorHandling(async (req, { params }: { params: { token: string } }) => {
+  // Each preview starts a browser: a signer needs a handful a minute, a script would need hundreds.
+  if (!allowRequest(`sign-preview:${params.token}`, 8, 60_000)) {
+    return NextResponse.json({ error: 'Too many previews. Wait a minute and try again.' }, { status: 429 });
+  }
   const request = await prisma.signingRequest.findUnique({ where: { token: params.token } });
   if (!request || !['SENT', 'VIEWED'].includes(request.status)) {
     return NextResponse.json({ error: 'Not found.' }, { status: 404 });

@@ -1,4 +1,4 @@
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { appBaseUrl } from '@/lib/app-url';
 import { autoLinkPlainUrls, rewriteLinks } from '@/lib/email/links';
 
@@ -14,6 +14,12 @@ function sign(data: string): string {
   return createHmac('sha256', KEY).update(data).digest('hex').slice(0, 16);
 }
 
+/** Constant-time signature check (no timing hints about how much of a guess was right). */
+function signatureValid(data: string, sig: string): boolean {
+  const expected = sign(data);
+  return sig.length === expected.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+}
+
 export function encodeTrackingToken(payload: TrackingPayload): string {
   const data = JSON.stringify(payload);
   const b64 = Buffer.from(data).toString('base64url');
@@ -27,7 +33,7 @@ export function decodeTrackingToken(token: string): TrackingPayload | null {
     if (dot < 0) return null;
     const b64 = token.slice(0, dot);
     const sig = token.slice(dot + 1);
-    if (sign(b64) !== sig) return null;
+    if (!signatureValid(b64, sig)) return null;
     return JSON.parse(Buffer.from(b64, 'base64url').toString()) as TrackingPayload;
   } catch {
     return null;
@@ -47,7 +53,7 @@ export function decodeUnsubToken(token: string): { workspaceId: string; email: s
     if (dot < 0) return null;
     const b64 = token.slice(0, dot);
     const sig = token.slice(dot + 1);
-    if (sign(b64) !== sig) return null;
+    if (!signatureValid(b64, sig)) return null;
     return JSON.parse(Buffer.from(b64, 'base64url').toString());
   } catch {
     return null;

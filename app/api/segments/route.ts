@@ -4,6 +4,8 @@ import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
+import { z } from 'zod';
+import { segmentFiltersSchema } from './_filterContacts';
 
 export const GET = withErrorHandling(async () => {
   const session = await requireSession();
@@ -19,12 +21,9 @@ export const POST = withErrorHandling(async (req) => {
   const session = await requireSession();
   requireCanWrite(session);
 
-  const body = await req.json();
-  const { name, description, filters } = body as {
-    name?: string;
-    description?: string;
-    filters?: Record<string, unknown>;
-  };
+  const { name, description, filters } = z
+    .object({ name: z.string().max(200).optional(), description: z.string().max(1000).nullish(), filters: segmentFiltersSchema.optional() })
+    .parse(await req.json());
 
   if (!name?.trim()) {
     return NextResponse.json({ error: 'name is required' }, { status: 400 });

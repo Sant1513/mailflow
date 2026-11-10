@@ -32,6 +32,20 @@ import { findRecruiterSend, markRecruiterBounced, markRecruiterReplied, recruite
  * same Pub/Sub notification delivered twice records the message once.
  */
 
+/**
+ * Something that must happen for this message (suppressing a bounce, an unsubscribe) failed for
+ * a reason that may pass. The message is left un-ingested, and the sync keeps its Gmail cursor
+ * before it, so the next run tries again instead of losing it (lib/gmail/sync.ts).
+ */
+export class RetryLaterError extends Error {
+  constructor(message: string, readonly cause?: unknown) {
+    super(message);
+    this.name = 'RetryLaterError';
+  }
+}
+
+const SUPPRESS_ATTEMPTS = 3;
+
 export type IngestOutcome =
   | { status: 'STORED'; conversationId: string; messageId: string; classification: string; created: boolean }
   | { status: 'DUPLICATE'; messageId: string }
@@ -110,9 +124,11 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   // (lib/email/unsubscribeByEmail.ts). Suppress them; it isn't a conversation.
   const unsubscribe = parseUnsubscribeSubject(message.subject);
   if (unsubscribe && fromEmail) {
+    // Nothing is stored for an unsubscribe email, so a failure here must reach the sync: it keeps
+    // the message in the next run instead of moving past it and losing the request.
     const done = await handleUnsubscribeEmail(account, fromEmail, unsubscribe).catch((err) => {
-      console.error('[ingest] unsubscribe by email failed', err);
-      return null;
+      console.error('[ingest] unsubscribe by email failed; will retry', err);
+      throw new RetryLaterError(`Unsubscribe by email failed: ${(err as Error).message ?? String(err)}`, err);
     });
     if (done) return { status: 'IGNORED', reason: `Unsubscribe request from ${fromEmail}: ${done.label}.` };
   }
@@ -155,9 +171,10 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
       if (isBounce) {
         // On the suppression list with the reason and which send, and "bounced" on the send's page.
         const label = `Bounce notice (Recruiter Bulk Send “${recruiterSend.blastName}”)`;
+        // Nothing is stored for this notice, so a failure goes back to the sync to try again.
         const bounced = await suppressBounced({ workspaceId: recruiterSend.workspaceId, conversationRecipient: null, message, ownAddresses: [account.emailAddress], label }).catch((err) => {
-          console.error('[ingest] recruiter bounce suppression failed', err);
-          return [] as string[];
+          console.error('[ingest] recruiter bounce suppression failed; will retry', err);
+          throw new RetryLaterError(`Recruiter bounce suppression failed: ${(err as Error).message ?? String(err)}`, err);
         });
         await markRecruiterBounced(recruiterSend.blastId, bounced, `Bounced: ${parseBounce(message, [account.emailAddress]).detail}`).catch((err) =>
           console.error('[ingest] recruiter bounce mark failed', err),
@@ -337,14 +354,33 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   // A bounce notice: suppress the dead address so it is never mailed again (lib/email/bounces.ts).
   const { owner, ...stored } = result;
   if (isBounce) {
-    await suppressBounced({
-      // The workspace that SENT it (a campaign sent through a teammate's backup mailbox belongs
-      // to the campaign's workspace, not the mailbox owner's); recordHardBounce covers the rest.
-      workspaceId: owner.conversationWorkspaceId,
-      conversationRecipient: knownThread?.recipientEmail ?? null,
-      message,
-      ownAddresses: [account.emailAddress],
-    }).catch((err) => console.error('[ingest] bounce suppression failed', err));
+    // Retried, and if it still fails the stored notice is taken back out: a stored message is
+    // never fetched again (it would be a DUPLICATE), so the dead address would stay mailable.
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= SUPPRESS_ATTEMPTS; attempt++) {
+      try {
+        await suppressBounced({
+          // The workspace that SENT it (a campaign sent through a teammate's backup mailbox belongs
+          // to the campaign's workspace, not the mailbox owner's); recordHardBounce covers the rest.
+          workspaceId: owner.conversationWorkspaceId,
+          conversationRecipient: knownThread?.recipientEmail ?? null,
+          message,
+          ownAddresses: [account.emailAddress],
+        });
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        if (attempt < SUPPRESS_ATTEMPTS) await new Promise((r) => setTimeout(r, 400 * attempt));
+      }
+    }
+    if (lastError) {
+      console.error('[ingest] bounce suppression failed; removing the notice so the next sync retries', lastError);
+      await unstoreMessage(stored.messageId, stored.conversationId, stored.created).catch((err) =>
+        console.error('[ingest] could not remove the bounce notice for retry', { messageId: stored.messageId, err })
+      );
+      throw new RetryLaterError(`Bounce suppression failed: ${(lastError as Error).message ?? String(lastError)}`, lastError);
+    }
   }
 
   if (isReply) {
@@ -386,4 +422,18 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   }
 
   return { status: 'STORED', ...stored, classification: cls.classification };
+}
+
+/** Takes a just-stored inbound message back out, so the next sync ingests it again. */
+async function unstoreMessage(messageId: string, conversationId: string, conversationCreated: boolean): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.recipientHistory.deleteMany({ where: { refId: messageId } });
+    await tx.attachment.deleteMany({ where: { conversationMessageId: messageId } });
+    await tx.conversationMessage.delete({ where: { id: messageId } });
+    if (conversationCreated) {
+      await tx.conversation.deleteMany({ where: { id: conversationId, messages: { none: {} } } });
+    } else {
+      await tx.conversation.update({ where: { id: conversationId }, data: { messageCount: { decrement: 1 } } });
+    }
+  });
 }

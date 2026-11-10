@@ -4,7 +4,8 @@ import { prisma } from '@/lib/db/client';
 import { requireSession, ForbiddenError } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
-import { buildContactWhere } from '../_filterContacts';
+import { z } from 'zod';
+import { buildContactWhere, segmentFiltersSchema } from '../_filterContacts';
 
 export const GET = withErrorHandling(async (_req, { params }: { params: { id: string } }) => {
   const session = await requireSession();
@@ -28,12 +29,9 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
   if (!segment) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (segment.workspaceId !== session.workspaceId) throw new ForbiddenError();
 
-  const body = await req.json();
-  const { name, description, filters } = body as {
-    name?: string;
-    description?: string;
-    filters?: Record<string, unknown>;
-  };
+  const { name, description, filters } = z
+    .object({ name: z.string().max(200).optional(), description: z.string().max(1000).nullish(), filters: segmentFiltersSchema.optional() })
+    .parse(await req.json());
 
   if (name !== undefined && !name.trim()) {
     return NextResponse.json({ error: 'name cannot be empty' }, { status: 400 });
@@ -43,7 +41,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     where: { id: params.id },
     data: {
       ...(name !== undefined ? { name: name.trim() } : {}),
-      ...(description !== undefined ? { description: description.trim() || null } : {}),
+      ...(description !== undefined ? { description: description?.trim() || null } : {}),
       ...(filters !== undefined ? { filters: filters as Prisma.InputJsonValue } : {}),
     },
     include: { createdBy: { select: { id: true, name: true } } },

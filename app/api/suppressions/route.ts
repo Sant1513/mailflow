@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
-import { resolveWorkspaceId } from '@/lib/permissions/workspace';
+import { requireCanWrite, resolveWorkspaceId } from '@/lib/permissions/workspace';
 
 const PAGE_SIZE = 50;
 
@@ -50,6 +50,8 @@ const PostSchema = z.object({
 
 export const POST = withErrorHandling(async (req) => {
   const session = await requireSession();
+  // Removing an unsubscribe re-enables email to someone who opted out: viewers and view-as can't.
+  requireCanWrite(session);
   const url = new URL(req.url);
   const workspaceId = await resolveWorkspaceId(session, url.searchParams.get('workspaceId'));
   const body = PostSchema.parse(await req.json());
@@ -78,6 +80,8 @@ export const POST = withErrorHandling(async (req) => {
 
 export const DELETE = withErrorHandling(async (req) => {
   const session = await requireSession();
+  // Removing an unsubscribe re-enables email to someone who opted out: viewers and view-as can't.
+  requireCanWrite(session);
   const url = new URL(req.url);
   const workspaceId = await resolveWorkspaceId(session, url.searchParams.get('workspaceId'));
   const id = url.searchParams.get('id');

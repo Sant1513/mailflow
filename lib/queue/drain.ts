@@ -215,7 +215,16 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     };
   }
 
-  await prisma.batch.update({ where: { id: batchId }, data: { status: BatchStatus.RUNNING } });
+  // Conditional, so a Pause or Cancel landing between the read above and this write is not undone.
+  const started = await prisma.batch.updateMany({
+    where: { id: batchId, status: { notIn: [BatchStatus.PAUSED, BatchStatus.CANCELLED] } },
+    data: { status: BatchStatus.RUNNING },
+  });
+  if (!started.count) {
+    const remaining = await prisma.emailJob.count({ where: { batchId, status: EmailJobStatus.QUEUED } });
+    const now = await prisma.batch.findUnique({ where: { id: batchId }, select: { status: true } });
+    return { batchId, processed: 0, sent: 0, failed: 0, skipped: 0, remaining, batchStatus: now?.status ?? batch.status, rateLimited: false };
+  }
 
   const queued = await prisma.emailJob.findMany({
     where: { batchId, status: EmailJobStatus.QUEUED },
@@ -320,12 +329,16 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     if (!claimed.count) continue;
 
     try {
-      const outcome = await processEmailJob(job.id, { providerFactory: opts.providerFactory });
+      const outcome = await processEmailJob(job.id, { providerFactory: opts.providerFactory, claimed: true });
       if (outcome.status === 'SENT') {
         sent += 1;
         if (acct && dailyUsed.has(acct)) addUsage(dailyUsed.get(acct)!, job);
-      } else if (outcome.status === 'FAILED') failed += 1;
-      else {
+      } else if (outcome.status === 'FAILED') {
+        failed += 1;
+        // An auth failure marks the mailbox EXPIRED: forget the cached copy so the rest of this
+        // pass sees it and reroutes to a backup mailbox instead of failing every email.
+        if (acct) accounts.delete(acct);
+      } else {
         skipped += 1;
         // Skipped before anything was sent (e.g. the batch was paused this instant): back in the queue.
         await prisma.emailJob.updateMany({ where: { id: job.id, status: EmailJobStatus.SENDING }, data: { status: EmailJobStatus.QUEUED } });
@@ -336,6 +349,7 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
       // Anything left SENDING after an unexpected error is resolved by
       // recoverStuckJobs, which checks Gmail before re-queuing.
       failed += 1;
+      if (acct) accounts.delete(acct);
       // Gmail pushed back (rate or quota): that mailbox is now on hold (backoffUntil sees this
       // refusal), so the next email goes to a backup mailbox, or the batch holds if there is none.
       // The refused email is re-queued once the back-off has passed.

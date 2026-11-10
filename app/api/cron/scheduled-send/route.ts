@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { cronAuthorised } from '@/lib/cron/auth';
 import { prisma } from '@/lib/db/client';
 import { enqueueEmailJobs } from '@/lib/queue/queues';
 import { kickSendWorker } from '@/lib/queue/sendWorker';
@@ -14,12 +15,8 @@ import { CampaignStatus, BatchStatus, EmailJobStatus } from '@prisma/client';
  * is a safety net that does nothing (all batches will already be QUEUED).
  */
 
-function authorised(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return process.env.NODE_ENV !== 'production';
-  const header = req.headers.get('authorization') ?? '';
-  return header === `Bearer ${secret}` || new URL(req.url).searchParams.get('secret') === secret;
-}
+/** Shared header-only, constant-time check (lib/cron/auth.ts). */
+const authorised = cronAuthorised;
 
 export async function GET(req: Request) {
   if (!authorised(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -137,6 +137,7 @@ export default function NewSigningRequestPage() {
       .filter(Boolean);
 
     setSubmitting(true);
+    // Stays disabled after a success (the page moves on): only a failure re-enables Send.
     const res = await fetch('/api/e-sign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -153,12 +154,12 @@ export default function NewSigningRequestPage() {
         ...(emailSubject.trim() ? { emailSubject: emailSubject.trim() } : {}),
         ...(emailBody.trim() ? { emailBody: emailBody.trim() } : {}),
       }),
-    });
-    setSubmitting(false);
+    }).catch(() => null);
 
-    if (!res.ok) {
-      const json = (await res.json().catch(() => ({}))) as { error?: string };
-      toast.error(json.error ?? 'Failed to send signing request');
+    if (!res || !res.ok) {
+      setSubmitting(false);
+      const json = (await res?.json().catch(() => ({}))) as { error?: string } | undefined;
+      toast.error(json?.error ?? 'Failed to send signing request');
       return;
     }
 

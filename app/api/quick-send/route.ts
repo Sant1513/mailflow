@@ -68,6 +68,8 @@ const bodySchema = z.object({
   scheduledAt: z.string().datetime().optional(),
   /** RSVP buttons in the email (lib/rsvp/config.ts); omitted or disabled = none. */
   rsvp: rsvpConfigSchema.nullable().optional(),
+  /** One key per compose (the browser makes it): a repeated "send" returns the campaign already made. */
+  requestId: z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/).optional(),
 });
 
 interface Resolved {
@@ -259,6 +261,12 @@ export const POST = withErrorHandling(async (req) => {
   }
 
   // ── send ──
+  // Sent already? A retry after a network error or timeout, or a second click, carries the same
+  // key: answer with the campaign it made instead of emailing the whole list again.
+  if (body.requestId) {
+    const already = await existingQuickSend(body.requestId, session.workspaceId);
+    if (already) return already;
+  }
   if (wouldSend <= 0) return NextResponse.json({ error: 'Nobody to send to: every row was skipped. Check the reasons above.' }, { status: 400 });
   const fallback = await validateFallbackList(session.organizationId, sender.id, body.fallbackAccountIds ?? []);
   if (!fallback.ok) return NextResponse.json({ error: fallback.error }, { status: 400 });
@@ -300,28 +308,41 @@ export const POST = withErrorHandling(async (req) => {
     include: { versions: true },
   });
 
-  // 3. The campaign.
-  const created = await prisma.campaign.create({
-    data: {
-      organizationId: session.organizationId,
-      workspaceId: session.workspaceId,
-      name,
-      description: QUICK_SEND_DESCRIPTION,
-      datasetId,
-      templateId: template.id,
-      templateVersionId: template.versions[0]!.id,
-      createdById: session.userId,
-      status: CampaignStatus.DRAFT,
-      fromName: body.fromName?.trim() || null,
-      replyTo: body.replyTo || null,
-      ccEmails: body.cc ?? [],
-      bccEmails: body.bcc ?? [],
-      fallbackAccountIds: fallback.ids,
-      ...(rsvp ? { rsvp: rsvp as unknown as Prisma.InputJsonValue } : {}),
-      // Attached PDFs go out unchanged: a plain copy, no reference stamp.
-      documents: { create: orderedDocs.map((d, i) => ({ documentTemplateId: d.id, order: i, ...snapshotFromTemplate(d), stampReference: false })) },
-    },
-  });
+  // 3. The campaign. The request key is unique, so of two identical sends racing past the check
+  // above only one creates a campaign; the other cleans up and answers with that one.
+  let created;
+  try {
+    created = await prisma.campaign.create({
+      data: {
+        organizationId: session.organizationId,
+        workspaceId: session.workspaceId,
+        clientRequestId: body.requestId ?? null,
+        name,
+        description: QUICK_SEND_DESCRIPTION,
+        datasetId,
+        templateId: template.id,
+        templateVersionId: template.versions[0]!.id,
+        createdById: session.userId,
+        status: CampaignStatus.DRAFT,
+        fromName: body.fromName?.trim() || null,
+        replyTo: body.replyTo || null,
+        ccEmails: body.cc ?? [],
+        bccEmails: body.bcc ?? [],
+        fallbackAccountIds: fallback.ids,
+        ...(rsvp ? { rsvp: rsvp as unknown as Prisma.InputJsonValue } : {}),
+        // Attached PDFs go out unchanged: a plain copy, no reference stamp.
+        documents: { create: orderedDocs.map((d, i) => ({ documentTemplateId: d.id, order: i, ...snapshotFromTemplate(d), stampReference: false })) },
+      },
+    });
+  } catch (err) {
+    if (!(body.requestId && err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
+    // The other request won: remove what this one made (nothing has been sent) and answer with its campaign.
+    await prisma.template.delete({ where: { id: template.id } }).catch(() => undefined);
+    if (!resolved.datasetId) await prisma.dataset.delete({ where: { id: datasetId } }).catch(() => undefined);
+    const already = await existingQuickSend(body.requestId, session.workspaceId);
+    if (already) return already;
+    return NextResponse.json({ error: 'This send was already submitted.' }, { status: 409 });
+  }
   await audit(session, 'QUICK_SEND', {
     targetType: 'Campaign',
     targetId: created.id,
@@ -346,6 +367,22 @@ export const POST = withErrorHandling(async (req) => {
     { status: 201 },
   );
 });
+
+/** The answer for a send already made with this request key (in this workspace), or null. */
+async function existingQuickSend(requestId: string, workspaceId: string): Promise<NextResponse | null> {
+  const c = await prisma.campaign.findFirst({
+    where: { clientRequestId: requestId, workspaceId },
+    select: { id: true, status: true, scheduledAt: true },
+  });
+  if (!c) return null;
+  const state =
+    c.status === CampaignStatus.PENDING_APPROVAL
+      ? 'awaiting_approval'
+      : c.status === CampaignStatus.SCHEDULED || (c.scheduledAt && c.scheduledAt > new Date())
+        ? 'scheduled'
+        : 'sending';
+  return NextResponse.json({ campaignId: c.id, state, duplicate: true, note: 'Already sent: this is the send you submitted a moment ago.' });
+}
 
 /** GET /api/quick-send — your recent Quick Sends with live progress and tracking. */
 export const GET = withErrorHandling(async () => {

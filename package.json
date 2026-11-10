@@ -21,7 +21,6 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "worker:email": "tsx workers/email-worker.ts",
-    "worker:gmail-sync": "tsx workers/gmail-sync-worker.ts",
     "worker:automation": "tsx workers/automation-worker.ts",
     "build:isolated": "node scripts/build-isolated.mjs"
   },

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { appBaseUrl } from '@/lib/app-url';
 import { emailBrandHeader } from '@/lib/email/brand';
 import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
@@ -8,7 +9,7 @@ import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { GmailProvider } from '@/lib/email/gmail';
 import type { EmailAttachment } from '@/lib/email/provider';
-import { attachmentsForEmail } from '@/lib/storage/files';
+import { attachmentsForEmail, isOwnAttachmentRef } from '@/lib/storage/files';
 import {
   effectiveAssignedFields,
   lockedKeysForSigner,
@@ -19,6 +20,7 @@ import {
 } from '@/lib/signing/fields';
 import { parsePlacements, signaturePlacementsSchema, type SignaturePlacement } from '@/lib/signing/placements';
 import { syncSigningStatusToRecord } from '@/lib/signing/writeback';
+import { sanitizeSigningHtml } from '@/lib/signing/sanitize';
 
 interface AttachmentMeta { name: string; url: string; contentType: string; size: number; }
 
@@ -95,6 +97,10 @@ export const POST = withErrorHandling(async (req) => {
   const workspaceId = session.workspaceId;
 
   const body = createSchema.parse(await req.json());
+  // Attachments must be files this workspace uploaded, never another workspace's file or a URL.
+  if (body.attachments.some((a) => !isOwnAttachmentRef(a.url, workspaceId))) {
+    return NextResponse.json({ error: 'An attachment is not one of your uploads. Remove it and attach the file again.' }, { status: 400 });
+  }
 
   // Look up template content if templateId is provided
   let templateContent: string | null = null;
@@ -107,7 +113,7 @@ export const POST = withErrorHandling(async (req) => {
     if (!tpl) {
       return NextResponse.json({ error: 'Template not found.' }, { status: 404 });
     }
-    templateContent = tpl.content;
+    templateContent = sanitizeSigningHtml(tpl.content);
     templatePlacements = parsePlacements(tpl.signaturePlacements);
     templateFields = mergeSigningFieldDefs(tpl.content, Array.isArray(tpl.fieldDefs) ? tpl.fieldDefs as { key: string; label: string; defaultValue?: string }[] : []);
   }
@@ -268,7 +274,7 @@ export const POST = withErrorHandling(async (req) => {
   let emailError: string | null = !account && requestsToEmail.length ? 'No connected Gmail mailbox in this workspace (Settings → Gmail).' : null;
 
   if (account && requestsToEmail.length > 0) {
-    const expiresDateStr = expiresAt.toLocaleDateString('en-IN', {
+    const expiresDateStr = expiresAt.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata',
       year: 'numeric',
       month: 'long',
       day: 'numeric',
@@ -282,7 +288,7 @@ export const POST = withErrorHandling(async (req) => {
     // Send invitation emails only to active signers (first signer in sequential mode)
     const results = await Promise.allSettled(
       requestsToEmail.map((sigReq) => {
-        const signingUrl = `${process.env.NEXTAUTH_URL}/sign/${sigReq.token}`;
+        const signingUrl = `${appBaseUrl()}/sign/${sigReq.token}`;
         const values = sigReq.fieldValues as Record<string, string>;
         const html = buildInviteHtml({
           recipientName: sigReq.recipientName,

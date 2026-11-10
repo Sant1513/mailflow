@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { cronAuthorised } from '@/lib/cron/auth';
 import { prisma } from '@/lib/db/client';
 import { emailBrandHeader } from '@/lib/email/brand';
 import { GmailProvider } from '@/lib/email/gmail';
@@ -12,12 +13,8 @@ export const maxDuration = 60;
  * VIEWED, not yet expired, older than 2 days, and have fewer than 3
  * reminders. At most one reminder per 2-day window (reminderSentAt guard).
  */
-function authorised(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return process.env.NODE_ENV !== 'production';
-  const header = req.headers.get('authorization') ?? '';
-  return header === `Bearer ${secret}` || new URL(req.url).searchParams.get('secret') === secret;
-}
+/** Shared header-only, constant-time check (lib/cron/auth.ts). */
+const authorised = cronAuthorised;
 
 export async function GET(req: Request) {
   if (!authorised(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -65,7 +62,8 @@ async function sendReminders(now: Date): Promise<number> {
   // Group by workspaceId to batch email account lookups
   const workspaceIds = [...new Set(requests.map((r) => r.workspaceId))];
   const accounts = await prisma.emailProviderAccount.findMany({
-    where: { workspaceId: { in: workspaceIds } },
+    // Connected mailboxes only: an expired oldest mailbox must not stop every reminder.
+    where: { workspaceId: { in: workspaceIds }, status: 'CONNECTED' },
     orderBy: { createdAt: 'asc' },
   });
   const accountByWorkspace = new Map<string, typeof accounts[0]>();
@@ -85,7 +83,7 @@ async function sendReminders(now: Date): Promise<number> {
     const expiresAt = request.expiresAt!;
     const urgentExpiry = expiresAt < oneDayFromNow;
 
-    const expiresDateStr = expiresAt.toLocaleDateString('en-IN', {
+    const expiresDateStr = expiresAt.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata',
       year: 'numeric',
       month: 'long',
       day: 'numeric',

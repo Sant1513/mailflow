@@ -34,22 +34,14 @@ export type ProcessOutcome =
 
 export async function processEmailJob(
   emailJobId: string,
-  options: { providerFactory?: (account: any) => EmailProvider } = {}
+  options: {
+    providerFactory?: (account: any) => EmailProvider;
+    /** The caller already moved this job QUEUED → SENDING (lib/queue/drain.ts claims before calling). */
+    claimed?: boolean;
+  } = {}
 ): Promise<ProcessOutcome> {
-  const job = await prisma.emailJob.findUnique({
-    where: { id: emailJobId },
-    include: {
-      batch: { include: { campaign: true } },
-      emailProviderAccount: true,
-      record: true,
-      // Personalised documents frozen onto this job at send time.
-      attachments: {
-        where: { campaignDocumentId: { not: null } },
-        orderBy: { createdAt: 'asc' },
-        include: { campaignDocument: { select: { fileId: true, fields: true, lockMode: true, stampReference: true } } },
-      },
-    },
-  });
+  // With the personalised documents frozen onto this job at send time.
+  const job = await loadJob(emailJobId);
 
   if (!job) {
     return { status: 'SKIPPED', emailJobId, reason: 'Email job no longer exists.' };
@@ -78,12 +70,11 @@ export async function processEmailJob(
   }
 
   // Check the suppression list — if the recipient unsubscribed, skip silently.
-  const suppressed = await prisma.emailSuppression.findUnique({
+  // Case-insensitive: older rows were saved with the address's original capitals.
+  const suppressed = await prisma.emailSuppression.findFirst({
     where: {
-      workspaceId_email: {
-        workspaceId: job.batch.campaign.workspaceId,
-        email: job.toEmail.toLowerCase(),
-      },
+      workspaceId: job.batch.campaign.workspaceId,
+      email: { equals: job.toEmail.trim(), mode: 'insensitive' },
     },
   });
   if (suppressed) {
@@ -103,10 +94,22 @@ export async function processEmailJob(
     return { status: 'FAILED', emailJobId, reason: 'Sending account needs reconnection.', retryable: true };
   }
 
-  await prisma.emailJob.update({
-    where: { id: job.id },
-    data: { status: EmailJobStatus.SENDING, lastAttemptAt: new Date() },
-  });
+  // Claim the job so two consumers (the BullMQ worker, the drain, a retry) can never both send it.
+  // The drain claims before calling (claimed: true) and the job is then already SENDING; any other
+  // caller moves it QUEUED (or FAILED, for a queue retry) → SENDING here, and steps aside if it lost.
+  if (options.claimed) {
+    if (job.status !== EmailJobStatus.SENDING) {
+      return { status: 'SKIPPED', emailJobId, reason: 'Job is no longer claimed for sending.' };
+    }
+  } else {
+    const claim = await prisma.emailJob.updateMany({
+      where: { id: job.id, status: { in: [EmailJobStatus.QUEUED, EmailJobStatus.FAILED] } },
+      data: { status: EmailJobStatus.SENDING, lastAttemptAt: new Date() },
+    });
+    if (!claim.count) {
+      return { status: 'SKIPPED', emailJobId, reason: 'Another sender is already sending this email.' };
+    }
+  }
 
   const provider = options.providerFactory
     ? options.providerFactory(job.emailProviderAccount)
@@ -132,9 +135,15 @@ export async function processEmailJob(
     }
   }
 
+  // Generate an unsubscribe token for this job if it doesn't already have one. It is saved before
+  // sending, so the link in the delivered email works even if the bookkeeping after the send fails.
+  const unsubscribeToken: string = job.unsubscribeToken ?? crypto.randomUUID();
+  if (!job.unsubscribeToken) {
+    await prisma.emailJob.update({ where: { id: job.id }, data: { unsubscribeToken } });
+  }
+
+  let result: Awaited<ReturnType<EmailProvider['sendEmail']>>;
   try {
-    // Generate an unsubscribe token for this job if it doesn't already have one.
-    const unsubscribeToken: string = job.unsubscribeToken ?? crypto.randomUUID();
     const baseUrl = appBaseUrl();
     const unsubscribeUrl = `${baseUrl}/api/unsubscribe/${unsubscribeToken}`;
 
@@ -162,7 +171,7 @@ export async function processEmailJob(
       job.batch.campaign.workspaceId
     );
 
-    const result = await provider.sendEmail({
+    result = await provider.sendEmail({
       to: job.toEmail,
       cc: job.ccEmails,
       bcc: job.bccEmails,
@@ -180,133 +189,6 @@ export async function processEmailJob(
         ? { attachments: documents.map((d) => ({ filename: d.filename, mimeType: 'application/pdf', content: d.content })) }
         : {}),
     });
-
-    let messageId: string | null = null;
-    await prisma.$transaction(async (tx) => {
-      await tx.emailJob.update({
-        where: { id: job.id },
-        data: {
-          status: EmailJobStatus.SENT,
-          sentAt: new Date(),
-          unsubscribeToken,
-          gmailMessageId: result.providerMessageId,
-          gmailThreadId: result.threadId,
-          messageIdHeader: result.messageIdHeader,
-          providerResponse: result.raw as any,
-          errorCode: null,
-          errorMessage: null,
-        },
-      });
-
-      await tx.batch.update({
-        where: { id: job.batchId },
-        data: { sentCount: { increment: 1 } },
-      });
-
-      // §14: update the record's SYSTEM email fields only — never the
-      // user's own business Status column.
-      await tx.record.update({
-        where: { id: job.recordId },
-        data: {
-          emailStatus: 'SENT',
-          lastEmailSentAt: new Date(),
-          lastEmailError: null,
-          lastBatchId: job.batchId,
-          gmailThreadId: result.threadId,
-          lastCommunicationAt: new Date(),
-          lastCommunicationDirection: 'OUTBOUND',
-        },
-      });
-
-      // Record the outbound message in the conversation timeline so Phase 5
-      // (inbound replies) has something to thread onto, and so the contact
-      // history is complete from the first message (§45/§61).
-      if (result.threadId && job.record.contactId) {
-        const conversation = await tx.conversation.upsert({
-          where: {
-            emailProviderAccountId_gmailThreadId: {
-              emailProviderAccountId: job.emailProviderAccountId!,
-              gmailThreadId: result.threadId,
-            },
-          },
-          update: { lastMessageAt: new Date(), messageCount: { increment: 1 } },
-          create: {
-            organizationId: job.batch.campaign.organizationId,
-            workspaceId: job.batch.campaign.workspaceId,
-            ownerId: job.batch.campaign.createdById,
-            contactId: job.record.contactId,
-            recipientEmail: job.toEmail,
-            subject: job.subject,
-            emailProviderAccountId: job.emailProviderAccountId!,
-            gmailThreadId: result.threadId,
-            firstMessageAt: new Date(),
-            lastMessageAt: new Date(),
-            messageCount: 1,
-            // Nothing to act on yet: the email was just sent. It waits for the student and moves to
-            // Open (unread) the moment a real reply arrives (lib/gmail/ingest.ts). Starting it as
-            // OPEN filled the inbox with one "open" conversation per recipient.
-            status: ConversationStatus.WAITING_FOR_STUDENT,
-          },
-        });
-
-        const message = await tx.conversationMessage.create({
-          data: {
-            conversationId: conversation.id,
-            gmailMessageId: result.providerMessageId,
-            gmailThreadId: result.threadId,
-            direction: MessageDirection.OUTBOUND,
-            senderEmail: job.fromEmail,
-            senderName: job.fromName,
-            recipientEmail: job.toEmail,
-            cc: job.ccEmails,
-            bcc: job.bccEmails,
-            subject: job.subject,
-            messageIdHeader: result.messageIdHeader,
-            references: buildReferences(null, result.messageIdHeader),
-            // §89: an immutable snapshot of exactly what was sent. Never
-            // re-rendered from the current template later.
-            // The inbox list shows the latest message's snippet, so an
-            // outbound message without one rendered the literal string
-            // "undefined" whenever a campaign email was the last thing sent.
-            snippet: (job.plainText ?? job.html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 200),
-            htmlBody: job.html,
-            plainTextBody: job.plainText,
-            sentAt: new Date(),
-            status: 'SENT',
-            isRead: true,
-            hasAttachments: documents.length > 0,
-          },
-        });
-        messageId = message?.id ?? null;
-
-        await tx.recipientHistory.create({
-          data: {
-            contactId: job.record.contactId,
-            type: 'EMAIL_SENT',
-            summary: `Sent "${job.subject}" (campaign ${job.batch.campaign.name})${
-              documents.length > 0 ? ` with ${documents.map((d) => d.filename).join(', ')}` : ''
-            }`,
-            refId: job.id,
-          },
-        });
-      }
-
-      // Record what was actually attached. The hash lets "download sent copy"
-      // prove a regenerated file is byte-identical to the one in the email.
-      for (const d of documents) {
-        await tx.attachment.update({
-          where: { id: d.attachmentId },
-          data: {
-            sha256: d.sha256,
-            size: d.size,
-            generatedAt: new Date(),
-            ...(messageId ? { conversationMessageId: messageId } : {}),
-          },
-        });
-      }
-    });
-
-    return { status: 'SENT', emailJobId, providerMessageId: result.providerMessageId };
   } catch (err) {
     const sendError =
       err instanceof SendEmailError ? err : new SendEmailError(String((err as Error).message ?? err), 'UNKNOWN');
@@ -319,6 +201,185 @@ export async function processEmailJob(
 
     return { status: 'FAILED', emailJobId, reason: sendError.message, retryable: false };
   }
+
+  // Gmail accepted the email. From here on nothing may mark the job FAILED: "Retry failed" would
+  // send it a second time. The bookkeeping is retried; if it still can't be written, the job stays
+  // SENDING with Gmail's message id, and recoverStuckJobs (lib/queue/sendWorker.ts) marks it SENT.
+  const sent = result;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= BOOKKEEPING_ATTEMPTS; attempt++) {
+    try {
+      await recordSent(job, sent, unsubscribeToken, documents);
+      return { status: 'SENT', emailJobId, providerMessageId: sent.providerMessageId };
+    } catch (err) {
+      lastError = err;
+      if (attempt < BOOKKEEPING_ATTEMPTS) await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
+  }
+  console.error('[email] sent, but recording it failed; left SENDING for recovery', {
+    emailJobId,
+    providerMessageId: sent.providerMessageId,
+    err: (lastError as Error)?.message ?? String(lastError),
+  });
+  await prisma.emailJob
+    .updateMany({
+      where: { id: job.id, status: EmailJobStatus.SENDING },
+      data: { gmailMessageId: sent.providerMessageId, gmailThreadId: sent.threadId, messageIdHeader: sent.messageIdHeader },
+    })
+    .catch(() => undefined);
+  return { status: 'SENT', emailJobId, providerMessageId: sent.providerMessageId };
+}
+
+const BOOKKEEPING_ATTEMPTS = 3;
+
+type LoadedJob = NonNullable<Awaited<ReturnType<typeof loadJob>>>;
+function loadJob(emailJobId: string) {
+  return prisma.emailJob.findUnique({
+    where: { id: emailJobId },
+    include: {
+      batch: { include: { campaign: true } },
+      emailProviderAccount: true,
+      record: true,
+      attachments: {
+        where: { campaignDocumentId: { not: null } },
+        orderBy: { createdAt: 'asc' },
+        include: { campaignDocument: { select: { fileId: true, fields: true, lockMode: true, stampReference: true } } },
+      },
+    },
+  });
+}
+
+/** Everything written once Gmail has accepted the email, in one transaction. */
+async function recordSent(
+  job: LoadedJob,
+  result: Awaited<ReturnType<EmailProvider['sendEmail']>>,
+  unsubscribeToken: string,
+  documents: GeneratedAttachment[]
+): Promise<void> {
+  let messageId: string | null = null;
+  await prisma.$transaction(async (tx) => {
+    await tx.emailJob.update({
+      where: { id: job.id },
+      data: {
+        status: EmailJobStatus.SENT,
+        sentAt: new Date(),
+        unsubscribeToken,
+        gmailMessageId: result.providerMessageId,
+        gmailThreadId: result.threadId,
+        messageIdHeader: result.messageIdHeader,
+        providerResponse: result.raw as any,
+        errorCode: null,
+        errorMessage: null,
+      },
+    });
+
+    await tx.batch.update({
+      where: { id: job.batchId },
+      data: { sentCount: { increment: 1 } },
+    });
+
+    // §14: update the record's SYSTEM email fields only — never the
+    // user's own business Status column.
+    await tx.record.update({
+      where: { id: job.recordId },
+      data: {
+        emailStatus: 'SENT',
+        lastEmailSentAt: new Date(),
+        lastEmailError: null,
+        lastBatchId: job.batchId,
+        gmailThreadId: result.threadId,
+        lastCommunicationAt: new Date(),
+        lastCommunicationDirection: 'OUTBOUND',
+      },
+    });
+
+    // Record the outbound message in the conversation timeline so Phase 5
+    // (inbound replies) has something to thread onto, and so the contact
+    // history is complete from the first message (§45/§61).
+    if (result.threadId && job.record.contactId) {
+      const conversation = await tx.conversation.upsert({
+        where: {
+          emailProviderAccountId_gmailThreadId: {
+            emailProviderAccountId: job.emailProviderAccountId!,
+            gmailThreadId: result.threadId,
+          },
+        },
+        update: { lastMessageAt: new Date(), messageCount: { increment: 1 } },
+        create: {
+          organizationId: job.batch.campaign.organizationId,
+          workspaceId: job.batch.campaign.workspaceId,
+          ownerId: job.batch.campaign.createdById,
+          contactId: job.record.contactId,
+          recipientEmail: job.toEmail,
+          subject: job.subject,
+          emailProviderAccountId: job.emailProviderAccountId!,
+          gmailThreadId: result.threadId,
+          firstMessageAt: new Date(),
+          lastMessageAt: new Date(),
+          messageCount: 1,
+          // Nothing to act on yet: the email was just sent. It waits for the student and moves to
+          // Open (unread) the moment a real reply arrives (lib/gmail/ingest.ts). Starting it as
+          // OPEN filled the inbox with one "open" conversation per recipient.
+          status: ConversationStatus.WAITING_FOR_STUDENT,
+        },
+      });
+
+      const message = await tx.conversationMessage.create({
+        data: {
+          conversationId: conversation.id,
+          gmailMessageId: result.providerMessageId,
+          gmailThreadId: result.threadId,
+          direction: MessageDirection.OUTBOUND,
+          senderEmail: job.fromEmail,
+          senderName: job.fromName,
+          recipientEmail: job.toEmail,
+          cc: job.ccEmails,
+          bcc: job.bccEmails,
+          subject: job.subject,
+          messageIdHeader: result.messageIdHeader,
+          references: buildReferences(null, result.messageIdHeader),
+          // §89: an immutable snapshot of exactly what was sent. Never
+          // re-rendered from the current template later.
+          // The inbox list shows the latest message's snippet, so an
+          // outbound message without one rendered the literal string
+          // "undefined" whenever a campaign email was the last thing sent.
+          snippet: (job.plainText ?? job.html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 200),
+          htmlBody: job.html,
+          plainTextBody: job.plainText,
+          sentAt: new Date(),
+          status: 'SENT',
+          isRead: true,
+          hasAttachments: documents.length > 0,
+        },
+      });
+      messageId = message?.id ?? null;
+
+      await tx.recipientHistory.create({
+        data: {
+          contactId: job.record.contactId,
+          type: 'EMAIL_SENT',
+          summary: `Sent "${job.subject}" (campaign ${job.batch.campaign.name})${
+            documents.length > 0 ? ` with ${documents.map((d) => d.filename).join(', ')}` : ''
+          }`,
+          refId: job.id,
+        },
+      });
+    }
+
+    // Record what was actually attached. The hash lets "download sent copy"
+    // prove a regenerated file is byte-identical to the one in the email.
+    for (const d of documents) {
+      await tx.attachment.update({
+        where: { id: d.attachmentId },
+        data: {
+          sha256: d.sha256,
+          size: d.size,
+          generatedAt: new Date(),
+          ...(messageId ? { conversationMessageId: messageId } : {}),
+        },
+      });
+    }
+  }, { maxWait: 10_000, timeout: 30_000 });
 }
 
 async function failJob(
@@ -413,7 +474,15 @@ export async function reconcileBatchStatus(batchId: string): Promise<BatchStatus
   else if (failed > 0) status = BatchStatus.FAILED;
   else status = BatchStatus.COMPLETED;
 
-  await prisma.batch.update({ where: { id: batchId }, data: { status } });
+  // Conditional: a Pause or Cancel that lands between the read above and this write wins.
+  const written = await prisma.batch.updateMany({
+    where: { id: batchId, status: { notIn: [BatchStatus.PAUSED, BatchStatus.CANCELLED] } },
+    data: { status },
+  });
+  if (!written.count) {
+    const now = await prisma.batch.findUnique({ where: { id: batchId }, select: { status: true } });
+    return now?.status ?? status;
+  }
 
   if (pending > 0) {
     // When the first job of a scheduled send fires, the campaign is still in
@@ -431,7 +500,10 @@ export async function reconcileBatchStatus(batchId: string): Promise<BatchStatus
         : status === BatchStatus.PARTIALLY_FAILED
           ? CampaignStatus.PARTIALLY_FAILED
           : CampaignStatus.PARTIALLY_FAILED;
-    await prisma.campaign.update({ where: { id: batch.campaignId }, data: { status: campaignStatus } });
+    await prisma.campaign.updateMany({
+      where: { id: batch.campaignId, status: { notIn: [CampaignStatus.PAUSED, CampaignStatus.CANCELLED] } },
+      data: { status: campaignStatus },
+    });
   }
 
   return status;

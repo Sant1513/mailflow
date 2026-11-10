@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { cronAuthorised } from '@/lib/cron/auth';
 import { prisma } from '@/lib/db/client';
 import { ConversationStatus } from '@prisma/client';
 
@@ -7,12 +8,8 @@ import { ConversationStatus } from '@prisma/client';
  * conversation against them, and logs a summary. Called by Vercel Cron at
  * 08:00 UTC; can also be triggered manually with the CRON_SECRET.
  */
-function authorised(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return process.env.NODE_ENV !== 'production';
-  const header = req.headers.get('authorization') ?? '';
-  return header === `Bearer ${secret}` || new URL(req.url).searchParams.get('secret') === secret;
-}
+/** Shared header-only, constant-time check (lib/cron/auth.ts). */
+const authorised = cronAuthorised;
 
 export async function GET(req: Request) {
   if (!authorised(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

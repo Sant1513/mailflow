@@ -89,10 +89,41 @@ export async function readRef(ref: string): Promise<Buffer | null> {
   }
   if (ref.startsWith('archive:')) return readArchived(ref.slice(8));
   if (/^https?:\/\//.test(ref)) {
+    // Only the old Vercel Blob links: never fetch an arbitrary address on a user's behalf.
+    if (!isLegacyBlobUrl(ref)) return null;
     const res = await fetch(ref, { signal: AbortSignal.timeout(20_000) }).catch(() => null);
     return res?.ok ? Buffer.from(await res.arrayBuffer()) : null;
   }
   return Buffer.from(ref, 'base64');
+}
+
+/** An old Vercel Blob file link (how attachments were stored before Supabase Storage). */
+export function isLegacyBlobUrl(ref: string): boolean {
+  try {
+    const u = new URL(ref);
+    return u.protocol === 'https:' && u.hostname.endsWith('.blob.vercel-storage.com');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether an attachment reference sent by the browser is one this workspace uploaded
+ * (POST /api/e-sign/attachments stores them under signing-attachments/<workspaceId>/). Anything
+ * else (another workspace's file, a signed PDF, an internal URL) must never be emailed out.
+ */
+export function isOwnAttachmentRef(ref: string, workspaceId: string): boolean {
+  const prefix = `signing-attachments/${workspaceId}/`;
+  let path: string | null = null;
+  if (ref.startsWith('storage:') || ref.startsWith('archive:')) path = ref.slice(8);
+  else if (isLegacyBlobUrl(ref)) {
+    try {
+      path = decodeURIComponent(new URL(ref).pathname.replace(/^\/+/, ''));
+    } catch {
+      path = null;
+    }
+  }
+  return !!path && path.startsWith(prefix) && !path.split('/').includes('..');
 }
 
 /** A signed PDF, as base64 for the existing viewers; null if unavailable right now. */
