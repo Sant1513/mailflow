@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Menu, X } from 'lucide-react';
 import { BrandLockup } from './BrandLockup';
+import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { GoogleCta } from './GoogleCta';
 
 const LINKS = [
@@ -63,6 +64,7 @@ export function Nav({ announcements }: { announcements: string[] }) {
             ))}
           </ul>
           <div className="flex items-center gap-3">
+            <ThemeToggle compact />
             <GoogleCta small className="nav-cta" />
             <button
               type="button"

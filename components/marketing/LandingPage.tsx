@@ -188,8 +188,8 @@ export function LandingPage({ stats, domains }: { stats: PublicStat[]; domains: 
   ];
 
   return (
-    // Always dark: `dark` here re-points the app's tokens for the shared components inside.
-    <div className={`dark ${leapSans.variable} ${leapMono.variable}`}>
+    // MailFlow's own colours (light/dark from the theme toggle); Leap's layout and motion.
+    <div className={`${leapSans.variable} ${leapMono.variable}`}>
       <div className="leap-ui">
         <script dangerouslySetInnerHTML={{ __html: LEAP_JS_SCRIPT }} />
         <a href="#main" className="skip">

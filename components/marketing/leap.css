@@ -1,11 +1,12 @@
 /*
- * Landing page only: Masai's "Leap" design language (dark, Poppins + IBM Plex Mono, coral
- * accents, ruled kickers, 14px cards). Every rule is scoped to .leap-ui (or to <html> only while
+ * Landing page only: Masai's "Leap" layout and motion (Poppins + IBM Plex Mono, ruled kickers,
+ * 14px cards, reveals) in MailFlow's own colours: the Leap names below point at the app's theme
+ * tokens, so the page follows light and dark like the rest of MailFlow. Every rule is scoped to .leap-ui (or to <html> only while
  * the landing page is on screen), so the app's own theme and globals are untouched.
  */
 
 html:has(.leap-ui) {
-  background: #0d0d0d;
+  background: hsl(var(--background));
   scroll-behavior: smooth;
   scroll-padding-top: calc(var(--lp-nav-h, 111px) + 8px);
 }
@@ -14,17 +15,17 @@ html:has(.leap-ui) {
 }
 
 .leap-ui {
-  --paper: #f7f4ee;
-  --deep: #0d0d0d;
-  --deep-2: #1b1b1b;
-  --deep-rule: hsla(40, 36%, 95%, 0.18);
-  --deep-rule-2: hsla(40, 36%, 95%, 0.3);
-  --accent: #d0351a;
-  --accent-dark: #b42c14;
-  --accent-hi: #f05a32;
-  --coral: #fb8671;
-  --on-deep-mu: #ada79d;
-  --on-deep-2: #d8d4cc;
+  --paper: hsl(var(--foreground));
+  --deep: hsl(var(--background));
+  --deep-2: hsl(var(--card));
+  --deep-rule: hsl(var(--border));
+  --deep-rule-2: hsl(var(--faint) / 0.45);
+  --accent: hsl(var(--primary));
+  --accent-dark: hsl(var(--primary-hover));
+  --accent-hi: hsl(var(--primary));
+  --coral: hsl(var(--primary));
+  --on-deep-mu: hsl(var(--muted-foreground));
+  --on-deep-2: hsl(var(--muted-foreground));
   --lp-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --fast: 0.15s;
   --mid: 0.26s;
@@ -36,25 +37,6 @@ html:has(.leap-ui) {
   --ns-h: 42px;
   --lp-nav-h: calc(var(--nav-bar-h) + var(--ns-h));
 
-  /* The app's tokens, re-pointed so the code-built mocks sit on this palette. */
-  --background: 0 0% 5%;
-  --card: 0 0% 10.6%;
-  --elevated: 0 0% 14%;
-  --muted: 0 0% 13%;
-  --muted-foreground: 37 7% 65%;
-  --faint: 37 5% 50%;
-  --foreground: 40 36% 95%;
-  --border: 40 36% 95% / 0.18;
-  --border-subtle: 40 36% 95% / 0.12;
-  --primary: 9 78% 46%;
-  --primary-hover: 9 80% 40%;
-  --ink: 9 78% 46%;
-  --ink-foreground: 0 0% 100%;
-  --accent-from: 9 78% 46%;
-  --accent-to: 9 94% 71%;
-  --destructive: 9 94% 71%;
-  --glass: 0 0% 10.6%;
-  --glass-alpha: 1;
 
   background: var(--deep);
   color: var(--paper);
@@ -96,7 +78,7 @@ html:has(.leap-ui) {
 .leap-ui .skip {
   background: var(--paper);
   border-radius: 6px;
-  color: #121212;
+  color: hsl(var(--background));
   font-weight: 600;
   left: 16px;
   padding: 10px 16px;
@@ -127,8 +109,8 @@ html:has(.leap-ui) {
 .leap-ui .btn-solid { background: var(--accent); color: #fff; }
 .leap-ui .btn-solid:hover:not(:disabled) { background: var(--accent-dark); }
 .leap-ui .btn-solid:disabled { cursor: wait; opacity: 0.75; }
-.leap-ui .btn-ghost { background: rgba(255, 255, 255, 0.06); border-color: var(--deep-rule); color: var(--paper); }
-.leap-ui .btn-ghost:hover { background: rgba(255, 255, 255, 0.1); border-color: var(--deep-rule-2); }
+.leap-ui .btn-ghost { background: hsl(var(--foreground) / 0.06); border-color: var(--deep-rule); color: var(--paper); }
+.leap-ui .btn-ghost:hover { background: hsl(var(--foreground) / 0.1); border-color: var(--deep-rule-2); }
 .leap-ui .btn-sm { font-size: 0.875rem; min-height: 44px; padding: 0.7rem 1.35rem; }
 
 /* ---------- Pulse dot + counter landing ---------- */
@@ -149,7 +131,7 @@ html:has(.leap-ui) {
 .leap-ui .is-landed { animation: lp-land 0.6s var(--lp-ease); display: inline-block; }
 @keyframes lp-land {
   0% { transform: scale(1); }
-  40% { text-shadow: 0 0 16px rgba(251, 134, 113, 0.7); transform: scale(1.18); }
+  40% { text-shadow: 0 0 16px hsl(var(--primary) / 0.7); transform: scale(1.18); }
   100% { transform: scale(1); }
 }
 
@@ -157,7 +139,7 @@ html:has(.leap-ui) {
 .leap-ui .nav {
   -webkit-backdrop-filter: saturate(1.8) blur(12px);
   backdrop-filter: saturate(1.8) blur(12px);
-  background: rgba(13, 13, 13, 0.9);
+  background: hsl(var(--background) / 0.85);
   left: 0;
   position: fixed;
   right: 0;
@@ -200,7 +182,7 @@ html:has(.leap-ui) {
 
 /* Announcement marquee under the nav */
 .leap-ui .nav-strip {
-  background: #2a1a16;
+  background: hsl(var(--primary) / 0.07);
   border-bottom: 1px solid var(--deep-rule);
   border-top: 1px solid var(--deep-rule);
   color: var(--paper);
@@ -276,7 +258,7 @@ html:has(.leap-ui) {
 /* ---------- Hero ---------- */
 .leap-ui .hero { padding-top: calc(var(--lp-nav-h) + clamp(3rem, 2rem + 4vw, 6rem)); position: relative; text-align: center; }
 .leap-ui .hero-glow {
-  background: radial-gradient(60% 55% at 50% 30%, rgba(208, 53, 26, 0.28), rgba(208, 53, 26, 0) 70%);
+  background: radial-gradient(60% 55% at 50% 30%, hsl(var(--primary) / 0.28), hsl(var(--primary) / 0) 70%);
   inset: 0 0 auto 0;
   height: 900px;
   pointer-events: none;
@@ -307,8 +289,8 @@ html:has(.leap-ui) {
 .leap-ui .hero-ctas { align-items: center; display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-top: 32px; }
 .leap-ui .live-pill {
   align-items: center;
-  background: rgba(208, 53, 26, 0.12);
-  border: 1px solid rgba(251, 134, 113, 0.22);
+  background: hsl(var(--primary) / 0.12);
+  border: 1px solid hsl(var(--primary) / 0.22);
   border-radius: 10px;
   color: var(--paper);
   display: inline-flex;
@@ -333,7 +315,7 @@ html:has(.leap-ui) {
   background: var(--deep-2);
   border: 1px solid var(--deep-rule);
   border-radius: 14px;
-  box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(251, 134, 113, 0.06);
+  box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.28), 0 0 0 1px hsl(var(--primary) / 0.06);
   margin: clamp(3rem, 2rem + 4vw, 5rem) auto 0;
   max-width: 1000px;
   overflow: hidden;
@@ -344,7 +326,7 @@ html:has(.leap-ui) {
 .leap-ui .tabs { display: flex; gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; padding: 4px 2px; scrollbar-width: none; }
 .leap-ui .tabs::-webkit-scrollbar { display: none; }
 .leap-ui .tab {
-  background: #1e1e1e;
+  background: hsl(var(--muted));
   border-radius: 6px;
   color: var(--paper);
   flex: 0 0 auto;
@@ -355,7 +337,7 @@ html:has(.leap-ui) {
   transition: background var(--fast) var(--lp-ease), color var(--fast) var(--lp-ease);
   white-space: nowrap;
 }
-.leap-ui .tab:hover { background: #2a2a2a; }
+.leap-ui .tab:hover { background: hsl(var(--elevated)); }
 .leap-ui .tab[aria-selected="true"] { background: var(--accent); color: #fff; }
 
 /* ---------- Journey ---------- */
@@ -372,15 +354,15 @@ html:has(.leap-ui) {
   transition: background var(--mid) var(--lp-ease);
   width: 100%;
 }
-.leap-ui .jr-stop::before { background: #232323; border-radius: 999px; content: ""; flex: 0 0 auto; min-height: 52px; transition: background var(--mid) var(--lp-ease); width: 4px; }
-.leap-ui .jr-stop[aria-current="step"] { background: linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0)); }
+.leap-ui .jr-stop::before { background: hsl(var(--border)); border-radius: 999px; content: ""; flex: 0 0 auto; min-height: 52px; transition: background var(--mid) var(--lp-ease); width: 4px; }
+.leap-ui .jr-stop[aria-current="step"] { background: linear-gradient(90deg, hsl(var(--foreground) / 0.05), hsl(var(--foreground) / 0)); }
 .leap-ui .jr-stop[aria-current="step"]::before { background: var(--accent-hi); }
 .leap-ui .jr-stop-label { color: var(--paper); display: block; font-size: 1.125rem; font-weight: 600; line-height: 30px; text-transform: uppercase; }
-.leap-ui .jr-stop-meta { color: #838383; display: block; font-family: var(--font-leap-mono), ui-monospace, monospace; font-size: 0.75rem; letter-spacing: 0.03em; line-height: 20px; text-transform: uppercase; transition: color var(--mid) var(--lp-ease); }
+.leap-ui .jr-stop-meta { color: hsl(var(--faint)); display: block; font-family: var(--font-leap-mono), ui-monospace, monospace; font-size: 0.75rem; letter-spacing: 0.03em; line-height: 20px; text-transform: uppercase; transition: color var(--mid) var(--lp-ease); }
 .leap-ui .jr-stop[aria-current="step"] .jr-stop-meta { color: var(--accent-hi); }
 .leap-ui .jr-panels { display: grid; gap: 32px; }
 .leap-ui .jr-panel {
-  background: #141414;
+  background: hsl(var(--card));
   border: 1px solid var(--deep-rule);
   border-radius: 14px;
   display: grid;
@@ -390,7 +372,7 @@ html:has(.leap-ui) {
 }
 .leap-ui .jr-chip {
   align-self: flex-start;
-  background: rgba(255, 255, 255, 0.04);
+  background: hsl(var(--foreground) / 0.04);
   border-radius: 4px;
   color: var(--accent-hi);
   display: inline-block;
@@ -419,7 +401,7 @@ html:has(.leap-ui) {
   }
   .leap-ui .jr-rail ol { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
   .leap-ui .jr-rail ol::-webkit-scrollbar { display: none; }
-  .leap-ui .jr-stop { background: #1e1e1e; border-radius: 6px; flex: 0 0 auto; padding: 8px 14px; width: auto; }
+  .leap-ui .jr-stop { background: hsl(var(--muted)); border-radius: 6px; flex: 0 0 auto; padding: 8px 14px; width: auto; }
   .leap-ui .jr-stop::before { display: none; }
   .leap-ui .jr-stop[aria-current="step"] { background: var(--accent); }
   .leap-ui .jr-stop-label { font-size: 0.8125rem; line-height: 20px; white-space: nowrap; }
@@ -433,14 +415,14 @@ html:has(.leap-ui) {
 .leap-ui .an-head { border-bottom: 1px solid var(--deep-rule); font-family: var(--font-leap-mono), ui-monospace, monospace; font-size: 0.8125rem; letter-spacing: 0.14em; padding-bottom: 14px; text-transform: uppercase; }
 .leap-ui .an-always .an-head { border-color: var(--accent-hi); color: var(--accent-hi); }
 .leap-ui .an-never .an-head { color: var(--on-deep-2); }
-.leap-ui .an-list li { border-bottom: 1px solid rgba(247, 244, 238, 0.07); display: flex; font-size: 0.9375rem; gap: 14px; line-height: 1.5; padding: 16px 12px; }
+.leap-ui .an-list li { border-bottom: 1px solid hsl(var(--foreground) / 0.07); display: flex; font-size: 0.9375rem; gap: 14px; line-height: 1.5; padding: 16px 12px; }
 .leap-ui .an-always li { color: var(--paper); }
 .leap-ui .an-never li { color: var(--on-deep-mu); }
 .leap-ui .an-list svg { flex: 0 0 auto; margin-top: 3px; }
 
 /* ---------- Closing band ---------- */
 .leap-ui .closing {
-  background: radial-gradient(55% 70% at 50% 100%, rgba(208, 53, 26, 0.32), rgba(208, 53, 26, 0) 70%);
+  background: radial-gradient(55% 70% at 50% 100%, hsl(var(--primary) / 0.32), hsl(var(--primary) / 0) 70%);
   padding-block: clamp(5rem, 3rem + 7vw, 9rem);
   text-align: center;
 }
@@ -504,7 +486,7 @@ html:has(.leap-ui) {
 
 /* Section backgrounds fade in on entry */
 .leap-ui .inv::before {
-  background: linear-gradient(180deg, #121212, #0f0f0f);
+  background: linear-gradient(180deg, hsl(var(--muted)), hsl(var(--background)));
   content: "";
   inset: 0;
   opacity: 1;
