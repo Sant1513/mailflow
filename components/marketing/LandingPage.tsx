@@ -19,7 +19,7 @@ import { HeroMock } from './HeroMock';
 import { StatsStrip } from './StatsStrip';
 import { Reveal } from './Reveal';
 import { SectionLink } from './SectionLink';
-import type { FaqItem } from './Faq';
+import type { FaqGroup } from './Faq';
 import { LeapJourney, LeapUseCases } from './LeapSections';
 
 // Below the fold: split into their own chunks so the hero's JavaScript stays small.
@@ -50,27 +50,161 @@ const TRUST: { icon: LucideIcon; title: string; body: string }[] = [
   { icon: UserCog, title: 'Roles and sign-in approval', body: 'Viewer, Operator, Admin and Super Admin. New people wait for a Super Admin to approve them.' },
 ];
 
-function faqItems(domains: string | null): FaqItem[] {
+function faqGroups(domains: string | null): FaqGroup[] {
   return [
     {
-      q: 'How many emails can I send?',
-      a: 'Each connected mailbox sends one email every 3 seconds and stops at 1,500 emails in any rolling 24 hours, safely under Google Workspace’s limit of 2,000. If a mailbox reaches its limit or Gmail asks it to slow down, it pauses and backup mailboxes you picked carry on; it resumes by itself once it can send again.',
+      id: 'start',
+      label: 'Getting started',
+      items: [
+        {
+          q: 'Who can sign in?',
+          a: `${domains ? `Only Google accounts from ${domains} can sign in. ` : ''}Anyone new waits until a Super Admin approves them, and then works with the role they are given: Viewer, Operator, Admin or Super Admin.`,
+        },
+        {
+          q: 'How do I get started?',
+          a: 'Sign in with Google, wait for a Super Admin to approve you, then connect your Gmail once in Settings → Gmail. After that you pick Mail (campaigns, inbox, data) or Sign (documents for e-signature), and you can switch between them any time from the sidebar.',
+        },
+        {
+          q: 'What do the roles mean?',
+          a: 'Viewers can see data, campaigns, conversations and reports but change nothing. Operators can also create and send campaigns, reply in the inbox, edit data and send documents for signature. Admins can also approve campaigns and run Recruiter Bulk Send. Super Admins can also approve new people, manage users and see every workspace.',
+        },
+        {
+          q: 'Does it work on my phone?',
+          a: 'Yes. Every page works on a phone, and you can add MailFlow to your home screen so it opens like an app.',
+        },
+        {
+          q: 'What does it cost the team?',
+          a: 'Nothing extra. MailFlow is Masai’s internal tool and sends through the Google accounts the team already has, so there is no per-email or per-seat charge to worry about.',
+        },
+      ],
     },
     {
-      q: 'Which Gmail address do emails come from?',
-      a: 'Your own. You connect the Google account you already use, and emails go out from it, so they sit in your Sent folder and replies come back to you (and into MailFlow’s shared inbox). There is no shared "noreply" address.',
+      id: 'sending',
+      label: 'Sending',
+      items: [
+        {
+          q: 'How many emails can I send?',
+          a: 'Each connected mailbox sends one email every 3 seconds and stops at 1,500 emails in any rolling 24 hours, safely under Google Workspace’s limit of 2,000. If a mailbox reaches its limit or Gmail asks it to slow down, it pauses and the backup mailboxes you picked carry on; it resumes by itself once it can send again.',
+        },
+        {
+          q: 'Which Gmail address do emails come from?',
+          a: 'Your own. You connect the Google account you already use, and emails go out from it, so they sit in your Sent folder and replies come back to you (and into MailFlow’s shared inbox). There is no shared "noreply" address.',
+        },
+        {
+          q: 'Can I check a send before it goes out?',
+          a: 'Yes. Preview the email exactly as one real person will receive it, send a test to yourself, and run a dry run that lists who would get it and who would be skipped and why (no or invalid address, a missing value, already emailed, unsubscribed). Campaigns from non-admins also wait for an admin to approve them.',
+        },
+        {
+          q: 'Do I have to keep the tab open while it sends?',
+          a: 'No. Once a send starts it runs on its own; you can close the tab and check progress later on the campaign page or under Batches.',
+        },
+        {
+          q: 'Can I schedule a send for later?',
+          a: 'Yes. Pick a date and time instead of sending now, and it starts by itself at that time (within about 15 minutes).',
+        },
+        {
+          q: 'What happens if my mailbox reaches its daily limit?',
+          a: 'Add teammates’ mailboxes as backup senders on the campaign (each teammate has to allow it in their own settings first). When your mailbox can’t send, the backups take over with your From name, and sending moves back to your mailbox as soon as it can send again.',
+        },
+      ],
     },
     {
-      q: 'What happens to our data?',
-      a: 'Your data stays in MailFlow’s own database and is only used to send the emails and documents you ask for. Gmail access tokens are encrypted at rest (AES-256-GCM) and never reach the browser, actions are recorded in an audit log, and roles decide who can see and do what.',
+      id: 'recruiters',
+      label: 'Recruiter sends',
+      items: [
+        {
+          q: 'What is Recruiter Bulk Send?',
+          a: 'A tool for admins to email a list of recruiters. Paste or upload the list with its header row (or take rows from Data), and your own columns, such as company or a UTM link, come with it.',
+        },
+        {
+          q: 'Can each recruiter get a personalised email?',
+          a: 'Yes, with individual copies: {{Column}} fills in each recruiter’s values, with a fallback for blanks such as {{Company | your team}}, so every recruiter can get their own link. BCC sends one email to groups of up to 250 instead, so values aren’t filled in.',
+        },
+        {
+          q: 'Can I see exactly what one recruiter will receive?',
+          a: 'Yes. Click any recruiter in the list to see their email with their own values filled in, and send a test to yourself before starting.',
+        },
+        {
+          q: 'Can I send from more than one mailbox?',
+          a: 'Yes. Choose all mailboxes together (faster, each keeping its own pause between emails) or one mailbox after another. If a mailbox fails or reaches its daily limit, its share moves to another one.',
+        },
+      ],
     },
     {
-      q: 'Who can sign in?',
-      a: `${domains ? `Only Google accounts from ${domains} can sign in. ` : ''}Anyone new waits until a Super Admin approves them, and then works with the role they are given: Viewer, Operator, Admin or Super Admin.`,
+      id: 'inbox',
+      label: 'Inbox',
+      items: [
+        {
+          q: 'Where do replies go?',
+          a: 'Back to the Gmail that sent the email, and into MailFlow’s shared inbox, threaded with the email they answer. They arrive within about half an hour, or straight away when you open the Inbox. The rest of your Gmail is never imported.',
+        },
+        {
+          q: 'Can the team share the work?',
+          a: 'Yes. Assign conversations to teammates (they’re notified in the app, by email and in Slack), add tags and internal notes, set follow-up reminders, and use SLA rules to flag replies waiting too long.',
+        },
+        {
+          q: 'Does the AI reply on its own?',
+          a: 'No. When an admin turns AI triage on, it tags replies by intent, can assign them and drafts answers to questions, but a person always approves a draft before anything is sent.',
+        },
+        {
+          q: 'How are bounces and out-of-office replies handled?',
+          a: 'They’re labelled, so only real human replies count as replies. An address that bounces is blocked for the whole organisation, so nobody emails it again by mistake.',
+        },
+      ],
     },
     {
-      q: 'What does it cost the team?',
-      a: 'Nothing extra. MailFlow is Masai’s internal tool and sends through the Google accounts the team already has, so there is no per-email or per-seat charge to worry about.',
+      id: 'sign',
+      label: 'Sign',
+      items: [
+        {
+          q: 'What can I send for signature?',
+          a: 'Any document you write in MailFlow or import from Word or a Google Doc, with {{fields}} filled in for each person. Send one at a time, or in bulk from a CSV, rows in Data or a segment, with up to 3 signers per document signing in order or all at once.',
+        },
+        {
+          q: 'Do signers need an account?',
+          a: 'No. Each signer gets a link by email and signs in the browser. Reminders go out automatically, and everyone gets the signed PDF with a certificate of completion.',
+        },
+        {
+          q: 'Can I see who has signed?',
+          a: 'Yes. Documents shows each signer’s status (sent, viewed, signed, waiting their turn), and documents sent from Data write their status, signed date and a link to the signed PDF back onto the row.',
+        },
+      ],
+    },
+    {
+      id: 'data',
+      label: 'Data & privacy',
+      items: [
+        {
+          q: 'What happens to our data?',
+          a: 'Your data stays in MailFlow’s own database and is only used to send the emails and documents you ask for. Gmail access tokens are encrypted at rest (AES-256-GCM) and never reach the browser, actions are recorded in an audit log, and roles decide who can see and do what.',
+        },
+        {
+          q: 'Can I work from Google Sheets?',
+          a: 'Yes. Connect a sheet to a dataset and it syncs both ways every hour, or straight away with Sync now. New rows on either side are added and nothing is deleted.',
+        },
+        {
+          q: 'What happens when someone unsubscribes?',
+          a: 'Every bulk email has an Unsubscribe button. Once someone uses it they’re added to Suppressions and skipped by later sends, and you can add an address there yourself too.',
+        },
+        {
+          q: 'Is there a record of who did what?',
+          a: 'Yes. Sends, approvals, edits, exports and settings changes are kept in an audit log that Super Admins can filter.',
+        },
+      ],
+    },
+    {
+      id: 'reports',
+      label: 'Reports',
+      items: [
+        {
+          q: 'What reports are there?',
+          a: 'A dashboard of sent, replies, open and click rates and response times; a Performance view per teammate with first response time (FRT) and average response time (ART); analytics per campaign; and signing figures with CSV export.',
+        },
+        {
+          q: 'Is there a daily summary?',
+          a: 'Yes. A daily report goes out at 8 PM IST, Monday to Friday, by email and in Slack, with the day’s sending and each person’s replies and response times; the weekend is included in Monday’s report. A weekly report goes out on Mondays.',
+        },
+      ],
     },
   ];
 }
@@ -182,7 +316,7 @@ export function LandingPage({ stats, domains }: { stats: PublicStat[]; domains: 
           <div className="mx-auto max-w-3xl">
             <SectionHeading id="faq-title" eyebrow="FAQ" title="Questions, answered." />
             <div className="mt-10">
-              <Faq items={faqItems(domains)} />
+              <Faq groups={faqGroups(domains)} />
             </div>
           </div>
         </section>
