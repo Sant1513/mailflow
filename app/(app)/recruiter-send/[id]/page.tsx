@@ -807,6 +807,30 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           </Section>
 
           <Section n={7} title="Check and send" summary={stepSummary[7]} done={stepDone[7]}>
+            <fieldset className="mb-4 space-y-1 rounded border p-3">
+              <legend className="sr-only">Send from</legend>
+              <p className="text-xs font-medium">Send from</p>
+              {laptop?.activeServer === 'laptop' ? (
+                <p className="text-xs text-muted-foreground">
+                  <span className="mr-1 rounded bg-sky-100 px-1.5 py-0.5 text-sky-900 dark:bg-sky-950 dark:text-sky-100">Already running on the laptop</span>
+                  MailFlow runs on the laptop server right now, so this send goes out from there.
+                </p>
+              ) : (
+                <>
+                  <label className="flex items-center gap-2">
+                    <input type="radio" name="runOn" value="cloud" checked={runOn === 'cloud'} onChange={() => setRunOn('cloud')} />
+                    Cloud <span className="text-xs text-muted-foreground">(default)</span>
+                  </label>
+                  <label className={`flex items-start gap-2 ${laptop?.laptopOnline ? '' : 'opacity-60'}`} title={laptop?.laptopOnline ? undefined : 'Laptop is offline'}>
+                    <input type="radio" name="runOn" value="laptop" className="mt-1" checked={runOn === 'laptop'} disabled={!laptop?.laptopOnline} onChange={() => setRunOn('laptop')} />
+                    <span>
+                      This laptop <span className="text-xs text-muted-foreground">— saves Vercel’s monthly CPU; needs the laptop on until the send finishes</span>
+                      {!laptop?.laptopOnline && <span className="block text-xs text-red-700 dark:text-red-400">{laptop ? 'Laptop is offline' : 'Checking the laptop…'}</span>}
+                    </span>
+                  </label>
+                </>
+              )}
+            </fieldset>
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={runCheck} disabled={checking || saving === 'saving'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{checking ? 'Checking…' : 'Check again'}</button>
               <button type="button" onClick={async () => { const j = await post('/test', {}, 'test'); if (j) toast.success(`Test sent to ${j.to} from ${j.from}.`); }} disabled={busy === 'test' || saving === 'saving'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'test' ? 'Sending test…' : 'Send a test to me'}</button>
@@ -828,30 +852,6 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                     <ul className="mt-1 max-h-40 overflow-auto text-xs text-muted-foreground">{check.skipped.map((s) => <li key={s.email}>{s.email} — {s.reason}</li>)}</ul>
                   </details>
                 )}
-                <fieldset className="space-y-1 border-t pt-3">
-                  <legend className="sr-only">Send from</legend>
-                  <p className="text-xs font-medium">Send from</p>
-                  {laptop?.activeServer === 'laptop' ? (
-                    <p className="text-xs text-muted-foreground">
-                      <span className="mr-1 rounded bg-sky-100 px-1.5 py-0.5 text-sky-900 dark:bg-sky-950 dark:text-sky-100">Already running on the laptop</span>
-                      MailFlow runs on the laptop server right now, so this send goes out from there.
-                    </p>
-                  ) : (
-                    <>
-                      <label className="flex items-center gap-2">
-                        <input type="radio" name="runOn" value="cloud" checked={runOn === 'cloud'} onChange={() => setRunOn('cloud')} />
-                        Cloud <span className="text-xs text-muted-foreground">(default)</span>
-                      </label>
-                      <label className={`flex items-start gap-2 ${laptop?.laptopOnline ? '' : 'opacity-60'}`} title={laptop?.laptopOnline ? undefined : 'Laptop is offline'}>
-                        <input type="radio" name="runOn" value="laptop" className="mt-1" checked={runOn === 'laptop'} disabled={!laptop?.laptopOnline} onChange={() => setRunOn('laptop')} />
-                        <span>
-                          This laptop <span className="text-xs text-muted-foreground">— saves Vercel’s monthly CPU; needs the laptop on until the send finishes</span>
-                          {!laptop?.laptopOnline && <span className="block text-xs text-red-700 dark:text-red-400">{laptop ? 'Laptop is offline' : 'Checking the laptop…'}</span>}
-                        </span>
-                      </label>
-                    </>
-                  )}
-                </fieldset>
                 <div className="flex flex-wrap items-end gap-2 border-t pt-3">
                   <button type="button" onClick={() => start(false)} disabled={busy === 'start' || check.eligible === 0 || saving === 'saving' || saving === 'error'} title={saving === 'saving' ? 'Saving your last change…' : saving === 'error' ? 'Your last change wasn’t saved' : undefined} className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy === 'start' ? 'Starting…' : 'Send now'}</button>
                   <label className="text-xs">or schedule for <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} className="ml-1 rounded border bg-background px-1 py-0.5" /></label>
