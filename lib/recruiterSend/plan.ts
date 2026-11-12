@@ -80,6 +80,8 @@ export interface PlanPageOptions {
   q?: string;
   batchPage?: number;
   batchPageSize?: number;
+  /** A page turn: reuse the plan worked out in the last minute (never for Check or Start). */
+  reuse?: boolean;
 }
 
 /** The body the check routes accept (all optional; page 1 of everyone by default). */
@@ -170,10 +172,10 @@ export function estimateMinutes(rounds: number, gapSeconds: number, order: SendO
   return Math.max(1, Math.ceil((rounds * perRound) / 60));
 }
 
-export async function planBlast(
-  blast: { id: string; workspaceId: string; mode: string; sendOrder?: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null },
-  options: PlanPageOptions = {},
-): Promise<BlastPlan> {
+type PlanBlastInput = { id: string; workspaceId: string; mode: string; sendOrder?: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null };
+
+/** The expensive part of a plan: every recruiter checked and personalised, batches and mailboxes. */
+async function planCore(blast: PlanBlastInput) {
   // A stable order: the batches the check shows are the batches start creates.
   const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { id: true, email: true, name: true, data: true } });
   const problems = await checkAddresses(recipients.map((r) => r.email), blast.workspaceId);
@@ -231,6 +233,37 @@ export async function planBlast(
   const estimatedMinutes = estimateMinutes(rounds, blast.gapSeconds, sendOrder, ordered.length);
   const batchOf = new Map<string, number>();
   groups.forEach((g, i) => g.forEach((id) => batchOf.set(id, i)));
+
+  return { recipients, eligibleIds, skipped, skippedReasons, skippedByReason, content, vars, messages, perMessage, capacity, messagesPossibleToday, groups, sendOrder, assigned, planned, plannedAccountIds, rounds, estimatedMinutes, batchOf };
+}
+
+/**
+ * Page turns in the check's tables reuse the plan for a minute instead of re-checking and
+ * re-personalising every recruiter (Vercel CPU). Check and Start always plan fresh. Keyed by the
+ * send and every setting that changes the plan; a list or setting change makes a new key.
+ */
+const CORE_TTL_MS = 60_000;
+const coreCache = new Map<string, { at: number; core: Promise<Awaited<ReturnType<typeof planCore>>> }>();
+function coreKey(blast: PlanBlastInput): string {
+  return JSON.stringify([blast.id, blast.mode, blast.sendOrder, blast.groupSize, blast.gapSeconds, blast.accountIds, blast.accountLimits, blast.subject, blast.html, blast.plainText, blast.columns, blast.emailColumn]);
+}
+function cachedCore(blast: PlanBlastInput, reuse: boolean) {
+  const key = coreKey(blast);
+  const now = Date.now();
+  for (const [k, v] of coreCache) if (now - v.at > CORE_TTL_MS) coreCache.delete(k);
+  const hit = reuse ? coreCache.get(key) : undefined;
+  if (hit) return hit.core;
+  const core = planCore(blast);
+  coreCache.set(key, { at: now, core });
+  core.catch(() => coreCache.delete(key));
+  return core;
+}
+
+export async function planBlast(
+  blast: PlanBlastInput,
+  options: PlanPageOptions = {},
+): Promise<BlastPlan> {
+  const { recipients, eligibleIds, skipped, skippedReasons, skippedByReason, content, vars, messages, perMessage, capacity, messagesPossibleToday, groups, sendOrder, assigned, planned, plannedAccountIds, rounds, estimatedMinutes, batchOf } = await cachedCore(blast, options.reuse === true);
 
   // The recruiter table: filter the whole list, then return only the requested page.
   const peopleFilter: PeopleFilter = options.peopleFilter ?? 'all';

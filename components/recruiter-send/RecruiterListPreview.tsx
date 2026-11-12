@@ -20,10 +20,35 @@ const STATUS_TONE: Record<string, string> = {
   FAILED: 'text-red-600',
   SKIPPED: 'text-muted-foreground',
 };
+type Fit = 'short' | 'wide' | 'full';
+const FIT_KEY = 'mailflow.recruiterList.fit';
+/** Cell width per "Text" choice: cut at 22rem, cut at 44rem, or wrap so every value shows in full. */
+const FIT_CELL: Record<Fit, string> = {
+  short: 'max-w-[22rem] truncate',
+  wide: 'max-w-[44rem] truncate',
+  full: 'min-w-[16rem] max-w-[40rem] whitespace-normal break-all',
+};
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function RecruiterListPreview({ blastId, open, onClose, version }: { blastId: string; open: boolean; onClose: () => void; version?: string | number }) {
   const [page, setPage] = useState(1);
+  // Long values (UTM links): cut short, wider cells, or shown in full. Remembered on this browser.
+  const [fit, setFit] = useState<Fit>(() => {
+    try {
+      const v = localStorage.getItem(FIT_KEY);
+      return v === 'wide' || v === 'full' ? v : 'short';
+    } catch {
+      return 'short';
+    }
+  });
+  const chooseFit = (f: Fit) => {
+    setFit(f);
+    try {
+      localStorage.setItem(FIT_KEY, f);
+    } catch {
+      /* private mode: just this time */
+    }
+  };
   const [query, setQuery] = useState('');
   const [q, setQ] = useState('');
   const [data, setData] = useState<PageData | null>(null);
@@ -126,6 +151,22 @@ export function RecruiterListPreview({ blastId, open, onClose, version }: { blas
             className="w-full rounded border bg-background px-2 py-1 text-sm sm:w-64"
             maxLength={200}
           />
+          <div role="radiogroup" aria-label="How much of long values to show" className="flex items-center gap-0.5 rounded border p-0.5 text-xs">
+            <span className="px-1.5 text-muted-foreground">Text</span>
+            {(['short', 'wide', 'full'] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                role="radio"
+                aria-checked={fit === f}
+                onClick={() => chooseFit(f)}
+                className={`rounded px-2 py-0.5 ${fit === f ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-elevated'}`}
+                title={f === 'short' ? 'Cut long values short' : f === 'wide' ? 'Wider cells' : 'Show every value in full (wraps)'}
+              >
+                {f === 'short' ? 'Short' : f === 'wide' ? 'Wide' : 'Full'}
+              </button>
+            ))}
+          </div>
           <button type="button" onClick={onClose} className="rounded border px-2.5 py-1 text-sm hover:bg-elevated" aria-label="Close the list">Close</button>
         </div>
         <div ref={scrollRef} className="min-h-[12rem] flex-1 overflow-auto">
@@ -152,7 +193,7 @@ export function RecruiterListPreview({ blastId, open, onClose, version }: { blas
                     <td className="whitespace-nowrap bg-primary/5 px-2 py-1 font-medium">{r.email}</td>
                     {others.map((c) => {
                       const v = cell(r, c);
-                      return <td key={c} className="max-w-[22rem] truncate px-2 py-1" title={v.length > 40 ? v : undefined}>{v || <span className="text-muted-foreground">—</span>}</td>;
+                      return <td key={c} className={`px-2 py-1 align-top ${FIT_CELL[fit]}`} title={fit !== 'full' && v.length > 40 ? v : undefined}>{v || <span className="text-muted-foreground">—</span>}</td>;
                     })}
                     {showStatus && <td className={`whitespace-nowrap px-2 py-1 text-xs ${STATUS_TONE[r.status] ?? ''}`}>{STATUS_LABEL[r.status] ?? r.status.toLowerCase()}</td>}
                   </tr>

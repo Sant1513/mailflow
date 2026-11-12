@@ -186,3 +186,23 @@ describe('POST /api/recruiter-blasts/[id]/check/people', () => {
     expect((await post(peopleRoute, {})).status).toBe(404);
   });
 });
+
+describe('plan reuse for page turns (saves Vercel CPU)', () => {
+  it('a page turn reuses the plan from the last minute; Check plans fresh', async () => {
+    const b = { ...blast, id: 'reuse-1' };
+    db.recruiterBlastRecipient.findMany.mockClear();
+    await planBlast(b); // Check: fresh
+    await planBlast(b, { peoplePage: 2, reuse: true }); // page turn: cached
+    await planBlast(b, { peoplePage: 3, reuse: true }); // page turn: cached
+    expect(db.recruiterBlastRecipient.findMany).toHaveBeenCalledTimes(1);
+    await planBlast(b); // Check again: fresh
+    expect(db.recruiterBlastRecipient.findMany).toHaveBeenCalledTimes(2);
+  });
+  it('a changed setting is a new plan', async () => {
+    const b = { ...blast, id: 'reuse-2' };
+    db.recruiterBlastRecipient.findMany.mockClear();
+    await planBlast(b, { reuse: true });
+    await planBlast({ ...b, subject: 'Changed' }, { reuse: true });
+    expect(db.recruiterBlastRecipient.findMany).toHaveBeenCalledTimes(2);
+  });
+});

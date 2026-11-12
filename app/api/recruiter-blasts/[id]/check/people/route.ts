@@ -15,6 +15,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   const blast = await loadBlast(session, params.id);
   if (!blast) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const query = planPageSchema.parse((await req.json().catch(() => null)) ?? {});
-  const plan = await planBlast(blast, query);
+  // A page turn: reuse the plan from the last minute rather than re-checking every recruiter.
+  const plan = await planBlast(blast, { ...query, reuse: true });
   return NextResponse.json(planPageView(plan));
 });
