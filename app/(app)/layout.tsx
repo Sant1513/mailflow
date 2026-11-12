@@ -29,7 +29,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <MotionProvider>
-      <div className="flex min-h-dvh flex-col lg:flex-row">
+      {/* On desktop only the page column scrolls (never the browser page behind it). */}
+      <div className="flex min-h-dvh flex-col lg:h-dvh lg:flex-row lg:overflow-hidden">
         <KeyboardShortcuts />
         <AppNav user={user} pendingApprovals={pendingApprovals} initialProduct={isProduct(lastProduct) ? lastProduct : 'mail'} />
         {/* The page column scrolls on its own (lg) so the floating sidebar and top bar stay put. */}
@@ -40,8 +41,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               <ViewAsBanner viewingAs={session.viewingAs} />
             </div>
           )}
-          {/* Pages that want a full-height layout use h-full inside this box. */}
-          <main className="min-h-0 flex-1 overflow-x-hidden">
+          {/* Pages that want a full-height layout use h-full inside this box. `relative` makes this the
+              containing block for absolutely positioned bits (sr-only labels, hidden file inputs) so
+              they stay inside the column instead of stretching the browser page and leaving a blank
+              scroll area below the content. */}
+          <main className="relative min-h-0 flex-1 overflow-x-hidden">
             <PageTransition>{children}</PageTransition>
           </main>
         </div>

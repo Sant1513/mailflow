@@ -51,6 +51,17 @@
   ],
   "redirects": [
     {
+      "source": "/login",
+      "has": [
+        {
+          "type": "host",
+          "value": "mailflow-six-sooty.vercel.app"
+        }
+      ],
+      "destination": "https://mailflowbymasai.vercel.app/login?continue=google",
+      "permanent": true
+    },
+    {
       "source": "/((?!api/).*)",
       "has": [
         {
