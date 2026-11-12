@@ -7,7 +7,8 @@ import { allowedMailboxIds, loadBlast, requireBlastAdmin } from '@/lib/recruiter
 import { planBlast } from '@/lib/recruiterSend/plan';
 import { planGroups, type BlastMode } from '@/lib/recruiterSend/core';
 import { readVideo, VIDEO_INDIVIDUAL_MAX } from '@/lib/recruiterSend/video';
-import { kickRecruiterWorker } from '@/lib/recruiterSend/worker';
+import { kickRecruiterWorker, type RunOn } from '@/lib/recruiterSend/worker';
+import { currentState, laptopOnline } from '@/lib/system/serverState';
 import { isValidEmail } from '@/lib/quickSend/prepare';
 import { variableCheck } from '@/lib/recruiterSend/personalize';
 
@@ -27,7 +28,21 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   const blast = await loadBlast(session, params.id);
   if (!blast) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (blast.status !== 'DRAFT') return NextResponse.json({ error: 'This send has already started.' }, { status: 409 });
-  const { scheduledAt } = z.object({ scheduledAt: z.string().datetime({ offset: true }).nullable().optional() }).parse(await req.json().catch(() => ({})));
+  const { scheduledAt, runOn: wanted } = z
+    .object({ scheduledAt: z.string().datetime({ offset: true }).nullable().optional(), runOn: z.enum(['cloud', 'laptop']).optional() })
+    .parse(await req.json().catch(() => ({})));
+
+  // Send from the laptop (saves Vercel CPU): only while it is online. When MailFlow already runs
+  // on the laptop, every send goes out from there anyway, so it is stored as an ordinary send.
+  let runOn: RunOn = 'cloud';
+  let alreadyOnLaptop = false;
+  if (wanted === 'laptop') {
+    const server = await currentState();
+    if (server.activeServer === 'laptop') alreadyOnLaptop = true;
+    else if (!laptopOnline(server)) {
+      return NextResponse.json({ error: 'The laptop is offline, so this send can’t run there. Switch the laptop server on (or check its internet), or send from the cloud.' }, { status: 409 });
+    } else runOn = 'laptop';
+  }
 
   const mode = blast.mode as BlastMode;
   const problems: string[] = [];
@@ -92,7 +107,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       }
       await tx.recruiterBlast.update({
         where: { id: blast.id },
-        data: { status: when ? 'SCHEDULED' : 'SENDING', scheduledAt: when, startedAt: when ? null : new Date(), note: null },
+        data: { status: when ? 'SCHEDULED' : 'SENDING', scheduledAt: when, startedAt: when ? null : new Date(), note: null, runOn, runOnChangedAt: null },
       });
     },
     { timeout: 55_000, maxWait: 10_000 },
@@ -101,8 +116,9 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   await audit(session, 'RECRUITER_SEND_START', {
     targetType: 'RecruiterBlast',
     targetId: blast.id,
-    metadata: { mode, sendOrder: plan.sendOrder, rounds: plan.rounds, recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, messages: groups.length, accounts: blast.accountIds, scheduledAt: when?.toISOString() ?? null },
+    metadata: { mode, sendOrder: plan.sendOrder, rounds: plan.rounds, recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, messages: groups.length, accounts: blast.accountIds, scheduledAt: when?.toISOString() ?? null, runOn, alreadyOnLaptop },
   });
-  if (!when) kickRecruiterWorker('start');
-  return NextResponse.json({ ok: true, status: when ? 'SCHEDULED' : 'SENDING', recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, messages: groups.length });
+  // A laptop send is picked up by the laptop's runner within about 20 seconds: no Vercel run.
+  if (!when && runOn === 'cloud') kickRecruiterWorker('start');
+  return NextResponse.json({ ok: true, status: when ? 'SCHEDULED' : 'SENDING', recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, messages: groups.length, runOn, alreadyOnLaptop });
 });

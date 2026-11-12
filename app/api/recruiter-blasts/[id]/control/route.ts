@@ -21,7 +21,9 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   } else if (action === 'resume') {
     const res = await prisma.recruiterBlast.updateMany({ where: { id: blast.id, status: 'PAUSED' }, data: { status: 'SENDING', startedAt: blast.startedAt ?? new Date(), note: null } });
     if (!res.count) return NextResponse.json({ error: 'Only a paused send can be resumed.' }, { status: 409 });
-    kickRecruiterWorker('resume');
+    // A laptop send is picked up again by the laptop's runner (or by the cloud once the laptop
+    // has been silent for 10 minutes): no Vercel run for it here.
+    if (blast.runOn !== 'laptop') kickRecruiterWorker('resume');
   } else {
     const res = await prisma.recruiterBlast.updateMany({ where: { id: blast.id, status: { in: ['SENDING', 'SCHEDULED', 'PAUSED'] } }, data: { status: 'CANCELLED', completedAt: new Date() } });
     if (!res.count) return NextResponse.json({ error: 'This send can no longer be cancelled.' }, { status: 409 });

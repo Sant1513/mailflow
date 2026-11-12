@@ -21,7 +21,10 @@ interface Blast {
   video: Video | VideoLink | null; attachmentDocumentIds: string[]; groupSize: number; gapSeconds: number; status: string;
   scheduledAt: string | null; note: string | null; startedAt: string | null; completedAt: string | null; html: string;
   columns: string[]; emailColumn: string | null; sendOrder: 'PARALLEL' | 'SEQUENTIAL';
+  /** Where the messages go out from; runOnChangedAt is set when the cloud took over from a silent laptop. */
+  runOn?: 'cloud' | 'laptop'; runOnChangedAt?: string | null;
 }
+interface LaptopStatus { laptopOnline: boolean; activeServer: 'cloud' | 'laptop' }
 interface Mailbox { id: string; emailAddress: string; ownerName: string | null; status: string; own: boolean; sentLast24h: number; dailyLimit: number }
 interface Group { id: string; seq: number; status: string; recipientCount: number; fromEmail: string | null; sentAt: string | null; openCount: number; firstOpenedAt: string | null; lastOpenedAt: string | null; error: string | null }
 interface RecipientRow { email: string; name: string | null; status: string; skipReason: string | null; sentAt: string | null; openedAt: string | null; openCount: number; repliedAt: string | null }
@@ -96,6 +99,9 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const [videoTab, setVideoTab] = useState<'attach' | 'link'>('attach');
   const [videoLink, setVideoLink] = useState({ url: '', title: 'Watch the video' });
   const [scheduleAt, setScheduleAt] = useState('');
+  // "Send from": the cloud (default) or this laptop (saves Vercel's monthly CPU).
+  const [runOn, setRunOn] = useState<'cloud' | 'laptop'>('cloud');
+  const [laptop, setLaptop] = useState<LaptopStatus | null>(null);
   const [preview, setPreview] = useState('');
   // The preview's subject and whose values fill its {{variables}} (individual copies).
   const [previewAs, setPreviewAs] = useState<{ subject: string | null; recipient: string | null }>({ subject: null, recipient: null });
@@ -144,6 +150,28 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     fetch('/api/datasets').then((r) => r.json()).then((j) => setDatasets(j.datasets ?? [])).catch(() => undefined);
     fetch('/api/documents').then((r) => r.json()).then((j) => setLibrary((j.documents ?? []).filter((d: { archived?: boolean }) => !d.archived))).catch(() => undefined);
   }, []);
+
+  // Whether the laptop can take a send (drafts only): on open, then every minute while visible.
+  const isDraft = detail?.blast.status === 'DRAFT';
+  useEffect(() => {
+    if (!isDraft) return;
+    let stopped = false;
+    const look = async () => {
+      if (stopped || document.hidden) return;
+      const res = await fetch('/api/recruiter-blasts/laptop-status', { cache: 'no-store' }).catch(() => null);
+      const j = res?.ok ? await res.json().catch(() => null) : null;
+      if (stopped || !j) return;
+      setLaptop({ laptopOnline: !!j.laptopOnline, activeServer: j.activeServer === 'laptop' ? 'laptop' : 'cloud' });
+      // The laptop went offline (or MailFlow already runs there): back to the default.
+      if (!j.laptopOnline || j.activeServer === 'laptop') setRunOn('cloud');
+    };
+    look();
+    const t = setInterval(look, 60_000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [isDraft]);
 
   // Live progress while sending: the small /progress response every 15 s (paused while the tab is
   // hidden, refreshed when it is shown); the full send is loaded again only when its status changes.
@@ -321,10 +349,11 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     if (saving === 'saving') return toast.error('Still saving your last change. Try again in a moment.');
     if (saving === 'error') return toast.error('Your last change wasn’t saved. Edit it again or reload the page before sending.');
     const when = scheduled && scheduleAt ? new Date(scheduleAt).toISOString() : null;
-    const msg = `${scheduled ? 'Schedule' : 'Send'} this to ${check.eligible.toLocaleString()} recruiter${check.eligible === 1 ? '' : 's'} in ${check.messages.toLocaleString()} email${check.messages === 1 ? '' : 's'}?`;
+    const fromLaptop = runOn === 'laptop' && laptop?.activeServer !== 'laptop';
+    const msg = `${scheduled ? 'Schedule' : 'Send'} this to ${check.eligible.toLocaleString()} recruiter${check.eligible === 1 ? '' : 's'} in ${check.messages.toLocaleString()} email${check.messages === 1 ? '' : 's'}${fromLaptop ? ' from the laptop' : ''}?${fromLaptop ? '\n\nKeep the laptop on until the send finishes (if it goes offline for 10 minutes, the cloud carries on).' : ''}`;
     if (!confirm(msg)) return;
-    const j = await post('/start', { scheduledAt: when }, 'start');
-    if (j) { toast.success(when ? 'Scheduled.' : 'Sending has started.'); load(); }
+    const j = await post('/start', { scheduledAt: when, runOn: fromLaptop ? 'laptop' : 'cloud' }, 'start');
+    if (j) { toast.success(`${when ? 'Scheduled' : 'Sending has started'}${j.runOn === 'laptop' ? ' from the laptop' : ''}.`); load(); }
   }
 
   async function removeDraft() {
@@ -413,7 +442,15 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className={`rounded px-1.5 py-0.5 ${STATUS_STYLE[b.status] ?? ''}`}>{b.status.toLowerCase()}</span>
             <span>{b.mode === 'BCC' ? 'BCC groups' : 'Individual copies'}</span>
-            {draft && <span className={saving === 'error' ? 'text-red-600' : undefined}>{saving === 'saving' ? 'Saving…' : saving === 'saved' ? 'Saved' : saving === 'error' ? 'Not saved' : ''}</span>}
+            {['SENDING', 'SCHEDULED', 'PAUSED'].includes(b.status) && (
+              <span className={b.runOn === 'laptop' ? 'rounded bg-sky-100 px-1.5 py-0.5 text-sky-900 dark:bg-sky-950 dark:text-sky-100' : undefined}>
+                {b.status === 'SENDING' ? 'Sending from' : 'Sends from'} {b.runOn === 'laptop' ? 'the laptop' : 'the cloud'}
+              </span>
+            )}
+            {!draft && b.runOn !== 'laptop' && b.runOnChangedAt && (
+              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-900 dark:bg-amber-950 dark:text-amber-100" title={`Moved ${new Date(b.runOnChangedAt).toLocaleString()}`}>Moved to the cloud — the laptop went offline</span>
+            )}
+            {draft &&<span className={saving === 'error' ? 'text-red-600' : undefined}>{saving === 'saving' ? 'Saving…' : saving === 'saved' ? 'Saved' : saving === 'error' ? 'Not saved' : ''}</span>}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -791,7 +828,31 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                     <ul className="mt-1 max-h-40 overflow-auto text-xs text-muted-foreground">{check.skipped.map((s) => <li key={s.email}>{s.email} — {s.reason}</li>)}</ul>
                   </details>
                 )}
-                                <div className="flex flex-wrap items-end gap-2 border-t pt-3">
+                <fieldset className="space-y-1 border-t pt-3">
+                  <legend className="sr-only">Send from</legend>
+                  <p className="text-xs font-medium">Send from</p>
+                  {laptop?.activeServer === 'laptop' ? (
+                    <p className="text-xs text-muted-foreground">
+                      <span className="mr-1 rounded bg-sky-100 px-1.5 py-0.5 text-sky-900 dark:bg-sky-950 dark:text-sky-100">Already running on the laptop</span>
+                      MailFlow runs on the laptop server right now, so this send goes out from there.
+                    </p>
+                  ) : (
+                    <>
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name="runOn" value="cloud" checked={runOn === 'cloud'} onChange={() => setRunOn('cloud')} />
+                        Cloud <span className="text-xs text-muted-foreground">(default)</span>
+                      </label>
+                      <label className={`flex items-start gap-2 ${laptop?.laptopOnline ? '' : 'opacity-60'}`} title={laptop?.laptopOnline ? undefined : 'Laptop is offline'}>
+                        <input type="radio" name="runOn" value="laptop" className="mt-1" checked={runOn === 'laptop'} disabled={!laptop?.laptopOnline} onChange={() => setRunOn('laptop')} />
+                        <span>
+                          This laptop <span className="text-xs text-muted-foreground">— saves Vercel’s monthly CPU; needs the laptop on until the send finishes</span>
+                          {!laptop?.laptopOnline && <span className="block text-xs text-red-700 dark:text-red-400">{laptop ? 'Laptop is offline' : 'Checking the laptop…'}</span>}
+                        </span>
+                      </label>
+                    </>
+                  )}
+                </fieldset>
+                <div className="flex flex-wrap items-end gap-2 border-t pt-3">
                   <button type="button" onClick={() => start(false)} disabled={busy === 'start' || check.eligible === 0 || saving === 'saving' || saving === 'error'} title={saving === 'saving' ? 'Saving your last change…' : saving === 'error' ? 'Your last change wasn’t saved' : undefined} className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy === 'start' ? 'Starting…' : 'Send now'}</button>
                   <label className="text-xs">or schedule for <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} className="ml-1 rounded border bg-background px-1 py-0.5" /></label>
                   <button type="button" onClick={() => start(true)} disabled={!scheduleAt || busy === 'start' || check.eligible === 0 || saving === 'saving' || saving === 'error'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">Schedule</button>

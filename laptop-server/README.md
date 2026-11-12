@@ -26,7 +26,8 @@ flowchart LR
   - pulls a full copy of the cloud database every night at 03:00 IST, and on start-up if the last copy is over a day old;
   - archives finished files (below);
   - answers file requests with a small standby file server;
-  - watches cloud Recruiter Bulk Sends (below).
+  - watches cloud Recruiter Bulk Sends (below);
+  - sends the Recruiter Bulk Sends marked "Send from the laptop" (below), straight on the cloud database.
 - **Active (MailFlow on the laptop).**
   - Runs the app on `127.0.0.1:3100` and every scheduled job.
   - Pushes a full copy to the cloud every 30 minutes, so the cloud is never more than 30 minutes behind.
@@ -85,6 +86,17 @@ Vercel's own crons are not forwarded to the laptop (`middleware.ts` skips `/api/
 ## Watchdog for cloud sends (standby)
 
 Every 2 minutes on standby, the laptop looks in the **cloud database** for a Recruiter Bulk Send that is `SENDING` but hasn't sent or claimed anything for its pause + 75 seconds. That is usually a dropped hand-over between sender runs. Only when it finds one does it call the cloud's `/api/cron/recruiter-watchdog` to restart it. Checking the database first means no Vercel call at all while nothing is stuck, which matters under Vercel Hobby's CPU limits.
+
+## Send from the laptop (Recruiter Bulk Send, standby)
+
+To save Vercel's monthly "Fluid Active CPU" (Hobby: 4 hours), a Recruiter Bulk Send can be started with **Send from: This laptop** (step 7 of the send page). This is **not** a server switch: MailFlow stays on the cloud, nothing is copied and nobody sees "switching servers". Only that send's emails go out from here.
+
+- While the laptop is on **standby**, `start.mjs` runs `recruiter-runner.ts` as a child process (`node --import tsx laptop-server/recruiter-runner.ts`, log: `logs\recruiter-runner.log`). It connects to the **cloud** database (`SUPABASE_DATABASE_URL` from `supabase.env`, never the laptop's own Postgres) and, every ~20 seconds, runs the app's own sender (`lib/recruiterSend/worker.ts`, the same claims, pauses, limits and Gmail code) for sends marked `runOn = 'laptop'` only. Secrets (`ENCRYPTION_KEY`, Google client, `SUPABASE_*` for a video) come from `app.env`.
+- Vercel's sender (cron, dispatch, watchdog, hand-overs) skips those sends. If the laptop's heartbeat is **silent for 10 minutes**, the cloud takes the send over by itself (`runOn` → `cloud`, `runOnChangedAt` set, audit entry `RECRUITER_SEND_MOVED_TO_CLOUD`); the page shows "Moved to the cloud — the laptop went offline". Messages are claimed before they go out, so none is sent twice; one the laptop left half-sent is marked "check the Sent folder" instead of being re-sent.
+- The choice is offered only while the laptop is online. When MailFlow is already **active** on the laptop, the page says "Already running on the laptop" and the app here sends everything itself (`MAILFLOW_SERVER=laptop`); the runner is stopped while active and before the copy of a switch to the laptop.
+- When a laptop send finishes it is simply COMPLETED; there is nothing to switch back.
+
+Needs nothing extra on the laptop beyond what it already has: `tsx` comes with the app's packages (`npm install --include=dev`, done by `start.mjs` when `package-lock.json` changes), and the new code is picked up the usual way (`git checkout --detach master` in `mailflow-live`, then `restart.request`). Deploy the cloud first so the database has the `runOn` column.
 
 ## File archive
 

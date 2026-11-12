@@ -12,6 +12,8 @@ import { sendViaUpload, UPLOAD_THRESHOLD_BYTES } from '@/lib/recruiterSend/gmail
 import { readRef } from '@/lib/storage/files';
 import { allowedMailboxIds } from '@/lib/recruiterSend/access';
 import { markRecruiterBounced, suppressRejectedRecruiter } from '@/lib/recruiterSend/replies';
+import { LAPTOP_SILENT_MS, readState } from '@/lib/system/serverState';
+import { audit } from '@/lib/audit/log';
 
 /**
  * Sends Recruiter Bulk Send messages (a BCC group or one individual copy each).
@@ -23,6 +25,11 @@ import { markRecruiterBounced, suppressRejectedRecruiter } from '@/lib/recruiter
  * Mailboxes must be connected, not paused by Gmail and under their daily limits (shared with
  * campaigns, lib/queue/drain.ts) and the limit set for the send. Runs ~45 s per call and hands over to a fresh call (kickRecruiterWorker) while work
  * remains; the 15-minute schedule is the backstop.
+ *
+ * Send from the laptop (RecruiterBlast.runOn = 'laptop'): Vercel's runs skip those sends; the
+ * laptop server's standby runner (laptop-server/recruiter-runner.ts) sends them with this same
+ * code on the cloud database, saving Vercel CPU. If the laptop goes silent for 10 minutes the
+ * cloud takes them over (takeOverSilentLaptopSends).
  *
  * Safety: a message is claimed (PENDING → SENDING) before it is sent, so two runs can't send
  * it twice; one left SENDING by a crash is never re-sent automatically (it may already be out),
@@ -66,7 +73,10 @@ export function kickRecruiterWorker(reason = 'kick', opts: { wait?: boolean } = 
 const lastWatchdogKick = { at: 0 };
 export async function nudgeStuckSends(reason = 'watchdog'): Promise<number> {
   if (Date.now() - lastWatchdogKick.at < 30_000) return 0;
-  const sending = await prisma.recruiterBlast.findMany({ where: { status: 'SENDING' }, select: { id: true, gapSeconds: true, startedAt: true } });
+  const all = await prisma.recruiterBlast.findMany({ where: { status: 'SENDING' }, select: { id: true, gapSeconds: true, startedAt: true, runOn: true } });
+  // Sends running on the laptop are its business, unless the laptop has gone quiet.
+  const moved = all.some((b) => b.runOn === 'laptop') && !onLaptopServer() ? await takeOverSilentLaptopSends() : [];
+  const sending = all.filter((b) => b.runOn !== 'laptop' || moved.includes(b.id) || onLaptopServer());
   let stuck = 0;
   for (const b of sending) {
     const last = await prisma.recruiterBlastGroup.findFirst({ where: { blastId: b.id, sentAt: { not: null } }, orderBy: { sentAt: 'desc' }, select: { sentAt: true } });
@@ -79,10 +89,61 @@ export async function nudgeStuckSends(reason = 'watchdog'): Promise<number> {
   return stuck;
 }
 
-async function recoverStuck() {
+/**
+ * Where a send's messages go out from: 'cloud' (Vercel, the default) or 'laptop' (the laptop
+ * server's standby runner, laptop-server/recruiter-runner.ts, which saves Vercel's monthly CPU).
+ */
+export type RunOn = 'cloud' | 'laptop';
+/** Which sends one sender run handles: the cloud's, the laptop's, or every send. */
+export type RunScope = RunOn | 'all';
+
+/**
+ * The app itself is running on the laptop (MailFlow switched to the laptop, start.mjs sets
+ * MAILFLOW_SERVER=laptop): it is the only sender then, so it sends every send.
+ */
+export function onLaptopServer(): boolean {
+  return process.env.MAILFLOW_SERVER === 'laptop';
+}
+
+function runOnWhere(scope: RunScope): Prisma.RecruiterBlastWhereInput {
+  if (scope === 'laptop') return { runOn: 'laptop' };
+  if (scope === 'cloud') return { runOn: { not: 'laptop' } };
+  return {};
+}
+
+/**
+ * Laptop sends whose laptop has gone quiet (no heartbeat for LAPTOP_SILENT_MS) move to the
+ * cloud, which carries on from where the laptop stopped: messages already claimed by the laptop
+ * are never picked up again (claims), and one it left half-sent is marked "check the Sent
+ * folder" by recoverStuck. Cheap when nothing runs on the laptop (one count). Returns the ids moved.
+ */
+export async function takeOverSilentLaptopSends(now = new Date()): Promise<string[]> {
+  const live = { runOn: 'laptop', status: { in: ['SENDING', 'SCHEDULED'] } };
+  if (!(await prisma.recruiterBlast.count({ where: live }))) return [];
+  const s = await readState();
+  const silentFor = s.lastLaptopSeenAt ? now.getTime() - s.lastLaptopSeenAt.getTime() : Infinity;
+  if (silentFor <= LAPTOP_SILENT_MS) return [];
+  const rows = await prisma.recruiterBlast.findMany({ where: live, select: { id: true, organizationId: true, name: true } });
+  const moved: string[] = [];
+  for (const b of rows) {
+    // Conditional, so two cloud runs can't both move (and log) the same send.
+    const res = await prisma.recruiterBlast.updateMany({ where: { id: b.id, runOn: 'laptop' }, data: { runOn: 'cloud', runOnChangedAt: now } });
+    if (!res.count) continue;
+    moved.push(b.id);
+    console.log(`[recruiter-send] ${b.id}: the laptop went offline (last seen ${s.lastLaptopSeenAt?.toISOString() ?? 'never'}); the cloud carried on`);
+    await audit({ organizationId: b.organizationId }, 'RECRUITER_SEND_MOVED_TO_CLOUD', {
+      targetType: 'RecruiterBlast',
+      targetId: b.id,
+      metadata: { note: 'Laptop went offline; the cloud carried on.', name: b.name, lastLaptopSeenAt: s.lastLaptopSeenAt?.toISOString() ?? null },
+    }).catch((err) => console.error('[recruiter-send] audit of the move failed', err));
+  }
+  return moved;
+}
+
+async function recoverStuck(scope: RunScope) {
   // A claim stamps sentAt with the claim time, so only claims older than STUCK_MS count as stuck.
   const stuck = await prisma.recruiterBlastGroup.findMany({
-    where: { status: 'SENDING', createdAt: { lt: new Date(Date.now() - STUCK_MS) }, OR: [{ sentAt: null }, { sentAt: { lt: new Date(Date.now() - STUCK_MS) } }] },
+    where: { status: 'SENDING', ...(scope === 'all' ? {} : { blast: runOnWhere(scope) }), createdAt: { lt: new Date(Date.now() - STUCK_MS) }, OR: [{ sentAt: null }, { sentAt: { lt: new Date(Date.now() - STUCK_MS) } }] },
     select: { id: true },
   });
   for (const g of stuck) {
@@ -187,10 +248,12 @@ async function liveRecipients(blast: BlastRow, groupId: string): Promise<Person[
  * its pause). sentAt = claim time keeps recoverStuck off fresh claims; the old error is cleared
  * so it can't hold the mailbox (backoffUntil).
  */
-async function claim(blast: BlastRow, groupId: string, account: EmailProviderAccount, perMailbox: boolean): Promise<boolean> {
+async function claim(blast: BlastRow, groupId: string, account: EmailProviderAccount, perMailbox: boolean, scope: RunScope): Promise<boolean> {
   const busy = perMailbox ? { none: { status: 'SENDING', accountId: account.id } } : { none: { status: 'SENDING' } };
+  // Only while the send still runs where this run sends from: once the cloud has taken over a
+  // laptop send (or the other way round), the other side can't claim another message of it.
   const claimed = await prisma.recruiterBlastGroup.updateMany({
-    where: { id: groupId, status: 'PENDING', blast: { status: 'SENDING', groups: busy } },
+    where: { id: groupId, status: 'PENDING', blast: { status: 'SENDING', ...runOnWhere(scope), groups: busy } },
     data: { status: 'SENDING', sentAt: new Date(), accountId: account.id, fromEmail: account.emailAddress, attempts: { increment: 1 }, errorCode: null, error: null },
   });
   return claimed.count > 0;
@@ -342,7 +405,16 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
   return { ready, nextGap, waiting: null };
 }
 
-export async function runRecruiterWorker(opts: { budgetMs?: number; send?: RecruiterSender; staggerMs?: () => number; sleep?: (ms: number) => Promise<unknown> } = {}): Promise<{ sent: number; failed: number; waiting: string | null }> {
+/**
+ * One sender run. `runOn` picks the sends it handles: 'cloud' (the default on Vercel) skips
+ * sends running on the laptop, after moving any whose laptop has gone quiet to the cloud;
+ * 'laptop' is the laptop's standby runner (only those, never hands over to Vercel); 'all' is
+ * the app running on the laptop as the active server. `stop` ends the run early (between
+ * messages; anything already claimed is still sent and recorded).
+ */
+export async function runRecruiterWorker(opts: { budgetMs?: number; send?: RecruiterSender; staggerMs?: () => number; sleep?: (ms: number) => Promise<unknown>; runOn?: RunScope; stop?: () => boolean } = {}): Promise<{ sent: number; failed: number; waiting: string | null }> {
+  const scope: RunScope = opts.runOn ?? (onLaptopServer() ? 'all' : 'cloud');
+  const stopped = () => !!opts.stop?.();
   const send = opts.send ?? gmailSender;
   const pause = opts.sleep ?? sleep; // tests pass their own clock
   // Messages of one round leave a little apart (0.7–1.5 s each), not in the same instant.
@@ -367,13 +439,14 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
     waitingIds.add(blast.id);
     if (blast.note !== note) await prisma.recruiterBlast.update({ where: { id: blast.id }, data: { note } });
   };
-  await recoverStuck();
+  if (scope === 'cloud') await takeOverSilentLaptopSends();
+  await recoverStuck(scope);
 
   // Scheduled sends whose time has come.
-  await prisma.recruiterBlast.updateMany({ where: { status: 'SCHEDULED', scheduledAt: { lte: new Date() } }, data: { status: 'SENDING', startedAt: new Date() } });
+  await prisma.recruiterBlast.updateMany({ where: { status: 'SCHEDULED', scheduledAt: { lte: new Date() }, ...runOnWhere(scope) }, data: { status: 'SENDING', startedAt: new Date() } });
 
-  while (timeLeft() > 0) {
-    const blasts = await prisma.recruiterBlast.findMany({ where: { status: 'SENDING' }, orderBy: { startedAt: 'asc' }, take: 20 });
+  while (timeLeft() > 0 && !stopped()) {
+    const blasts = await prisma.recruiterBlast.findMany({ where: { status: 'SENDING', ...runOnWhere(scope) }, orderBy: { startedAt: 'asc' }, take: 20 });
     if (!blasts.length) break;
     let progressed = false;
     let nextGap = Infinity; // shortest pause still to run, when everything is between messages
@@ -381,7 +454,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
     const round: { blast: BlastRow; group: GroupRow; account: EmailProviderAccount; recipients: Person[] }[] = [];
 
     for (const blast of blasts) {
-      if (timeLeft() <= 0) break;
+      if (timeLeft() <= 0 || stopped()) break;
       if (await finishIfDone(blast.id)) continue;
 
       if (blast.sendOrder !== 'SEQUENTIAL') {
@@ -404,7 +477,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
             break;
           }
           const account = await prisma.emailProviderAccount.findUnique({ where: { id: accountId } });
-          if (!account || !(await claim(blast, group.id, account, true))) continue;
+          if (!account || !(await claim(blast, group.id, account, true, scope))) continue;
           progressed = true;
           round.push({ blast, group, account, recipients });
         }
@@ -421,6 +494,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
           continue;
         }
         await pause(wait);
+        if (stopped()) break;
         // Paused or cancelled while we waited?
         const current = await prisma.recruiterBlast.findUnique({ where: { id: blast.id }, select: { status: true } });
         if (current?.status !== 'SENDING') continue;
@@ -443,7 +517,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
         handOver = true; // not enough time left to send safely: let the next run do it
         break;
       }
-      if (!(await claim(blast, group.id, account, false))) continue;
+      if (!(await claim(blast, group.id, account, false, scope))) continue;
       progressed = true;
       count(await deliver(blast, group, recipients, account, send));
     }
@@ -466,7 +540,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
       // Everything is between messages: wait here rather than hand over to a new run that
       // would only find the same pause, but keep enough time to send and hand over.
       const usable = timeLeft() - SEND_RESERVE_MS;
-      if (Number.isFinite(nextGap) && usable > 1_000) {
+      if (Number.isFinite(nextGap) && usable > 1_000 && !stopped()) {
         await pause(Math.min(nextGap, usable));
         continue;
       }
@@ -475,7 +549,9 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
   }
 
   // Hand over while any send can still move; sends waiting for a mailbox resume on the schedule.
-  const more = await prisma.recruiterBlast.count({ where: { status: 'SENDING', id: { notIn: [...waitingIds] } } });
+  // The laptop's runner never hands over to Vercel: it simply runs again (that is the point).
+  if (scope === 'laptop' || stopped()) return { sent, failed, waiting };
+  const more = await prisma.recruiterBlast.count({ where: { status: 'SENDING', id: { notIn: [...waitingIds] }, ...runOnWhere(scope) } });
   if (more) await kickRecruiterWorker('continue', { wait: true });
   return { sent, failed, waiting };
 }

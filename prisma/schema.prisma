@@ -1528,6 +1528,12 @@ model RecruiterBlast {
   scheduledAt     DateTime?
   /// Why sending is waiting, shown on the page (e.g. every mailbox is at its daily limit).
   note            String?
+  /// Where the messages go out from: "cloud" (Vercel) | "laptop" (the laptop server's standby
+  /// runner, laptop-server/recruiter-runner.ts, to save Vercel CPU). A laptop send whose laptop
+  /// goes silent for 10 minutes moves to the cloud (lib/recruiterSend/worker.ts).
+  runOn           String    @default("cloud")
+  /// When runOn last changed after the start (the cloud took over from a silent laptop).
+  runOnChangedAt  DateTime?
   copiedFromId    String?
   startedAt       DateTime?
   completedAt     DateTime?

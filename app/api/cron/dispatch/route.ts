@@ -3,7 +3,7 @@ import { BatchStatus, EmailJobStatus } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { cronAuthorised } from '@/lib/cron/auth';
 import { kickSendWorker } from '@/lib/queue/sendWorker';
-import { kickRecruiterWorker } from '@/lib/recruiterSend/worker';
+import { kickRecruiterWorker, takeOverSilentLaptopSends } from '@/lib/recruiterSend/worker';
 import { dueReportDay } from '@/lib/digest/dailyActivity';
 import { dispatchDailyReport } from '@/lib/digest/dispatch';
 import { controlDb } from '@/lib/system/serverState';
@@ -23,9 +23,12 @@ export async function GET(req: Request) {
   // "The timer is alive" for the laptop's watch (start.mjs warns when this is hours old).
   // Raw so SystemState.updatedAt, which marks real switch changes, is left alone.
   await controlDb().$executeRaw`UPDATE "SystemState" SET "lastDispatchAt" = now() WHERE "id" = 'main'`.catch((err: unknown) => console.error('[dispatch] lastDispatchAt', err));
+  // Sends running on the laptop are left to it, unless it has gone quiet: then they move to
+  // the cloud here and count below.
+  await takeOverSilentLaptopSends(now).catch((err: unknown) => console.error('[dispatch] laptop take-over', err));
   const [campaignEmails, recruiterSends] = await Promise.all([
     prisma.emailJob.count({ where: { status: EmailJobStatus.QUEUED, batch: { status: { in: [BatchStatus.PREPARING, BatchStatus.QUEUED, BatchStatus.RUNNING] } } } }),
-    prisma.recruiterBlast.count({ where: { OR: [{ status: 'SENDING' }, { status: 'SCHEDULED', scheduledAt: { lte: now } }] } }),
+    prisma.recruiterBlast.count({ where: { runOn: { not: 'laptop' }, OR: [{ status: 'SENDING' }, { status: 'SCHEDULED', scheduledAt: { lte: now } }] } }),
   ]);
   if (campaignEmails > 0) kickSendWorker('dispatch');
   if (recruiterSends > 0) await kickRecruiterWorker('dispatch', { wait: true });

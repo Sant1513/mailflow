@@ -9,7 +9,9 @@
  *
  *   Standby (MailFlow on the cloud) — only the database runs here. It pulls a full copy of the
  *     cloud database every night (03:00 IST) and on start-up if the last copy is over a day
- *     old, so the laptop always holds a recent backup. No app, no jobs: nothing is written.
+ *     old, so the laptop always holds a recent backup. No app, no jobs. The one exception is
+ *     "Send from the laptop" on a Recruiter Bulk Send: recruiter-runner.ts sends those sends'
+ *     emails straight on the cloud database (saves Vercel CPU; no switch, no copy).
  *   Active (MailFlow on the laptop) — runs the app on 127.0.0.1:3100 (published through
  *     Tailscale Funnel; Vercel forwards the public address to it, middleware.ts) and every
  *     scheduled job. Pushes a full copy to the cloud every 30 minutes, so the cloud is at most
@@ -109,6 +111,9 @@ const APP_ENV = {
   INTERNAL_APP_URL: APP_LOCAL,
   NODE_ENV: 'production',
   NEXT_TELEMETRY_DISABLED: '1',
+  // The app knows it is the laptop's copy: as the active server it sends every Recruiter Bulk
+  // Send, including those marked "Send from the laptop" (lib/recruiterSend/worker.ts).
+  MAILFLOW_SERVER: 'laptop',
 };
 delete APP_ENV.REDIS_URL; // no Redis here: the database-backed send worker is used
 delete APP_ENV.LAPTOP_UPSTREAM; // this IS the upstream
@@ -242,6 +247,68 @@ async function stopApp() {
   freeAppPort();
 }
 
+// ---------- laptop recruiter sender (standby) ----------
+// "Send from the laptop" on a Recruiter Bulk Send (RecruiterBlast.runOn = 'laptop'): while this
+// laptop is on STANDBY, recruiter-runner.ts sends those sends' emails straight on the CLOUD
+// database with the app's own sender, so they cost no Vercel CPU. Not a server switch: nothing
+// is copied and nobody sees "switching servers". While active, the app sends everything itself.
+// Its own log: logs\recruiter-runner.log.
+const TSX_LOADER = path.join(APP_DIR, 'node_modules', 'tsx');
+// Prisma (the app's code) talks to the cloud through the transaction pooler, like CONTROL_DATABASE_URL.
+const CLOUD_PRISMA_URL = SUPABASE.SUPABASE_DATABASE_URL || CLOUD_URL;
+let runner = null;
+let wantRunner = false;
+let runnerMissingLogged = false;
+
+function runnerEnv() {
+  const env = { ...APP_ENV, DATABASE_URL: CLOUD_PRISMA_URL, DIRECT_URL: CLOUD_URL || CLOUD_PRISMA_URL };
+  // Never the laptop's own database, never a hand-over to the local app, and not the active
+  // server's "send everything" mode: the runner sends laptop sends only.
+  delete env.CONTROL_DATABASE_URL;
+  delete env.INTERNAL_APP_URL;
+  delete env.MAILFLOW_SERVER;
+  // A video attached to a send is read from Supabase Storage.
+  for (const k of ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY']) if (!env[k] && SUPABASE[k]) env[k] = SUPABASE[k];
+  return env;
+}
+
+function startRecruiterRunner() {
+  if (!CLOUD_PRISMA_URL || stopping) return;
+  wantRunner = true;
+  if (runner) return;
+  if (!fs.existsSync(TSX_LOADER)) {
+    if (!runnerMissingLogged) log(`Laptop recruiter sender not started: ${TSX_LOADER} is missing (run "npm install --include=dev" in ${APP_DIR}).`);
+    runnerMissingLogged = true;
+    return;
+  }
+  log('Starting the laptop recruiter sender (Recruiter Bulk Sends marked "Send from the laptop").');
+  const out = fs.openSync(path.join(LOG_DIR, 'recruiter-runner.log'), 'a');
+  const child = spawn(node, ['--import', 'tsx', path.join('laptop-server', 'recruiter-runner.ts')], { cwd: APP_DIR, env: runnerEnv(), stdio: ['pipe', out, out], windowsHide: true });
+  runner = child;
+  child.stdin.on('error', () => {});
+  child.on('exit', (code) => {
+    if (runner === child) runner = null;
+    if (stopping || !wantRunner) return;
+    log(`Laptop recruiter sender stopped (exit ${code}); restarting in 30 s.`);
+    setTimeout(() => { if (wantRunner && role === 'standby' && !handingOver) startRecruiterRunner(); }, 30_000);
+  });
+}
+
+/** Asks the runner to finish the message it is on and exit; forced after maxMs. */
+async function stopRecruiterRunner(maxMs = 90_000) {
+  wantRunner = false;
+  const child = runner;
+  if (!child) return;
+  log('Stopping the laptop recruiter sender…');
+  try { child.stdin.write('stop\n'); } catch {}
+  for (let t = 0; t < maxMs && runner === child; t += 500) await sleep(500);
+  if (runner === child) {
+    log('The laptop recruiter sender did not stop in time; ending it.');
+    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    runner = null;
+  }
+}
+
 async function waitForApp() {
   for (let i = 0; i < 120; i++) {
     const ok = await fetch(`${APP_LOCAL}/api/ping`).then((r) => r.ok).catch(() => false);
@@ -326,7 +393,7 @@ async function stuckCloudSends() {
     SELECT count(*)::int AS n FROM (
       SELECT b.id
       FROM "RecruiterBlast" b LEFT JOIN "RecruiterBlastGroup" g ON g."blastId" = b.id AND g."sentAt" IS NOT NULL
-      WHERE b.status = 'SENDING'
+      WHERE b.status = 'SENDING' AND b."runOn" <> 'laptop'
       GROUP BY b.id, b."gapSeconds", b."startedAt"
       HAVING EXTRACT(EPOCH FROM ((now() AT TIME ZONE 'UTC') - COALESCE(MAX(g."sentAt"), b."startedAt", 'epoch'::timestamp))) > b."gapSeconds" + 75
     ) s`);
@@ -649,6 +716,7 @@ async function becomeActive() {
   if (role === 'active') return;
   role = 'active';
   log('Role: ACTIVE — MailFlow runs on this laptop.');
+  await stopRecruiterRunner(); // the app sends every recruiter send from now on
   await stopStandbyServer();
   startApp();
   if (await waitForApp()) tickJobs();
@@ -672,6 +740,8 @@ async function handoverToLaptop(s) {
     const wait = new Date(s.switchStartedAt).getTime() + GRACE_MS - Date.now();
     if (wait > 0) await sleep(wait);
     if ((await heartbeat()).switchTo !== 'laptop') return; // cancelled meanwhile
+    // Nothing may write to the cloud during the copy (the app here takes over laptop sends after).
+    await stopRecruiterRunner();
     log('Switching to the laptop: copying the cloud database here…');
     await backupBeforePull();
     const r = await copyDatabase(CLOUD_URL, LOCAL_URL);
@@ -862,7 +932,10 @@ async function controlTick() {
   if (s.switchTo === 'cloud' && s.activeServer === 'laptop') return handoverToCloud(s);
   if (s.switchTo) return; // the other side's move; wait
   if (s.activeServer === 'laptop') await becomeActive();
-  else await becomeStandby();
+  else {
+    await becomeStandby();
+    startRecruiterRunner(); // (again) after a cancelled or failed switch; no-op while running
+  }
 }
 
 // ---------- restart on request ----------
@@ -876,6 +949,8 @@ async function shutdown(signal) {
   stopping = true;
   log(`Stopping (${signal})…`);
   try { app?.kill(); } catch {}
+  // The recruiter sender finishes the message it is on and exits by itself.
+  try { runner?.stdin.write('stop\n'); } catch {}
   await sleep(1500);
   try { await pgServer?.stop(); } catch (e) { log('Database stop:', String(e)); }
   try { fs.rmSync(LOCK_FILE, { force: true }); } catch {}

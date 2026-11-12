@@ -37,7 +37,7 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
   for (const g of groups) if (g.status === 'SENT' && g.fromEmail) sentByMailbox[g.fromEmail] = (sentByMailbox[g.fromEmail] ?? 0) + 1;
 
   return NextResponse.json({
-    blast: { id: blast.id, status: blast.status, scheduledAt: blast.scheduledAt, startedAt: blast.startedAt, completedAt: blast.completedAt, updatedAt: blast.updatedAt },
+    blast: { id: blast.id, status: blast.status, scheduledAt: blast.scheduledAt, startedAt: blast.startedAt, completedAt: blast.completedAt, updatedAt: blast.updatedAt, runOn: blast.runOn, runOnChangedAt: blast.runOnChangedAt },
     counts: { total: Object.values(counts).reduce((n: number, v) => n + (v as number), 0), ...counts, REPLIED: replied },
     stats: {
       messagesSent: groupTotals.find((g) => g.status === 'SENT')?._count._all ?? 0,
