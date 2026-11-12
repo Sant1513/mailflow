@@ -29,7 +29,7 @@ export interface NoticeResult {
 export async function processNotice(
   account: { id: string; emailAddress: string; workspaceId: string; organizationId: string },
   raw: GmailMessage,
-  options: { apply: boolean },
+  options: { apply: boolean; includeOutside?: boolean; ownDomains?: string[] },
 ): Promise<NoticeResult> {
   const message = parseGmailMessage(raw);
   const base = { gmailMessageId: message.gmailMessageId, subject: message.subject, from: message.from?.email ?? null, receivedAt: message.receivedAt };
@@ -44,7 +44,24 @@ export async function processNotice(
     select: { workspaceId: true, recipientEmail: true },
   });
   const ctx = { account, report, gmailMessageId: message.gmailMessageId, gmailThreadId: message.gmailThreadId, receivedAt: message.receivedAt, conversation };
-  const actions = await planDeliveryReport(ctx);
+  const planned = await planDeliveryReport(ctx);
+  const actions = options.includeOutside ? planned.map((a) => outsideMailFlow(a, account, options.ownDomains ?? [])) : planned;
   if (options.apply) for (const a of actions) await applyAction(a, ctx);
   return { ...base, actions };
+}
+
+/** Failures that mean the address is dead or refuses us, whoever sent the email. */
+const OUTSIDE_SUPPRESS = new Set(['USER_UNKNOWN', 'DOMAIN_NOT_FOUND', 'MAILBOX_DISABLED', 'POLICY_BLOCK', 'SPAM_BLOCK', 'OTHER_HARD', 'LEFT_COMPANY', 'COMPLAINT']);
+
+/**
+ * --include-outside: a hard bounce on an email this mailbox sent outside MailFlow (plain Gmail,
+ * another mail-merge tool) still tells us the address is dead or blocks us, so it is suppressed
+ * in the mailbox owner's workspace (and copied org-wide like any hard bounce). Never for delays,
+ * full mailboxes or too-large messages, and never for our own domains.
+ */
+export function outsideMailFlow(a: NdrAction, account: { emailAddress: string; workspaceId: string }, ownDomains: string[]): NdrAction {
+  if (a.decision !== 'NO_MATCH' || !a.email || !OUTSIDE_SUPPRESS.has(a.category)) return a;
+  const domain = a.email.split('@')[1]?.toLowerCase() ?? '';
+  if (!domain || ownDomains.includes(domain) || a.email.toLowerCase() === account.emailAddress.toLowerCase()) return a;
+  return { ...a, decision: 'SUPPRESS', workspaceId: account.workspaceId, send: null, sourceLabel: `Bounce notice on an email sent outside MailFlow from ${account.emailAddress}` };
 }

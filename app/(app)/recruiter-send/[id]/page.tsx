@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
 import { Avatar } from '@/components/ui/Avatar';
-import { LivePreview, Pager, SendSummary, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
+import { LivePreview, Pager, SendSummary, WhoReceives, type MailboxShare, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
 import { VariablePicker, variableProblems } from '@/components/recruiter-send/Variables';
 import { RecipientPanel } from '@/components/recruiter-send/RecipientPanel';
 import { RecruiterListPreview } from '@/components/recruiter-send/RecruiterListPreview';
@@ -29,7 +29,11 @@ interface Detail { blast: Blast; counts: Record<string, number>; stats: { messag
 interface Check {
   total: number; eligible: number; skipped: { email: string; reason: string }[]; skippedByReason: Record<string, number>; messages: number; perMessage: number;
   capacity: { accountId: string; emailAddress: string; messagesLeft: number; peopleLeft: number }[]; messagesPossibleToday: number; estimatedMinutes: number; preview: string; previewSubject?: string; previewRecipient?: string | null;
-  batches: PlannedBatch[]; people: PlannedPerson[]; rounds?: number; sendOrder?: 'PARALLEL' | 'SEQUENTIAL';
+  rounds?: number; sendOrder?: 'PARALLEL' | 'SEQUENTIAL';
+  /** One page of each table (more pages come from …/check/people); counts and per-mailbox totals cover everyone. */
+  batches: PlannedBatch[]; people: PlannedPerson[]; peopleTotal: number; peoplePage: number; peoplePages: number; peoplePageSize?: number;
+  batchesTotal: number; batchPage: number; batchPages: number; batchFirst?: Record<string, string>;
+  batchesLater: number; byMailbox: MailboxShare[];
 }
 
 const FIELD = 'w-full rounded border bg-background px-2 py-1.5 text-sm';
@@ -750,8 +754,8 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
               <div className={`space-y-3 ${checking ? 'opacity-60 transition-opacity' : ''}`}>
                 <SendSummary items={summaryItems(form, check, detail, library, splitEmails(ccText ?? '').valid)} warnings={summaryWarnings(form, check)} />
                 <WhoReceives
-                  people={check.people}
-                  batches={check.batches}
+                  plan={check}
+                  byMailbox={check.byMailbox ?? []}
                   total={check.total}
                   html={preview}
                   subject={form.subject}
@@ -837,7 +841,7 @@ function summaryWarnings(form: Blast, check: Check): string[] {
   if (check.skippedByReason.MISSING_VALUE) w.push(`${check.skippedByReason.MISSING_VALUE} recruiter(s) have an empty value for a {{variable}} and will be skipped; fill the list in, or give it a fallback like {{Name | there}}.`);
   if (form.mode === 'BCC' && !form.toAddress) w.push('BCC sends need a visible “To” address.');
   if (check.messagesPossibleToday < check.messages) w.push(`The chosen accounts can send about ${check.messagesPossibleToday} of these ${check.messages} emails today; the rest go out as their daily limits free up.`);
-  if (check.batches.some((b) => !b.mailbox)) w.push('Some batches have no account with room today (see “later” below): raise a limit or tick another account to send them today.');
+  if (check.batchesLater > 0) w.push('Some batches have no account with room today (see “later” below): raise a limit or tick another account to send them today.');
   return w;
 }
 

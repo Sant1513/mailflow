@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { checkAddresses } from '@/lib/email/addressCheck';
 import { dailyLimit, DAILY_UNIQUE_RECIPIENT_LIMIT, usageLast24h } from '@/lib/queue/drain';
@@ -24,22 +25,87 @@ export interface BlastPlan {
   /** Messages the mailboxes can carry today (by the stricter of messages / people left). */
   messagesPossibleToday: number;
   estimatedMinutes: number;
-  /** Batch by batch: how many recruiters and the mailbox it is planned to go from (first 500). */
-  batches: { seq: number; size: number; mailbox: string | null; round: number | null }[];
+  /** Batch by batch: how many recruiters and the mailbox it is planned to go from (one page: see batchPage). */
+  batches: PlannedBatchRow[];
+  /** Every batch (one Gmail message each); batches holds page batchPage of batchPages. */
+  batchesTotal: number;
+  batchPage: number;
+  batchPages: number;
+  /** The first recruiter of each batch on the returned batch page (seq → email). */
+  batchFirst: Record<number, string>;
+  /** Batches with no mailbox room today (they go out later). */
+  batchesLater: number;
+  /** Per mailbox, over every batch: how many emails and recruiters (mailbox null = later). */
+  byMailbox: { mailbox: string | null; emails: number; recruiters: number }[];
   /** PARALLEL: rounds of one message from every mailbox; SEQUENTIAL: one message at a time. */
   sendOrder: SendOrder;
   /** How many rounds (PARALLEL) or messages (SEQUENTIAL) the planned batches take. */
   rounds: number;
   /** Mailbox id each batch is planned to go from (in batch order), for start. */
   plannedAccountIds: (string | null)[];
-  /** Everyone with what will happen to them (first 2,000): their batch and mailbox, or why they're skipped. */
-  people: { email: string; name: string | null; batch: number | null; round: number | null; mailbox: string | null; skipped: string | null }[];
+  /**
+   * One page of recruiters with what will happen to them: their batch and mailbox, or why
+   * they're skipped. Filtered by peopleFilter / batch / q; peopleTotal counts the filtered list.
+   */
+  people: PlannedPersonRow[];
+  peopleTotal: number;
+  peoplePage: number;
+  peoplePages: number;
+  peoplePageSize: number;
+  peopleFilter: PeopleFilter;
+  batch: number | null;
+  q: string;
   /** {{Column}} use: which variables, which match no column, and one recruiter's values (the preview uses them). */
   personalization: { columns: string[]; emailColumn: string | null; used: string[]; unknown: string[]; bccConflict: boolean; sample: { email: string; values: Record<string, string> } | null };
 }
 
 export type SendOrder = 'PARALLEL' | 'SEQUENTIAL';
 export const SEND_ORDERS: SendOrder[] = ['PARALLEL', 'SEQUENTIAL'];
+
+export type PeopleFilter = 'all' | 'skipped' | 'sending';
+export interface PlannedPersonRow { email: string; name: string | null; batch: number | null; batchSize: number | null; round: number | null; mailbox: string | null; skipped: string | null }
+export interface PlannedBatchRow { seq: number; size: number; mailbox: string | null; round: number | null }
+
+export const PEOPLE_PAGE_SIZE = 50;
+export const BATCH_PAGE_SIZE = 50;
+
+/** Which page of the check's tables to return (the plan itself is always worked out in full). */
+export interface PlanPageOptions {
+  peoplePage?: number;
+  peoplePageSize?: number;
+  peopleFilter?: PeopleFilter;
+  /** Only the recruiters of this batch (seq, from 1). */
+  batch?: number | null;
+  /** Search over email and name (case-insensitive). */
+  q?: string;
+  batchPage?: number;
+  batchPageSize?: number;
+}
+
+/** The body the check routes accept (all optional; page 1 of everyone by default). */
+export const planPageSchema = z.object({
+  peoplePage: z.number().int().min(1).max(1_000_000).optional(),
+  peopleFilter: z.enum(['all', 'skipped', 'sending']).optional(),
+  batch: z.number().int().min(1).max(1_000_000).nullable().optional(),
+  q: z.string().max(200).optional(),
+  batchPage: z.number().int().min(1).max(1_000_000).optional(),
+});
+
+/** A page number kept within 1..pages (pages is at least 1). */
+export function clampPage(page: number | undefined, total: number, size: number): { page: number; pages: number } {
+  const pages = Math.max(1, Math.ceil(total / size));
+  const p = Number.isFinite(page) ? Math.floor(page!) : 1;
+  return { page: Math.min(pages, Math.max(1, p)), pages };
+}
+
+/** Only the paged table fields of a plan (what the table fetches when it turns a page). */
+export function planPageView(plan: BlastPlan) {
+  return {
+    people: plan.people, peopleTotal: plan.peopleTotal, peoplePage: plan.peoplePage, peoplePages: plan.peoplePages, peoplePageSize: plan.peoplePageSize,
+    peopleFilter: plan.peopleFilter, batch: plan.batch, q: plan.q, total: plan.total,
+    batches: plan.batches, batchesTotal: plan.batchesTotal, batchPage: plan.batchPage, batchPages: plan.batchPages, batchFirst: plan.batchFirst,
+  };
+}
 
 interface MailboxRoom { messagesLeft: number; peopleLeft: number; sendLimit: number | null }
 
@@ -104,7 +170,10 @@ export function estimateMinutes(rounds: number, gapSeconds: number, order: SendO
   return Math.max(1, Math.ceil((rounds * perRound) / 60));
 }
 
-export async function planBlast(blast: { id: string; workspaceId: string; mode: string; sendOrder?: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null }): Promise<BlastPlan> {
+export async function planBlast(
+  blast: { id: string; workspaceId: string; mode: string; sendOrder?: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null },
+  options: PlanPageOptions = {},
+): Promise<BlastPlan> {
   // A stable order: the batches the check shows are the batches start creates.
   const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { id: true, email: true, name: true, data: true } });
   const problems = await checkAddresses(recipients.map((r) => r.email), blast.workspaceId);
@@ -162,11 +231,52 @@ export async function planBlast(blast: { id: string; workspaceId: string; mode: 
   const estimatedMinutes = estimateMinutes(rounds, blast.gapSeconds, sendOrder, ordered.length);
   const batchOf = new Map<string, number>();
   groups.forEach((g, i) => g.forEach((id) => batchOf.set(id, i)));
-  const people = recipients.slice(0, 2000).map((r) => {
-    const b = batchOf.get(r.id);
-    return { email: r.email, name: r.name, batch: b === undefined ? null : b + 1, round: b === undefined ? null : assigned[b]?.round ?? null, mailbox: b === undefined ? null : planned[b] ?? null, skipped: skippedReasons.get(r.id) ?? null };
+
+  // The recruiter table: filter the whole list, then return only the requested page.
+  const peopleFilter: PeopleFilter = options.peopleFilter ?? 'all';
+  const batchFilter = options.batch ?? null;
+  const q = (options.q ?? '').trim();
+  const needle = q.toLowerCase();
+  const peoplePageSize = Math.max(1, Math.floor(options.peoplePageSize ?? PEOPLE_PAGE_SIZE));
+  const matching: number[] = [];
+  recipients.forEach((r, i) => {
+    const isSkipped = skippedReasons.has(r.id);
+    if (peopleFilter === 'skipped' && !isSkipped) return;
+    if (peopleFilter === 'sending' && isSkipped) return;
+    if (batchFilter != null && (batchOf.get(r.id) ?? -1) + 1 !== batchFilter) return;
+    if (needle && !r.email.toLowerCase().includes(needle) && !(r.name ?? '').toLowerCase().includes(needle)) return;
+    matching.push(i);
   });
-  const batches = groups.slice(0, 500).map((g, i) => ({ seq: i + 1, size: g.length, mailbox: planned[i] ?? null, round: assigned[i]?.round ?? null }));
+  const { page: peoplePage, pages: peoplePages } = clampPage(options.peoplePage, matching.length, peoplePageSize);
+  const people: PlannedPersonRow[] = matching.slice((peoplePage - 1) * peoplePageSize, peoplePage * peoplePageSize).map((i) => {
+    const r = recipients[i]!;
+    const b = batchOf.get(r.id);
+    return { email: r.email, name: r.name, batch: b === undefined ? null : b + 1, batchSize: b === undefined ? null : groups[b]!.length, round: b === undefined ? null : assigned[b]?.round ?? null, mailbox: b === undefined ? null : planned[b] ?? null, skipped: skippedReasons.get(r.id) ?? null };
+  });
+
+  // The batch table: one page, with each batch's first recruiter.
+  const batchPageSize = Math.max(1, Math.floor(options.batchPageSize ?? BATCH_PAGE_SIZE));
+  const { page: batchPage, pages: batchPages } = clampPage(options.batchPage, groups.length, batchPageSize);
+  const batchStart = (batchPage - 1) * batchPageSize;
+  const pageGroups = groups.slice(batchStart, batchStart + batchPageSize);
+  const batches: PlannedBatchRow[] = pageGroups.map((g, k) => {
+    const i = batchStart + k;
+    return { seq: i + 1, size: g.length, mailbox: planned[i] ?? null, round: assigned[i]?.round ?? null };
+  });
+  const firstIds = new Map(pageGroups.map((g, k) => [g[0], batchStart + k + 1] as const).filter(([id]) => id !== undefined));
+  const batchFirst: Record<number, string> = {};
+  if (firstIds.size) for (const r of recipients) { const seq = firstIds.get(r.id); if (seq !== undefined) batchFirst[seq] = r.email; }
+
+  const mailboxShare = new Map<string | null, { mailbox: string | null; emails: number; recruiters: number }>();
+  groups.forEach((g, i) => {
+    const m = planned[i] ?? null;
+    const v = mailboxShare.get(m) ?? { mailbox: m, emails: 0, recruiters: 0 };
+    v.emails += 1;
+    v.recruiters += g.length;
+    mailboxShare.set(m, v);
+  });
+  const byMailbox = [...mailboxShare.values()];
+  const batchesLater = planned.filter((m) => m == null).length;
 
   const first = recipients.find((r) => eligibleIds[0] === r.id) ?? recipients[0];
   const personalization = {
@@ -176,7 +286,10 @@ export async function planBlast(blast: { id: string; workspaceId: string; mode: 
     sample: first && vars.used.length ? { email: first.email, values: personalize(content, first).resolved } : null,
   };
 
-  return { personalization, total: recipients.length, eligibleIds, skippedReasons, skipped: skipped.slice(0, 200), skippedByReason, messages, perMessage, capacity, messagesPossibleToday, estimatedMinutes, batches, people, sendOrder, rounds, plannedAccountIds };
+  return { personalization, total: recipients.length, eligibleIds, skippedReasons, skipped: skipped.slice(0, 200), skippedByReason, messages, perMessage, capacity, messagesPossibleToday, estimatedMinutes,
+    batches, batchesTotal: groups.length, batchPage, batchPages, batchFirst, batchesLater, byMailbox,
+    people, peopleTotal: matching.length, peoplePage, peoplePages, peoplePageSize, peopleFilter, batch: batchFilter, q,
+    sendOrder, rounds, plannedAccountIds };
 }
 
 /**

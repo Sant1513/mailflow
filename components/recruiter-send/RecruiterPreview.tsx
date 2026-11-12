@@ -13,8 +13,11 @@ export { EmailViewer };
  * to the email (like a campaign's review).
  */
 
-/** Page through a list: « ‹ page x of y › ». Hidden when everything fits on one page. */
-export function Pager({ page, pages, onPage, label }: { page: number; pages: number; onPage: (p: number) => void; label?: string }) {
+/**
+ * Page through a list: « ‹ page x of y › », and with `jump` a "Go to page" box. Hidden when
+ * everything fits on one page.
+ */
+export function Pager({ page, pages, onPage, label, jump = false }: { page: number; pages: number; onPage: (p: number) => void; label?: string; jump?: boolean }) {
   if (pages <= 1) return null;
   const btn = 'rounded border px-2 py-0.5 hover:bg-elevated disabled:opacity-40 disabled:hover:bg-transparent';
   return (
@@ -24,6 +27,23 @@ export function Pager({ page, pages, onPage, label }: { page: number; pages: num
       <span className="px-1 text-muted-foreground">Page {page} of {pages}</span>
       <button type="button" className={btn} disabled={page >= pages} onClick={() => onPage(page + 1)} aria-label="Next page">Next ›</button>
       <button type="button" className={btn} disabled={page >= pages} onClick={() => onPage(pages)} aria-label="Last page">»</button>
+      {jump && (
+        <form
+          className="flex items-center gap-1"
+          onSubmit={(ev) => {
+            ev.preventDefault();
+            const input = ev.currentTarget.elements.namedItem('page') as HTMLInputElement | null;
+            const n = Math.floor(Number(input?.value));
+            if (Number.isFinite(n) && n >= 1) onPage(Math.min(pages, n));
+            if (input) input.value = '';
+          }}
+        >
+          <label className="text-muted-foreground">
+            Go to <input name="page" type="number" min={1} max={pages} inputMode="numeric" placeholder={String(page)} aria-label="Page number" className="w-14 rounded border bg-background px-1 py-0.5" />
+          </label>
+          <button type="submit" className={btn}>Go</button>
+        </form>
+      )}
     </nav>
   );
 }
@@ -100,69 +120,161 @@ export function SendSummary({ items, warnings }: { items: [string, string][]; wa
   );
 }
 
-export interface PlannedPerson { email: string; name: string | null; batch: number | null; round?: number | null; mailbox: string | null; skipped: string | null }
+export interface PlannedPerson { email: string; name: string | null; batch: number | null; batchSize?: number | null; round?: number | null; mailbox: string | null; skipped: string | null }
 export interface PlannedBatch { seq: number; size: number; mailbox: string | null; round?: number | null }
 
-const PEOPLE_PER_PAGE = 50;
-const BATCHES_PER_PAGE = 20;
+/**
+ * One page of the check's tables, as the server returns it (POST …/check and …/check/people):
+ * the recruiter page (after filter / batch / search) and the batch page.
+ */
+export interface PlanPage {
+  people: PlannedPerson[]; peopleTotal: number; peoplePage: number; peoplePages: number; peoplePageSize?: number;
+  batches: PlannedBatch[]; batchesTotal: number; batchPage: number; batchPages: number;
+  /** First recruiter of each batch on this batch page (seq → email). */
+  batchFirst?: Record<string, string>;
+}
+/** Per sending mailbox over every batch (mailbox null = later, no room today). */
+export interface MailboxShare { mailbox: string | null; emails: number; recruiters: number }
 
-/** After the check: who receives it, in which batch, from which mailbox — beside the email. */
+type PeopleFilter = 'all' | 'sending' | 'skipped';
+interface TableQuery { peoplePage: number; peopleFilter: PeopleFilter; batch: number | null; q: string; batchPage: number }
+const FIRST_QUERY: TableQuery = { peoplePage: 1, peopleFilter: 'all', batch: null, q: '', batchPage: 1 };
+const DEFAULT_PAGE_SIZE = 50;
+
+/**
+ * After the check: who receives it, in which batch, from which mailbox — beside the email.
+ * The tables show one page at a time; other pages, filters, a batch's recruiters and searches
+ * are fetched from the server (only the visible page is ever in the browser).
+ */
 export function WhoReceives({
-  people, batches, total, html, subject, mode: sendMode, blastId, version, envelope, parallel = false,
+  plan, byMailbox, total, html, subject, mode: sendMode, blastId, version, envelope, parallel = false,
 }: {
-  people: PlannedPerson[]; batches: PlannedBatch[]; total: number; html: string; subject: string; mode: 'BCC' | 'INDIVIDUAL';
-  /** With these, clicking a recruiter shows their own email in the side panel. */
+  /** The first page (from the check); a new check resets or refreshes the table. */
+  plan: PlanPage; byMailbox: MailboxShare[]; total: number; html: string; subject: string; mode: 'BCC' | 'INDIVIDUAL';
+  /** With blastId the table fetches its pages; with envelope too, clicking a recruiter shows their own email. */
   blastId?: string; version?: string; envelope?: Omit<PanelEnvelope, 'batch' | 'round' | 'mailbox' | 'batchSize' | 'skipped'>;
   /** All mailboxes send together, in rounds. */
   parallel?: boolean;
 }) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'all' | 'sending' | 'skipped'>('all');
-  const [batchFilter, setBatchFilter] = useState<number | null>(null);
-  const [page, setPage] = useState(1);
-  const [batchPage, setBatchPage] = useState(1);
+  const [data, setData] = useState<PlanPage>(plan);
+  const [query, setQuery] = useState<TableQuery>(FIRST_QUERY);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** The open recruiter and their position in the filtered list (across pages). */
+  const [selected, setSelected] = useState<{ person: PlannedPerson; index: number } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const queryRef = useRef(query);
+  queryRef.current = query;
 
-  const rows = useMemo(
-    () => people.filter((p) => (filter === 'all' ? true : filter === 'skipped' ? !!p.skipped : !p.skipped)).filter((p) => batchFilter == null || p.batch === batchFilter),
-    [people, filter, batchFilter],
-  );
-  const pages = Math.max(1, Math.ceil(rows.length / PEOPLE_PER_PAGE));
-  const batchPages = Math.max(1, Math.ceil(batches.length / BATCHES_PER_PAGE));
-  // A new plan or filter starts again at page 1 (and never points past the end).
-  useEffect(() => setPage(1), [filter, batchFilter]);
-  useEffect(() => setPage((p) => Math.min(p, Math.max(1, Math.ceil(rows.length / PEOPLE_PER_PAGE)))), [rows.length]);
-  useEffect(() => setBatchPage((p) => Math.min(p, batchPages)), [batchPages]);
-  const shownRows = rows.slice((page - 1) * PEOPLE_PER_PAGE, page * PEOPLE_PER_PAGE);
-  const selectedIndex = selected ? rows.findIndex((r) => r.email === selected) : -1;
-  const person = selectedIndex >= 0 ? rows[selectedIndex]! : null;
-  const sizeOf = useMemo(() => new Map(batches.map((b) => [b.seq, b.size])), [batches]);
-  // Step through recruiters (‹ › or ↑ ↓), following onto the right page.
+  const size = data.peoplePageSize ?? DEFAULT_PAGE_SIZE;
+  const offset = (data.peoplePage - 1) * size;
+
+  /**
+   * Fetch a page. The previous request is cancelled; the current rows stay until the new ones
+   * arrive. selectAt picks a row of the new page (stepping across pages); keepSelection says
+   * the list is the same (only the page moved), so the open recruiter stays open.
+   */
+  async function load(next: TableQuery, opts: { selectAt?: number; keepSelection?: boolean } = {}) {
+    setQuery(next);
+    if (!blastId) return;
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/recruiter-blasts/${blastId}/check/people`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ peoplePage: next.peoplePage, peopleFilter: next.peopleFilter, batch: next.batch, q: next.q || undefined, batchPage: next.batchPage }),
+        signal: ac.signal,
+      });
+      const j = await res.json().catch(() => ({}));
+      if (ac.signal.aborted) return;
+      if (!res.ok) { setError(j?.error ?? 'Could not load this page.'); return; }
+      const page = j as PlanPage;
+      setError(null);
+      setData(page);
+      // The server keeps pages in range; follow it.
+      setQuery((q) => ({ ...q, peoplePage: page.peoplePage, batchPage: page.batchPage }));
+      const pageOffset = (page.peoplePage - 1) * (page.peoplePageSize ?? DEFAULT_PAGE_SIZE);
+      if (opts.selectAt !== undefined) {
+        const k = Math.min(page.people.length - 1, Math.max(0, opts.selectAt));
+        const p = page.people[k];
+        if (p) setSelected({ person: p, index: pageOffset + k });
+      } else {
+        setSelected((s) => {
+          if (!s) return s;
+          const k = page.people.findIndex((p) => p.email === s.person.email);
+          if (k >= 0) return { person: page.people[k]!, index: pageOffset + k };
+          return opts.keepSelection ? s : null;
+        });
+      }
+    } catch {
+      if (!ac.signal.aborted) setError('Could not load this page.');
+    } finally {
+      if (abortRef.current === ac) { setLoading(false); abortRef.current = null; }
+    }
+  }
+
+  // A new check: show its first page, or refresh the page being looked at.
+  const firstPlan = useRef(true);
+  useEffect(() => {
+    if (firstPlan.current) { firstPlan.current = false; return; }
+    const q = queryRef.current;
+    if (q.peoplePage === 1 && q.batchPage === 1 && q.peopleFilter === 'all' && q.batch == null && !q.q) {
+      abortRef.current?.abort();
+      setLoading(false);
+      setData(plan);
+      setSelected((s) => {
+        if (!s) return s;
+        const k = plan.people.findIndex((p) => p.email === s.person.email);
+        return k >= 0 ? { person: plan.people[k]!, index: k } : s;
+      });
+    } else void load(q, { keepSelection: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan]);
+
+  // Search: wait for a pause in typing.
+  useEffect(() => {
+    const q = search.trim();
+    if (q === queryRef.current.q) return;
+    const t = setTimeout(() => void load({ ...queryRef.current, q, peoplePage: 1 }), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const setPeoplePage = (p: number) => void load({ ...query, peoplePage: p }, { keepSelection: true });
+  const setBatchPage = (p: number) => void load({ ...query, batchPage: p }, { keepSelection: true });
+  const setFilter = (f: PeopleFilter) => void load({ ...query, peopleFilter: f, peoplePage: 1 });
+  const setBatchFilter = (b: number | null) => void load({ ...query, batch: b, peoplePage: 1 });
+
+  const shownRows = data.people;
+  const person = selected?.person ?? null;
+  const sizeOf = useMemo(() => new Map(data.batches.map((b) => [b.seq, b.size])), [data.batches]);
+  // Step through recruiters (‹ › or ↑ ↓), loading the next / previous page when needed.
   const step = (delta: number) => {
-    const i = Math.min(rows.length - 1, Math.max(0, (selectedIndex < 0 ? -1 : selectedIndex) + delta));
-    const next = rows[i];
-    if (!next) return;
-    setSelected(next.email);
-    setPage(Math.floor(i / PEOPLE_PER_PAGE) + 1);
+    if (!selected) {
+      const p = shownRows[delta < 0 ? shownRows.length - 1 : 0];
+      if (p) setSelected({ person: p, index: offset + (delta < 0 ? shownRows.length - 1 : 0) });
+      return;
+    }
+    const i = selected.index + delta;
+    if (i < 0 || i >= data.peopleTotal) return;
+    const page = Math.floor(i / size) + 1;
+    if (page === data.peoplePage) {
+      const p = shownRows[i - offset];
+      if (p) setSelected({ person: p, index: i });
+      return;
+    }
+    void load({ ...query, peoplePage: page }, { selectAt: i - (page - 1) * size });
   };
   const canPreview = !!(blastId && envelope);
-  const shownBatches = batches.slice((batchPage - 1) * BATCHES_PER_PAGE, batchPage * BATCHES_PER_PAGE);
-
-  const byMailbox = useMemo(() => {
-    const m = new Map<string, { emails: number; recruiters: number }>();
-    for (const b of batches) {
-      const k = b.mailbox ?? 'Later (daily allowance used up)';
-      const v = m.get(k) ?? { emails: 0, recruiters: 0 };
-      v.emails += 1;
-      v.recruiters += b.size;
-      m.set(k, v);
-    }
-    return [...m.entries()];
-  }, [batches]);
-  const firstIn = useMemo(() => {
-    const m = new Map<number, string>();
-    for (const p of people) if (p.batch != null && !m.has(p.batch)) m.set(p.batch, p.email);
-    return m;
-  }, [people]);
+  const shownBatches = data.batches;
+  const firstIn = data.batchFirst ?? {};
+  const later = 'Later (daily allowance used up)';
 
   return (
     <div className="space-y-3">
@@ -171,9 +283,9 @@ export function WhoReceives({
           <div className="rounded-lg border bg-card p-3">
             <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Whose account sends it</div>
             <ul className="space-y-1 text-sm">
-              {byMailbox.map(([mailbox, v]) => (
-                <li key={mailbox} className="flex flex-wrap justify-between gap-x-2">
-                  <span className={`min-w-0 break-all ${mailbox.startsWith('Later') ? 'text-warning' : ''}`}>{mailbox}</span>
+              {byMailbox.map((v) => (
+                <li key={v.mailbox ?? later} className="flex flex-wrap justify-between gap-x-2">
+                  <span className={`min-w-0 break-all ${v.mailbox == null ? 'text-warning' : ''}`}>{v.mailbox ?? later}</span>
                   <span className="shrink-0 text-muted-foreground">{v.emails.toLocaleString()} email{v.emails === 1 ? '' : 's'} · {v.recruiters.toLocaleString()} recruiters</span>
                 </li>
               ))}
@@ -184,8 +296,8 @@ export function WhoReceives({
 
         <div className="flex min-w-0 flex-col rounded-lg border bg-card">
           <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-            <span className="text-xs font-semibold uppercase text-muted-foreground">Batches ({batches.length.toLocaleString()} email{batches.length === 1 ? '' : 's'})</span>
-            {batchFilter != null && <button type="button" onClick={() => setBatchFilter(null)} className="text-xs text-primary hover:underline">Show everyone</button>}
+            <span className="text-xs font-semibold uppercase text-muted-foreground">Batches ({data.batchesTotal.toLocaleString()} email{data.batchesTotal === 1 ? '' : 's'})</span>
+            {query.batch != null && <button type="button" onClick={() => setBatchFilter(null)} className="text-xs text-primary hover:underline">Show everyone</button>}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[480px] text-xs">
@@ -203,21 +315,21 @@ export function WhoReceives({
                   <tr
                     key={bt.seq}
                     onClick={() => setBatchFilter(bt.seq)}
-                    className={`cursor-pointer border-t border-border-subtle hover:bg-elevated ${batchFilter === bt.seq ? 'bg-elevated' : ''}`}
+                    className={`cursor-pointer border-t border-border-subtle hover:bg-elevated ${query.batch === bt.seq ? 'bg-elevated' : ''}`}
                     title="Show the recruiters in this batch"
                   >
                     <td className="px-3 py-1.5 font-medium">#{bt.seq}</td>
                     {parallel && <td className="px-2 py-1.5 text-muted-foreground">{bt.round ?? '—'}</td>}
                     <td className="px-2 py-1.5">{bt.size.toLocaleString()}</td>
                     <td className="max-w-[14rem] truncate px-2 py-1.5" title={bt.mailbox ?? ''}>{bt.mailbox ?? <span className="text-warning">later — allowance used up</span>}</td>
-                    <td className="max-w-[12rem] truncate px-2 py-1.5 text-muted-foreground">{firstIn.get(bt.seq) ?? ''}</td>
+                    <td className="max-w-[12rem] truncate px-2 py-1.5 text-muted-foreground" title={firstIn[bt.seq] ?? ''}>{firstIn[bt.seq] ?? ''}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <div className="space-y-1 border-t px-3 py-1.5">
-            <Pager page={batchPage} pages={batchPages} onPage={setBatchPage} label="Batch pages" />
+            <Pager page={data.batchPage} pages={data.batchPages} onPage={setBatchPage} label="Batch pages" jump={data.batchPages > 5} />
             <p className="text-center text-[11px] text-muted-foreground">Click a batch to list its recruiters below.</p>
           </div>
         </div>
@@ -227,16 +339,32 @@ export function WhoReceives({
         <div className="flex min-w-0 flex-col rounded-lg border bg-card">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
             <span className="text-xs font-semibold uppercase text-muted-foreground">
-              Who receives this{batchFilter != null ? ` — batch #${batchFilter}` : ''} <span className="font-normal normal-case">({rows.length.toLocaleString()})</span>
+              Who receives this{query.batch != null ? ` — batch #${query.batch}` : ''} <span className="font-normal normal-case">({data.peopleTotal.toLocaleString()}{data.peopleTotal !== total ? ` of ${total.toLocaleString()}` : ''})</span>
+              {loading && <span className="ml-2 font-normal normal-case text-muted-foreground" role="status">Loading…</span>}
             </span>
-            <select value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)} className="rounded border bg-background px-1 py-0.5 text-xs" aria-label="Show">
-              <option value="all">Everyone</option>
-              <option value="sending">Will get it</option>
-              <option value="skipped">Skipped</option>
-            </select>
+            <span className="flex flex-wrap items-center gap-1.5">
+              {blastId && (
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search email or name"
+                  aria-label="Search recruiters"
+                  maxLength={200}
+                  className="w-44 rounded border bg-background px-1.5 py-0.5 text-xs"
+                />
+              )}
+              <select value={query.peopleFilter} onChange={(e) => setFilter(e.target.value as PeopleFilter)} className="rounded border bg-background px-1 py-0.5 text-xs" aria-label="Show">
+                <option value="all">Everyone</option>
+                <option value="sending">Will get it</option>
+                <option value="skipped">Skipped</option>
+              </select>
+            </span>
           </div>
+          {error && <p className="border-b bg-red-50 px-3 py-1 text-[11px] text-red-700 dark:bg-red-950/30 dark:text-red-400">{error}</p>}
           <div
-            className="overflow-x-auto outline-none"
+            className={`overflow-x-auto outline-none transition-opacity ${loading ? 'opacity-60' : ''}`}
+            aria-busy={loading || undefined}
             tabIndex={canPreview ? 0 : undefined}
             onKeyDown={(ev) => {
               if (!canPreview) return;
@@ -256,13 +384,13 @@ export function WhoReceives({
                 </tr>
               </thead>
               <tbody>
-                {shownRows.map((p) => (
+                {shownRows.map((p, k) => (
                   <tr
                     key={p.email}
-                    onClick={canPreview ? () => setSelected(p.email) : undefined}
-                    aria-selected={selected === p.email}
+                    onClick={canPreview ? () => setSelected({ person: p, index: offset + k }) : undefined}
+                    aria-selected={person?.email === p.email}
                     title={canPreview ? 'Show the email this recruiter gets' : undefined}
-                    className={`border-t border-border-subtle ${canPreview ? 'cursor-pointer hover:bg-elevated' : ''} ${selected === p.email ? 'bg-primary/10 ring-1 ring-inset ring-primary/40' : p.skipped ? 'bg-red-50 dark:bg-red-950/30' : ''}`}
+                    className={`border-t border-border-subtle ${canPreview ? 'cursor-pointer hover:bg-elevated' : ''} ${person?.email === p.email ? 'bg-primary/10 ring-1 ring-inset ring-primary/40' : p.skipped ? 'bg-red-50 dark:bg-red-950/30' : ''}`}
                   >
                     <td className="max-w-[16rem] px-3 py-1.5" title={p.email}><span className="flex min-w-0 items-center gap-2"><Avatar email={p.email} name={p.name} size={22} /><span className="truncate">{p.email}</span></span></td>
                     <td className="max-w-[8rem] truncate px-2 py-1.5">{p.name ?? ''}</td>
@@ -279,8 +407,7 @@ export function WhoReceives({
             </table>
           </div>
           <div className="space-y-1 border-t px-3 py-1.5">
-            <Pager page={page} pages={pages} onPage={setPage} label="Recruiter pages" />
-            {total > people.length && <p className="text-center text-[11px] text-muted-foreground">The plan lists the first {people.length.toLocaleString()} of {total.toLocaleString()} recruiters; all of them are sent.</p>}
+            <Pager page={data.peoplePage} pages={data.peoplePages} onPage={setPeoplePage} label="Recruiter pages" jump />
           </div>
         </div>
 
@@ -289,8 +416,8 @@ export function WhoReceives({
             blastId={blastId!}
             email={person.email}
             version={version ?? ''}
-            envelope={{ ...envelope!, batch: person.batch, round: person.round ?? null, mailbox: person.mailbox, batchSize: person.batch != null ? sizeOf.get(person.batch) ?? null : null, skipped: person.skipped }}
-            position={{ index: selectedIndex, total: rows.length }}
+            envelope={{ ...envelope!, batch: person.batch, round: person.round ?? null, mailbox: person.mailbox, batchSize: person.batchSize ?? (person.batch != null ? sizeOf.get(person.batch) ?? null : null), skipped: person.skipped }}
+            position={{ index: selected!.index, total: data.peopleTotal }}
             onStep={step}
             onClose={() => setSelected(null)}
           />

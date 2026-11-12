@@ -20,12 +20,17 @@ describe('recruiter send previews', () => {
   it('lists who receives it, their batch and mailbox, or why they are skipped', () => {
     const html = renderToStaticMarkup(
       <WhoReceives
-        people={[
-          { email: 'a@corp.com', name: 'Priya', batch: 1, mailbox: 'one@masaischool.com', skipped: null },
-          { email: 'bad@nomail.zz', name: null, batch: null, mailbox: null, skipped: 'domain has no mail server' },
-          { email: 'c@corp.com', name: null, batch: 2, mailbox: null, skipped: null },
-        ]}
-        batches={[{ seq: 1, size: 1, mailbox: 'one@masaischool.com' }, { seq: 2, size: 1, mailbox: null }]}
+        plan={{
+          people: [
+            { email: 'a@corp.com', name: 'Priya', batch: 1, mailbox: 'one@masaischool.com', skipped: null },
+            { email: 'bad@nomail.zz', name: null, batch: null, mailbox: null, skipped: 'domain has no mail server' },
+            { email: 'c@corp.com', name: null, batch: 2, mailbox: null, skipped: null },
+          ],
+          peopleTotal: 3, peoplePage: 1, peoplePages: 1,
+          batches: [{ seq: 1, size: 1, mailbox: 'one@masaischool.com' }, { seq: 2, size: 1, mailbox: null }],
+          batchesTotal: 2, batchPage: 1, batchPages: 1, batchFirst: { 1: 'a@corp.com', 2: 'c@corp.com' },
+        }}
+        byMailbox={[{ mailbox: 'one@masaischool.com', emails: 1, recruiters: 1 }, { mailbox: null, emails: 1, recruiters: 1 }]}
         total={3}
         html="<p>Hi</p>"
         subject="Hiring partners"
@@ -57,12 +62,27 @@ describe('recruiter send previews', () => {
     expect(html).toContain('Reset');
   });
 
-  it('pages the recruiter table 50 at a time', () => {
-    const people = Array.from({ length: 120 }, (_, i) => ({ email: `r${i}@corp.com`, name: null, batch: 1, mailbox: 'one@x.com', skipped: null }));
-    const html = renderToStaticMarkup(<WhoReceives people={people} batches={[{ seq: 1, size: 120, mailbox: 'one@x.com' }]} total={120} html="<p>Hi</p>" subject="S" mode="BCC" />);
+  it('shows the page the server sent, with the pager, a jump box and no "first 2,000" note', () => {
+    const people = Array.from({ length: 50 }, (_, i) => ({ email: `r${i}@corp.com`, name: null, batch: 1, mailbox: 'one@x.com', skipped: null }));
+    const html = renderToStaticMarkup(
+      <WhoReceives
+        plan={{ people, peopleTotal: 3001, peoplePage: 1, peoplePages: 61, peoplePageSize: 50, batches: [{ seq: 1, size: 250, mailbox: 'one@x.com' }], batchesTotal: 13, batchPage: 1, batchPages: 1, batchFirst: { 1: 'r0@corp.com' } }}
+        byMailbox={[{ mailbox: 'one@x.com', emails: 13, recruiters: 3001 }]}
+        total={3001} html="<p>Hi</p>" subject="S" mode="BCC" blastId="b1"
+      />,
+    );
     expect(html).toContain('r49@corp.com');
-    expect(html).not.toContain('r50@corp.com');
-    expect(html).toContain('Page 1 of 3');
+    expect(html).toContain('Page 1 of 61');
+    expect(html).toContain('Go to');
+    expect(html).toContain('Search email or name');
+    expect(html).toContain('Batches (13 emails)');
+    expect(html).toContain('3,001 recruiters');
+    expect(html).not.toContain('The plan lists the first');
+  });
+
+  it('adds a jump-to-page box to the pager on request', () => {
+    expect(renderToStaticMarkup(<Pager page={3} pages={61} onPage={() => undefined} jump />)).toContain('aria-label="Page number"');
+    expect(renderToStaticMarkup(<Pager page={3} pages={61} onPage={() => undefined} />)).not.toContain('Page number');
   });
 
   it('shows the review card with every setting and its warnings', () => {

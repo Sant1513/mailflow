@@ -22,6 +22,9 @@ import { describeAction, willSuppress } from '../lib/email/ndr';
 
 const args = process.argv.slice(2);
 const apply = args.includes('--apply');
+// --include-outside: also suppress hard bounces on emails sent outside MailFlow (see outsideMailFlow).
+const includeOutside = args.includes('--include-outside');
+const ownDomains = (process.env.ALLOWED_EMAIL_DOMAIN ?? 'masaischool.com,neevlabs.ai').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
 const arg = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
 const days = Number(arg('days') ?? 30) || 30;
 const max = Number(arg('max') ?? 500) || 500;
@@ -33,7 +36,7 @@ async function main() {
     orderBy: { emailAddress: 'asc' },
   });
   const q = ndrSearchQuery(days);
-  console.log(`${apply ? 'APPLY' : 'DRY RUN'} · ${accounts.length} connected mailbox(es) · Gmail query: ${q}\n`);
+  console.log(`${apply ? 'APPLY' : 'DRY RUN'}${includeOutside ? ' · including bounces on emails sent outside MailFlow' : ''} · ${accounts.length} connected mailbox(es) · Gmail query: ${q}\n`);
   const totals = { notices: 0, notReports: 0, actions: 0, suppress: 0, soft: 0, noMatch: 0, errors: 0 };
 
   for (const account of accounts) {
@@ -52,7 +55,7 @@ async function main() {
       try {
         const raw = await source.getMessage(id);
         if (!raw) continue;
-        const r = await processNotice(account, raw, { apply });
+        const r = await processNotice(account, raw, { apply, includeOutside, ownDomains });
         const when = r.receivedAt.toISOString().slice(0, 16).replace('T', ' ');
         if (r.skipped) {
           totals.notReports += 1;
