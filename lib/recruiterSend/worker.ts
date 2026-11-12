@@ -160,7 +160,7 @@ type Person = { id: string; email: string; name: string | null; data: Prisma.Jso
 type Outcome = 'sent' | 'failed' | 'retry';
 
 /** At most this many Gmail messages are out at once in one run (a run has under 60 s). */
-export const MAX_PARALLEL = 5;
+export const MAX_PARALLEL = 10;
 
 /**
  * Who in this message still gets it: anyone unsubscribed or bounced since the send started

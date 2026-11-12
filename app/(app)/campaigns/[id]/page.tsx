@@ -14,6 +14,7 @@ import { CampaignReplyRules } from '@/components/replyRules/CampaignReplyRules';
 import { CampaignReview, type CampaignPreview } from '@/components/campaign/CampaignReview';
 import { CampaignDocuments } from '@/components/campaign/CampaignDocuments';
 import { useDocumentPreview } from '@/components/documents/PdfPreviewDialog';
+import { ExportMenu } from '@/components/ui/ExportMenu';
 
 interface Simulation {
   total: number;
@@ -413,6 +414,9 @@ export default function CampaignDetailPage() {
             </p>
           )}
         </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+        {/* Who opened / didn't, as CSV, once anything has gone out */}
+        {['COMPLETED', 'PARTIALLY_FAILED', 'FAILED', 'SENDING', 'RUNNING', 'PAUSED', 'CANCELLED'].includes(campaign.status) && <ExportMenu href={`/api/campaigns/${campaign.id}/export`} />}
         {/* View toggle — analytics only for sent campaigns */}
         {['COMPLETED', 'PARTIALLY_FAILED', 'FAILED', 'SENDING'].includes(campaign.status) && (
           <div className="flex gap-1 rounded-lg border border-border bg-card p-1">
@@ -427,6 +431,7 @@ export default function CampaignDetailPage() {
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {/* ── Analytics dashboard ──────────────────────────────────────────── */}

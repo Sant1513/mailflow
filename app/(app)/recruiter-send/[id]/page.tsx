@@ -9,6 +9,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { LivePreview, Pager, SendSummary, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
 import { VariablePicker, variableProblems } from '@/components/recruiter-send/Variables';
 import { RecipientPanel } from '@/components/recruiter-send/RecipientPanel';
+import { ExportMenu } from '@/components/ui/ExportMenu';
 
 type Mode = 'BCC' | 'INDIVIDUAL';
 interface Video { mode: 'attach'; ref: string; fileName: string; size: number; contentType: string }
@@ -373,6 +374,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           {['SENDING', 'SCHEDULED'].includes(b.status) && <button type="button" onClick={() => control('pause')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'pause' ? 'Pausing…' : 'Pause'}</button>}
           {b.status === 'PAUSED' && <button type="button" onClick={() => control('resume')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'resume' ? 'Resuming…' : 'Resume'}</button>}
           {['SENDING', 'SCHEDULED', 'PAUSED'].includes(b.status) && <button type="button" onClick={() => control('cancel')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm text-red-700 hover:bg-elevated disabled:opacity-50">{busy === 'cancel' ? 'Cancelling…' : 'Cancel'}</button>}
+          {!draft && <ExportMenu href={`/api/recruiter-blasts/${b.id}/export`} perPerson={b.mode !== 'BCC'} />}
           <button type="button" onClick={copy} disabled={busy === 'copy'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">Copy</button>
           {draft && <button type="button" onClick={removeDraft} className="rounded px-3 py-1.5 text-sm text-muted-foreground hover:bg-elevated">Delete draft</button>}
         </div>

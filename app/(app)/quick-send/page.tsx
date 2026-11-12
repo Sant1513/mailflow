@@ -7,6 +7,7 @@ import { EmailPreview } from '@/components/email-preview/EmailPreview';
 import { RsvpEditor } from '@/components/rsvp/RsvpEditor';
 import { defaultRsvpConfig, type RsvpConfig } from '@/lib/rsvp/config';
 import { looksLikeHtml, normalizePastedList } from '@/lib/quickSend/paste';
+import { ExportMenu } from '@/components/ui/ExportMenu';
 
 type Source = 'paste' | 'file' | 'dataset' | 'segment';
 
@@ -1008,6 +1009,7 @@ function TrackingCard({
         <Link href={`/campaigns/${current.id}`} className="btn-secondary !py-1 text-xs">
           Full report
         </Link>
+        <ExportMenu href={`/api/campaigns/${current.id}/export`} />
         <Link href="/inbox" className="btn-secondary !py-1 text-xs">
           Replies in Inbox
         </Link>

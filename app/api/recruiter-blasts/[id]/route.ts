@@ -83,7 +83,8 @@ const patchSchema = z.object({
   includeSignature: z.boolean().optional(),
   fromName: z.string().trim().max(100).nullable().optional(),
   replyTo: z.string().trim().max(320).nullable().optional(),
-  accountIds: z.array(z.string()).max(10).optional(),
+  // Every mailbox the sender may use (own + opted-in backups); 50 is only a sanity cap.
+  accountIds: z.array(z.string()).max(50).optional(),
   attachmentDocumentIds: z.array(z.string()).max(5).optional(),
   groupSize: z.number().int().min(1).max(MAX_GROUP_SIZE).optional(),
   gapSeconds: z.number().int().min(3).max(3600).optional(),
