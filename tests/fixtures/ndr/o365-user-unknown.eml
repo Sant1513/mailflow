@@ -1,0 +1,102 @@
+Received: from BM1PR01MB4561.INDPRD01.PROD.OUTLOOK.COM (2603:1096:b00:2::12) by
+ MA0PR01MB7465.INDPRD01.PROD.OUTLOOK.COM with HTTPS; Wed, 12 Nov 2026 06:41:09 +0000
+From: postmaster@atfenix.com
+To: apollo.moirangthem@masaischool.com
+Date: Wed, 12 Nov 2026 06:41:09 +0000
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="21b6c0c2-8f0f-4a7e-a3f6-4b1d0f6f1c55"
+X-MS-Exchange-Message-Is-Ndr:
+Content-Language: en-US
+Message-ID: <4c2a9d0e-1b7e-4a55-9c3f-2f7d2d8f9a10@BM1PR01MB4561.INDPRD01.PROD.OUTLOOK.COM>
+Subject: Undeliverable: Masai School | Hiring partners for our December drive
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+
+--21b6c0c2-8f0f-4a7e-a3f6-4b1d0f6f1c55
+Content-Type: multipart/alternative; differences=Content-Type;
+	boundary="a9f3e0d4-6c55-4d0c-9a5e-0c1b0f3a7e21"
+
+--a9f3e0d4-6c55-4d0c-9a5e-0c1b0f3a7e21
+Content-Type: text/plain; charset="us-ascii"
+Content-Transfer-Encoding: quoted-printable
+
+Your message to thakurayush@atfenix.com couldn't be delivered.
+
+thakurayush wasn't found at atfenix.com.
+
+apollo.moirangthem    Office 365    thakurayush
+Action Required                     Recipient
+
+Unknown To address
+
+How to Fix It
+The address may be misspelled or may not exist. Try one or more of the fol=
+lowing:
+  * Send the message again following these steps: In Outlook, open this no=
+n-delivery report (NDR) and choose Send Again from the Report ribbon.
+  * Retype the recipient's address, then resend the message.
+
+More Info for Email Admins
+Status code: 550 5.1.10
+
+This error occurs because the sender sent a message to an email address hos=
+ted by Office 365 but the address is incorrect or doesn't exist at the dest=
+ination domain.
+
+Original Message Details
+Created Date:    11/12/2026 6:40:52 AM
+Sender Address:  apollo.moirangthem@masaischool.com
+Recipient Address:    thakurayush@atfenix.com
+Subject:    Masai School | Hiring partners for our December drive
+
+Error Details
+Error:    550 5.1.10 RESOLVER.ADR.RecipientNotFound; Recipient thakurayush@atfe=
+nix.com not found by SMTP address lookup
+Message rejected by:    BM1PR01MB4561.INDPRD01.PROD.OUTLOOK.COM
+
+Original Message Headers
+
+Received: from mail-pj1-f45.google.com (209.85.216.45) by
+ BM1PR01MB4561.INDPRD01.PROD.OUTLOOK.COM; Wed, 12 Nov 2026 06:40:55 +0000
+From: Apollo Moirangthem <apollo.moirangthem@masaischool.com>
+To: thakurayush@atfenix.com
+Message-ID: <CAJ7rd2kQ0n=individual-copy-77@mail.gmail.com>
+
+--a9f3e0d4-6c55-4d0c-9a5e-0c1b0f3a7e21
+Content-Type: text/html; charset="us-ascii"
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><div style=3D"font-family:Segoe UI"><p><b><a href=3D"mailto:thakurayush@atfe=
+nix.com">thakurayush@atfenix.com</a></b> couldn't be delivered.</p><p>thakurayush wasn&#39;t found at atfenix.com.</p><p>Action Required</p><p>Unknown To address</p></div></body></html>
+
+--a9f3e0d4-6c55-4d0c-9a5e-0c1b0f3a7e21--
+
+--21b6c0c2-8f0f-4a7e-a3f6-4b1d0f6f1c55
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns;BM1PR01MB4561.INDPRD01.PROD.OUTLOOK.COM
+Received-From-MTA: dns;mail-pj1-f45.google.com
+Arrival-Date: Wed, 12 Nov 2026 06:40:55 +0000
+
+Final-Recipient: rfc822;thakurayush@atfenix.com
+Action: failed
+Status: 5.1.10
+Diagnostic-Code: smtp;550 5.1.10 RESOLVER.ADR.RecipientNotFound; Recipient
+ thakurayush@atfenix.com not found by SMTP address lookup
+
+--21b6c0c2-8f0f-4a7e-a3f6-4b1d0f6f1c55
+Content-Type: message/rfc822
+
+Received: from mail-pj1-f45.google.com (209.85.216.45) by
+ BM1PR01MB4561.INDPRD01.PROD.OUTLOOK.COM; Wed, 12 Nov 2026 06:40:55 +0000
+From: Apollo Moirangthem <apollo.moirangthem@masaischool.com>
+To: thakurayush@atfenix.com
+Subject: Masai School | Hiring partners for our December drive
+Date: Wed, 12 Nov 2026 12:10:50 +0530
+Message-ID: <CAJ7rd2kQ0n=individual-copy-77@mail.gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+
+Hi, we are hiring partners for our December drive.
+
+--21b6c0c2-8f0f-4a7e-a3f6-4b1d0f6f1c55--

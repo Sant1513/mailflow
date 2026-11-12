@@ -3,17 +3,61 @@ import { z } from 'zod';
 import { ColumnType, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
-import { loadBlast, requireBlastAdmin } from '@/lib/recruiterSend/access';
+import { loadBlast, requireBlastAdmin, requireBlastReader } from '@/lib/recruiterSend/access';
 import { parseRecipientFile, parseRecipientPaste, type RecipientList } from '@/lib/recruiterSend/core';
 
 /**
- * Replaces a draft's recruiter list from pasted text, an uploaded CSV/Excel file, or saved data.
+ * GET: one page of the recruiter list with every uploaded column, for the "Preview list" table
+ * (`?page=` 1-based, 50 a page; `?q=` searches email and name).
+ * POST: replaces a draft's recruiter list from pasted text, an uploaded CSV/Excel file, or saved data.
  * Every column is kept (RecruiterBlast.columns + each recruiter's row in data) so the email can
  * use {{Column}} — names, companies, per-recruiter UTM links. `emailColumn` picks the address
  * column when the guess is wrong.
  */
 export const dynamic = 'force-dynamic';
 const MAX_RECIPIENTS = 20_000;
+const PREVIEW_PAGE_SIZE = 50; // route files may only export handlers and route config
+
+export const GET = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
+  const session = await requireBlastReader();
+  const blast = await loadBlast(session, params.id);
+  if (!blast) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const url = new URL(req.url);
+  const rawPage = Math.floor(Number(url.searchParams.get('page') ?? '1'));
+  const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.min(rawPage, 100_000) : 1;
+  const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200);
+  const where: Prisma.RecruiterBlastRecipientWhereInput = {
+    blastId: blast.id,
+    ...(q ? { OR: [{ email: { contains: q, mode: 'insensitive' } }, { name: { contains: q, mode: 'insensitive' } }] } : {}),
+  };
+  const [total, rows] = await Promise.all([
+    prisma.recruiterBlastRecipient.count({ where }),
+    prisma.recruiterBlastRecipient.findMany({
+      where,
+      // Ids are created in list order, so this keeps the order of the sheet.
+      orderBy: { id: 'asc' },
+      skip: (page - 1) * PREVIEW_PAGE_SIZE,
+      take: PREVIEW_PAGE_SIZE,
+      select: { email: true, name: true, status: true, data: true },
+    }),
+  ]);
+  return NextResponse.json({
+    columns: blast.columns ?? [],
+    emailColumn: blast.emailColumn ?? null,
+    status: blast.status,
+    q,
+    page,
+    perPage: PREVIEW_PAGE_SIZE,
+    pages: Math.max(1, Math.ceil(total / PREVIEW_PAGE_SIZE)),
+    total,
+    recipients: rows.map((r) => ({
+      email: r.email,
+      name: r.name,
+      status: r.status,
+      data: r.data && typeof r.data === 'object' && !Array.isArray(r.data) ? (r.data as Record<string, unknown>) : {},
+    })),
+  });
+});
 
 const emailColumn = z.string().max(200).nullish();
 const bodySchema = z.discriminatedUnion('source', [

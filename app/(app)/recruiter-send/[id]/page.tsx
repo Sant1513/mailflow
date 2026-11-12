@@ -9,6 +9,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { LivePreview, Pager, SendSummary, WhoReceives, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
 import { VariablePicker, variableProblems } from '@/components/recruiter-send/Variables';
 import { RecipientPanel } from '@/components/recruiter-send/RecipientPanel';
+import { RecruiterListPreview } from '@/components/recruiter-send/RecruiterListPreview';
 import { ExportMenu } from '@/components/ui/ExportMenu';
 
 type Mode = 'BCC' | 'INDIVIDUAL';
@@ -32,6 +33,8 @@ interface Check {
 }
 
 const FIELD = 'w-full rounded border bg-background px-2 py-1.5 text-sm';
+const MAX_MAILBOXES = 50; // matches the PATCH schema (accountIds max 50)
+const MAX_LIMIT = 100_000; // matches the PATCH schema (accountLimits 0..100000)
 const LABEL = 'mb-1 block text-xs font-medium';
 const SKIP_LABEL: Record<string, string> = {
   SUPPRESSED: 'unsubscribed or bounced before', NO_MAIL_SERVER: 'domain has no mail server', LIKELY_TYPO: 'looks like a typo',
@@ -99,6 +102,12 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const lastField = useRef<'subject' | 'body'>('body');
   const [ccText, setCcText] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // "Limit for every mailbox": typed value, and the one last applied (used for mailboxes ticked later).
+  const [limitAll, setLimitAll] = useState('');
+  const [defaultLimit, setDefaultLimit] = useState<number | null>(null);
+  // Once a list is in use, the paste/upload inputs fold to a one-line summary until "Change list".
+  const [changingList, setChangingList] = useState(false);
+  const [listPreviewOpen, setListPreviewOpen] = useState(false);
 
   const [recipientPage, setRecipientPage] = useState(1);
   const loadedOnce = useRef(false);
@@ -214,6 +223,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       const cols = (j.columns ?? []) as string[];
       toast.success(`${j.added.toLocaleString()} recruiter${j.added === 1 ? '' : 's'} from the ${j.source}.${cols.length ? ` ${cols.length} columns kept; email from “${j.emailColumn}”.` : ''}${j.unreadableCount ? ` ${j.unreadableCount} line(s) had no email address.` : ''}`);
       setPasted('');
+      setChangingList(false);
       load();
       runCheck();
       setOpenSteps((prev) => new Set([...(prev ?? []), 6]));
@@ -325,9 +335,41 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const draft = b.status === 'DRAFT';
   const chosen = form.accountIds;
   const mailboxOrder = [...chosen.map((id) => detail.mailboxes.find((m) => m.id === id)).filter((m): m is Mailbox => !!m), ...detail.mailboxes.filter((m) => !chosen.includes(m.id))];
+  const limits = form.accountLimits ?? {};
+  const anyLimit = Object.values(limits).some((v) => v > 0);
+
+  // Ticking a mailbox: it gets the "every mailbox" limit when one was applied and it has none yet.
+  function tick(ids: string[]) {
+    const add = ids.filter((id) => !chosen.includes(id));
+    if (!add.length) return;
+    const nextIds = [...chosen, ...add].slice(0, MAX_MAILBOXES);
+    if (nextIds.length < chosen.length + add.length) toast.message(`One send can use up to ${MAX_MAILBOXES} mailboxes.`);
+    const nextLimits = { ...limits };
+    let limitsChanged = false;
+    if (defaultLimit) for (const id of nextIds) if (!chosen.includes(id) && !nextLimits[id]) { nextLimits[id] = defaultLimit; limitsChanged = true; }
+    edit(limitsChanged ? { accountIds: nextIds, accountLimits: nextLimits } : { accountIds: nextIds });
+  }
+  const tickable = detail.mailboxes.filter((m) => m.status === 'CONNECTED' && !chosen.includes(m.id));
+  function applyLimitToAll() {
+    const v = Math.min(MAX_LIMIT, Math.floor(Number(limitAll)));
+    if (!Number.isFinite(v) || v <= 0) return toast.error('Type a limit of 1 or more first.');
+    setLimitAll(String(v));
+    setDefaultLimit(v);
+    const next = { ...limits };
+    for (const id of chosen) next[id] = v;
+    edit({ accountLimits: next });
+    toast.success(chosen.length ? `Limit of ${v.toLocaleString()} recruiters set on ${chosen.length} mailbox${chosen.length === 1 ? '' : 'es'}; mailboxes you tick next get it too.` : `Mailboxes you tick get a limit of ${v.toLocaleString()} recruiters.`);
+  }
+  function resetLimits() {
+    if (anyLimit && !confirm('Remove the limit from every mailbox? Each one goes back to no limit for this send.')) return;
+    setDefaultLimit(null);
+    setLimitAll('');
+    if (Object.keys(limits).length) edit({ accountLimits: {} });
+  }
 
   // One-line summaries shown on folded steps.
   const total = detail.counts.total ?? 0;
+  const listCollapsed = total > 0 && !changingList;
   const ccList = splitEmails(ccText ?? '').valid;
   const attachedNames = [
     ...library.filter((d) => form.attachmentDocumentIds.includes(d.id)).map((d) => d.name),
@@ -393,6 +435,22 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
         <div className="min-w-0 space-y-3">
           <Section n={1} title="Recruiters" summary={stepSummary[1]} done={stepDone[1]} hint="Paste from Google Sheets/Excel with the header row (every column is kept for {{Column}} in the email, e.g. a UTM link per recruiter), paste plain addresses, upload a CSV/Excel file, or use saved data. Duplicates are removed; unsubscribed, bounced and bad addresses are skipped at the check.">
+            {listCollapsed ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-2 text-sm">
+                <span className="min-w-0 flex-1 truncate" title={b.columns.length ? b.columns.join(', ') : undefined}>
+                  <b>{total.toLocaleString()}</b> recruiter{total === 1 ? '' : 's'}
+                  {b.columns.length > 0 && <span className="text-muted-foreground"> · {b.columns.length} column{b.columns.length === 1 ? '' : 's'}: {b.columns.slice(0, 3).join(', ')}{b.columns.length > 3 ? ', …' : ''}</span>}
+                </span>
+                <button type="button" onClick={() => setChangingList(true)} aria-expanded={false} className="rounded border bg-background px-2.5 py-1 text-xs hover:bg-elevated">Change list</button>
+                <button type="button" onClick={() => setListPreviewOpen(true)} className="rounded border bg-background px-2.5 py-1 text-xs hover:bg-elevated">Preview list</button>
+              </div>
+            ) : (
+            <>
+            {total > 0 && (
+              <div className="mb-2 flex justify-end">
+                <button type="button" onClick={() => setChangingList(false)} aria-expanded className="text-xs text-primary hover:underline">Keep the current list ▴</button>
+              </div>
+            )}
             <div className="mb-2 flex gap-1 text-xs" role="tablist">
               {(['paste', 'file', 'data'] as const).map((t) => (
                 <button key={t} type="button" role="tab" aria-selected={recipientTab === t} onClick={() => setRecipientTab(t)} className={`rounded px-2.5 py-1 ${recipientTab === t ? 'bg-primary text-primary-foreground' : 'border hover:bg-elevated'}`}>
@@ -438,13 +496,13 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                 </div>
               </div>
             )}
-            <p className="mt-3 text-sm"><b>{(detail.counts.total ?? 0).toLocaleString()}</b> recruiter{detail.counts.total === 1 ? '' : 's'} in this send{detail.counts.total ? ' (adding a list replaces it)' : ''}.</p>
-            {detail.recipients.length > 0 && (
-              <details className="mt-1 text-xs">
-                <summary className="cursor-pointer text-muted-foreground">Show the list</summary>
-                <ul className="mt-1 max-h-40 overflow-auto">{detail.recipients.map((r) => <li key={r.email}>{r.name ? `${r.name} · ` : ''}{r.email}</li>)}</ul>
-              </details>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+              <p><b>{total.toLocaleString()}</b> recruiter{total === 1 ? '' : 's'} in this send{total ? ' (adding a list replaces it)' : ''}.</p>
+              {total > 0 && <button type="button" onClick={() => setListPreviewOpen(true)} className="rounded border px-2.5 py-1 text-xs hover:bg-elevated">Preview list</button>}
+            </div>
+            </>
             )}
+            {listPreviewOpen && <RecruiterListPreview blastId={b.id} open onClose={() => setListPreviewOpen(false)} />}
           </Section>
 
           <Section n={2} title="How it goes out" summary={stepSummary[2]} done={stepDone[2]}>
@@ -603,13 +661,31 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
           <Section n={5} title="Send from" summary={stepSummary[5]} done={stepDone[5]} hint={form.sendOrder === 'SEQUENTIAL' ? "Tick the mailboxes to use, in order. MailFlow moves to the next one when a mailbox reaches its limit for this send, Google's daily limit, or is paused by Gmail. Leave a limit empty for no extra limit." : "Tick the mailboxes to use. They all send together, each with its own pause; if one reaches its limit for this send or Google's daily limit, or Gmail pauses it, its batches move to the others. Leave a limit empty for no extra limit."}>
             {detail.mailboxes.length === 0 ? <p className="text-sm text-muted-foreground">Connect your Gmail in Settings first.</p> : (
+              <>
+              <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border bg-muted/30 p-2 text-xs">
+                <form className="flex flex-wrap items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); applyLimitToAll(); }}>
+                  <label className="flex items-center gap-1">Limit for every mailbox
+                    <input type="number" min={1} max={MAX_LIMIT} value={limitAll} onChange={(e) => setLimitAll(e.target.value)} className="w-24 rounded border bg-background px-1 py-0.5" placeholder="e.g. 400" aria-label="Limit for every mailbox, in recruiters" />
+                    recruiters
+                  </label>
+                  <button type="submit" disabled={!limitAll || Number(limitAll) <= 0} className="rounded border bg-background px-2 py-0.5 hover:bg-elevated disabled:opacity-50">Apply to all</button>
+                  <button type="button" onClick={resetLimits} disabled={!anyLimit && defaultLimit === null && !limitAll} className="rounded px-2 py-0.5 text-muted-foreground hover:bg-elevated disabled:opacity-50">Reset limits</button>
+                </form>
+                <span className="flex-1" />
+                <span className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">{chosen.length} of {detail.mailboxes.length} ticked</span>
+                  <button type="button" onClick={() => tick(tickable.map((m) => m.id))} disabled={!tickable.length || chosen.length >= MAX_MAILBOXES} className="rounded px-1.5 py-0.5 text-primary hover:bg-elevated disabled:opacity-50">Select all</button>
+                  <button type="button" onClick={() => edit({ accountIds: [] })} disabled={!chosen.length} className="rounded px-1.5 py-0.5 text-primary hover:bg-elevated disabled:opacity-50">Clear</button>
+                </span>
+                {defaultLimit !== null && <p className="w-full text-muted-foreground">Mailboxes you tick from now on get a limit of {defaultLimit.toLocaleString()} recruiters (change it on each one below).</p>}
+              </div>
               <ul className="space-y-2">
                 {mailboxOrder.map((m) => {
                   const on = chosen.includes(m.id);
                   const idx = chosen.indexOf(m.id);
                   return (
                     <li key={m.id} className={`flex flex-wrap items-center gap-3 rounded border p-2 text-sm ${on ? '' : 'opacity-70'}`}>
-                      <input type="checkbox" checked={on} disabled={m.status !== 'CONNECTED' && !on} onChange={() => edit({ accountIds: on ? chosen.filter((x) => x !== m.id) : [...chosen, m.id] })} aria-label={`Send from ${m.emailAddress}`} />
+                      <input type="checkbox" checked={on} disabled={m.status !== 'CONNECTED' && !on} onChange={() => (on ? edit({ accountIds: chosen.filter((x) => x !== m.id) }) : tick([m.id]))} aria-label={`Send from ${m.emailAddress}`} />
                       <span className="min-w-0 flex-1">
                         {on && <span className="mr-1 text-xs text-muted-foreground">{idx + 1}.</span>}
                         {m.emailAddress} <span className="text-xs text-muted-foreground">{m.own ? '(you)' : m.ownerName ? `(${m.ownerName})` : ''}</span>
@@ -622,7 +698,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                             <input type="number" min={0} value={form.accountLimits?.[m.id] ?? ''} onChange={(e) => {
                               const v = Number(e.target.value);
                               const limits = { ...(form.accountLimits ?? {}) };
-                              if (!e.target.value || v <= 0) delete limits[m.id]; else limits[m.id] = Math.floor(v);
+                              if (!e.target.value || v <= 0) delete limits[m.id]; else limits[m.id] = Math.min(MAX_LIMIT, Math.floor(v));
                               edit({ accountLimits: limits });
                             }} className="w-24 rounded border bg-background px-1 py-0.5" placeholder="no limit" aria-label={`Most recruiters from ${m.emailAddress}`} />
                             recruiters
@@ -635,6 +711,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                   );
                 })}
               </ul>
+              </>
             )}
             {form.mode === 'BCC' && <p className="mt-2 text-xs text-muted-foreground">Limits count whole groups: with groups of {form.groupSize}, a limit of 400 lets that mailbox send {Math.floor(400 / Math.max(1, form.groupSize))} group{Math.floor(400 / Math.max(1, form.groupSize)) === 1 ? '' : 's'} ({(Math.floor(400 / Math.max(1, form.groupSize)) * form.groupSize).toLocaleString()} recruiters).</p>}
           </Section>
@@ -784,6 +861,7 @@ const RECIPIENTS_PER_PAGE = 200; // matches app/api/recruiter-blasts/[id]/route.
 function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPage: (p: number) => void }) {
   const b = detail.blast;
   const [open, setOpen] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(false);
   const openIndex = open ? detail.recipients.findIndex((r) => r.email === open) : -1;
   const { messagesSent: sentMessages, messagesTotal: totalMessages, openedRecruiters } = detail.stats;
   // Open counts only where they name a recruiter: a BCC email is one message for many people.
@@ -829,7 +907,11 @@ function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPa
       </section>
 
       <section className="rounded-lg border bg-card p-4">
-        <h2 className="mb-2 text-sm font-semibold">Recruiters</h2>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">Recruiters</h2>
+          {(detail.counts.total ?? 0) > 0 && <button type="button" onClick={() => setListOpen(true)} className="rounded border px-2.5 py-1 text-xs hover:bg-elevated">Preview list</button>}
+        </div>
+        {listOpen && <RecruiterListPreview blastId={b.id} open onClose={() => setListOpen(false)} />}
         <div className="max-h-96 overflow-auto">
           <table className="w-full min-w-[520px] text-sm">
             <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">

@@ -1,0 +1,67 @@
+Delivered-To: placements.bcc@masaischool.com
+Return-Path: <>
+From: Mail Delivery Subsystem <mailer-daemon@googlemail.com>
+To: placements.bcc@masaischool.com
+Auto-Submitted: auto-replied
+Subject: Delivery Status Notification (Failure)
+References: <CAKbcc-group-2-set2@mail.gmail.com>
+In-Reply-To: <CAKbcc-group-2-set2@mail.gmail.com>
+X-Failed-Recipients: jannat.t@healthfab.in
+Message-ID: <6537f1a2.050a0220.1ab2c.0001.GMR@mx.google.com>
+Date: Sun, 09 Nov 2026 03:12:44 -0800 (PST)
+MIME-Version: 1.0
+Content-Type: multipart/report; boundary="000000000000d1e5d10620b1aa01"; report-type=delivery-status
+
+--000000000000d1e5d10620b1aa01
+Content-Type: multipart/related; boundary="000000000000d1f1b60620b1aa0e"
+
+--000000000000d1f1b60620b1aa0e
+Content-Type: multipart/alternative; boundary="000000000000d1f1bf0620b1aa0f"
+
+--000000000000d1f1bf0620b1aa0f
+Content-Type: text/plain; charset="UTF-8"
+
+
+** Message blocked **
+
+Your message to jannat.t@healthfab.in has been blocked. See technical details below for more information.
+
+The response from the remote server was:
+452 4.7.1 Mailbox delivery restricted by policy error
+
+--000000000000d1f1bf0620b1aa0f
+Content-Type: text/html; charset="UTF-8"
+
+<html><head><style>* { font-family:Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif; }</style></head><body><table><tr><td><h1>Message blocked</h1><p>Your message to <a style='color:#212121;text-decoration:none'><b>jannat.t@healthfab.in</b></a> has been blocked. See technical details below for more information.</p></td></tr><tr><td><p>The response from the remote server was:</p><p style='font-family:monospace'>452 4.7.1 Mailbox delivery restricted by policy error</p></td></tr></table></body></html>
+
+--000000000000d1f1bf0620b1aa0f--
+
+--000000000000d1f1b60620b1aa0e--
+
+--000000000000d1e5d10620b1aa01
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; googlemail.com
+Arrival-Date: Thu, 06 Nov 2026 04:31:02 -0800 (PST)
+X-Original-Message-ID: <CAKbcc-group-2-set2@mail.gmail.com>
+
+Final-Recipient: rfc822; jannat.t@healthfab.in
+Action: failed
+Status: 4.7.1
+Remote-MTA: dns; healthfab-in.mail.protection.outlook.com. (52.101.68.2, the server for the domain healthfab.in.)
+Diagnostic-Code: smtp; 452 4.7.1 Mailbox delivery restricted by policy error
+Last-Attempt-Date: Sun, 09 Nov 2026 03:12:44 -0800 (PST)
+
+--000000000000d1e5d10620b1aa01
+Content-Type: message/rfc822
+
+From: Placements <placements.bcc@masaischool.com>
+To: placements.bcc@masaischool.com
+Date: Thu, 6 Nov 2026 18:00:58 +0530
+Message-ID: <CAKbcc-group-2-set2@mail.gmail.com>
+Subject: Masai School | Recruiter drive
+Content-Type: text/plain; charset="UTF-8"
+
+Hello, sharing our upcoming drive.
+
+--000000000000d1e5d10620b1aa01--

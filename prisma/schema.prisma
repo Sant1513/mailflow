@@ -1196,6 +1196,15 @@ model EmailSuppression {
   addedByUserId String?
   detail        String?  @db.Text                 // bounce error message / reason detail
   campaignId    String?
+  /// Fine-grained bounce category (lib/email/dsn.ts): USER_UNKNOWN | DOMAIN_NOT_FOUND |
+  /// MAILBOX_DISABLED | MAILBOX_FULL | POLICY_BLOCK | SPAM_BLOCK | OTHER_HARD | LEFT_COMPANY | COMPLAINT.
+  category      String?
+  /// The server's status code: enhanced (5.1.1) when given, else the SMTP reply (550).
+  statusCode    String?
+  /// Plain-English reason ("Address doesn't exist"); `detail` keeps the server's own words.
+  remark        String?
+  /// The Recruiter Bulk Send it bounced on (no relation: the send may be deleted).
+  recruiterBlastId String?
   createdAt     DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -1204,6 +1213,29 @@ model EmailSuppression {
 
   @@unique([workspaceId, email])
   @@index([workspaceId])
+  @@index([workspaceId, createdAt])
+}
+
+/// Bounces that don't suppress on their own (lib/email/ndr.ts): a full mailbox (suppressed on its
+/// second notice within 30 days) and temporary delays (only noted). One row per notice and address.
+model SoftBounce {
+  id               String   @id @default(cuid())
+  organizationId   String
+  workspaceId      String
+  email            String
+  /// MAILBOX_FULL | TEMPORARY | MESSAGE_TOO_LARGE
+  category         String
+  statusCode       String?
+  detail           String?  @db.Text
+  /// The notice (Gmail message id) — the same notice is counted once however often it's read.
+  gmailMessageId   String?
+  campaignId       String?
+  recruiterBlastId String?
+  occurredAt       DateTime
+  createdAt        DateTime @default(now())
+
+  @@unique([gmailMessageId, email])
+  @@index([organizationId, email, category, occurredAt])
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

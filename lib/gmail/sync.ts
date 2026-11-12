@@ -5,6 +5,7 @@ import { parseAddressList, parseGmailMessage, type GmailMessage } from '@/lib/gm
 import { ingestInboundMessage, RetryLaterError, type IngestOutcome } from '@/lib/gmail/ingest';
 import { parseUnsubscribeSubject } from '@/lib/email/unsubscribeByEmail';
 import { recruiterSendRefs } from '@/lib/recruiterSend/replies';
+import { looksLikeDeliveryReport } from '@/lib/email/dsn';
 import type { EmailProviderAccount } from '@prisma/client';
 
 /**
@@ -28,7 +29,8 @@ import type { EmailProviderAccount } from '@prisma/client';
  *   - our own mail in an unknown thread is skipped without a fetch;
  *   - everything else gets a cheap metadata-only fetch (From, In-Reply-To,
  *     References, labels), and only mail that answers something MailFlow
- *     sent or comes from a known Contact is fetched in full.
+ *     sent, comes from a known Contact, or is a bounce / delivery report
+ *     (lib/email/dsn.ts looksLikeDeliveryReport) is fetched in full.
  * Work runs a few messages at a time, under a wall-clock budget, and the
  * history cursor advances to the last record fully processed, so a run that
  * stops early resumes exactly where it left off next time (`remaining` > 0
@@ -54,6 +56,12 @@ export interface MessageMetadata {
   references: string | null;
   /** Subject header: an "Unsubscribe <code>" email starts a new thread from someone who may not be a contact. */
   subject?: string | null;
+  /** Display name of the sender ("Mail Delivery Subsystem"), Content-Type, Auto-Submitted and
+   *  X-Failed-Recipients: how a bounce / delivery report is recognised before a full fetch. */
+  fromName?: string | null;
+  contentType?: string | null;
+  autoSubmitted?: string | null;
+  failedRecipients?: string | null;
 }
 
 export interface GmailSource {
@@ -166,16 +174,22 @@ export function gmailSourceFor(account: EmailProviderAccount): GmailSource {
           userId: 'me',
           id,
           format: 'metadata',
-          metadataHeaders: ['From', 'In-Reply-To', 'References', 'Subject'],
+          metadataHeaders: ['From', 'In-Reply-To', 'References', 'Subject', 'Content-Type', 'Auto-Submitted', 'X-Failed-Recipients'],
         });
         const headers = res.data.payload?.headers ?? undefined;
+        const from = parseAddressList(headerValue(headers, 'from'))[0];
         return {
           threadId: res.data.threadId ?? null,
           labelIds: res.data.labelIds ?? [],
-          fromEmail: parseAddressList(headerValue(headers, 'from'))[0]?.email?.toLowerCase() ?? null,
+          fromEmail: from?.email?.toLowerCase() ?? null,
+          fromName: from?.name ?? null,
           inReplyTo: headerValue(headers, 'in-reply-to'),
           references: headerValue(headers, 'references'),
           subject: headerValue(headers, 'subject'),
+          // The message's own Content-Type (multipart/report for a delivery report).
+          contentType: headerValue(headers, 'content-type') ?? res.data.payload?.mimeType ?? null,
+          autoSubmitted: headerValue(headers, 'auto-submitted'),
+          failedRecipients: headerValue(headers, 'x-failed-recipients'),
         };
       } catch (err) {
         const status = Number((err as { code?: number }).code);
@@ -454,6 +468,12 @@ export async function syncAccount(
         // "Unsubscribe rb-…/cj-…" from the Unsubscribe button in our emails: a new thread, usually
         // from someone who isn't a contact yet (a BCC recruiter), so it would never pass the rules
         // below. A plain "Unsubscribe" with no code still has to pass them.
+        toIngest.push(m.entry.messageId);
+      } else if (looksLikeDeliveryReport(m.meta)) {
+        // A bounce / delivery report (mailer-daemon@, postmaster@, "Mail Delivery Subsystem",
+        // multipart/report, X-Failed-Recipients): Office 365 sends them in a new thread with no
+        // In-Reply-To, so the rules below would drop them. They're rare; ingestion reads the
+        // report and matches it to our sends, and leaves alone any that aren't about MailFlow mail.
         toIngest.push(m.entry.messageId);
       } else {
         candidates.push({ entry: m.entry, meta: m.meta });

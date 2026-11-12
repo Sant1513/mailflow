@@ -37,15 +37,19 @@ vi.mock('@/lib/ai/context', () => ({ classifyStoredMessage: vi.fn(async () => nu
 vi.mock('@/lib/ai/triage', () => ({ triageReply: vi.fn() }));
 vi.mock('@/lib/webhooks/dispatch', () => ({ dispatchWebhook: vi.fn(async () => undefined) }));
 vi.mock('@/lib/email/bounces', () => ({
-  suppressBounced: vi.fn(async (): Promise<string[]> => ['gone@corp.com']),
   parseBounce: vi.fn(() => ({ recipients: ['gone@corp.com'], permanent: true, detail: '550 5.1.1 address not found' })),
   recordHardBounce: vi.fn(async () => undefined),
 }));
 vi.mock('@/lib/replyRules/apply', () => ({ applyReplyRules: vi.fn() }));
+// Matching and suppression of delivery reports are tested in tests/email/ndr.test.ts.
+vi.mock('@/lib/email/ndr', () => ({
+  applyDeliveryReport: vi.fn(async (): Promise<any[]> => [{ email: 'gone@corp.com', category: 'USER_UNKNOWN', decision: 'SUPPRESS' }]),
+  willSuppress: (d: string) => d === 'SUPPRESS' || d === 'SUPPRESS_REPEAT',
+}));
 
 const { ingestInboundMessage, RetryLaterError } = await import('@/lib/gmail/ingest');
 const { gmailThreadOf, recruiterThreadKey } = await import('@/lib/recruiterSend/replies');
-const { suppressBounced } = await import('@/lib/email/bounces');
+const { applyDeliveryReport } = await import('@/lib/email/ndr');
 
 // A teammate's backup mailbox carried the send; the admin (u-admin, workspace w-admin) made it.
 const mailbox = { id: 'acc-backup', emailAddress: 'backup@masaischool.com', workspaceId: 'w-teammate', organizationId: 'org1', userId: 'u-teammate' };
@@ -137,26 +141,32 @@ describe('recruiter replies', () => {
     expect(created).toHaveLength(0);
   });
 
-  it("suppresses bounced addresses in the admin's workspace instead of opening a conversation", async () => {
-    const out = await ingestInboundMessage(mailbox, reply('mailer-daemon@googlemail.com', { subject: 'Delivery Status Notification (Failure)' }));
-    expect(out.status).toBe('IGNORED');
+  it("acts on a recruiter bounce (suppress + mark bounced, lib/email/ndr.ts) instead of opening a conversation", async () => {
+    const out = await ingestInboundMessage(
+      mailbox,
+      reply('mailer-daemon@googlemail.com', {
+        subject: 'Delivery Status Notification (Failure)',
+        headers: { 'x-failed-recipients': 'gone@corp.com' },
+        plainTextBody: "Address not found\nYour message wasn't delivered to gone@corp.com because the address couldn't be found.\n550 5.1.1 The email account that you tried to reach does not exist.",
+      }),
+    );
+    expect(out).toMatchObject({ status: 'IGNORED', reason: expect.stringContaining('gone@corp.com USER_UNKNOWN (suppressed)') });
     expect(created).toHaveLength(0);
-    expect(suppressBounced).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w-admin', label: expect.stringContaining('Recruiter Bulk Send') }));
-    // ...and shows as bounced, with the reason, on the send's page.
-    expect(db.recruiterBlastRecipient.updateMany).toHaveBeenCalledWith({
-      where: { blastId: 'b1', email: { in: ['gone@corp.com'] } },
-      data: { status: 'BOUNCED', skipReason: 'Bounced: 550 5.1.1 address not found' },
-    });
+    const ctx = vi.mocked(applyDeliveryReport).mock.calls[0]![0] as any;
+    expect(ctx).toMatchObject({ gmailMessageId: 'g-mailer-daemon@googlemail.com', gmailThreadId: 'thread-1', conversation: null });
+    expect(ctx.report.kind).toBe('BOUNCE');
+    expect(ctx.report.failures[0]).toMatchObject({ email: 'gone@corp.com', category: 'USER_UNKNOWN', statusCode: '5.1.1' });
+    expect(ctx.report.referencedIds).toContain('<sent-1@masaischool.com>');
   });
 
-  it('a recruiter bounce whose suppression fails is handed back to the sync to retry, not dropped', async () => {
-    vi.mocked(suppressBounced).mockRejectedValueOnce(new Error('P1001 can’t reach database'));
+  it('a recruiter bounce whose handling fails is handed back to the sync to retry, not dropped', async () => {
+    vi.mocked(applyDeliveryReport).mockRejectedValueOnce(new Error('P1001 can’t reach database'));
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await expect(
       ingestInboundMessage(mailbox, reply('mailer-daemon@googlemail.com', { subject: 'Delivery Status Notification (Failure)' }))
     ).rejects.toBeInstanceOf(RetryLaterError);
     errSpy.mockRestore();
-    expect(db.recruiterBlastRecipient.updateMany).not.toHaveBeenCalled();
+    expect(created).toHaveLength(0);
   });
 
   it('an unsubscribe email whose suppression fails is handed back to the sync to retry', async () => {
@@ -169,21 +179,42 @@ describe('recruiter replies', () => {
     expect(created).toHaveLength(0);
   });
 
-  it('a stored bounce notice is taken back out when suppression keeps failing, so the next sync retries it', async () => {
-    // A known (non-recruiter) conversation: the notice is stored there, then suppression fails.
+  it('a bounce in a known conversation is acted on before it is stored: a failure stores nothing, so the next sync retries it', async () => {
     db.conversation.findUnique.mockResolvedValue({ id: 'c-known', contactId: 'contact-1', workspaceId: 'w-teammate', ownerId: 'u-teammate', assigneeId: null, recruiterBlastId: null, recipientEmail: 'gone@corp.com' });
-    vi.mocked(suppressBounced).mockRejectedValue(new Error('connection reset'));
+    vi.mocked(applyDeliveryReport).mockRejectedValueOnce(new Error('connection reset'));
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await expect(
       ingestInboundMessage(mailbox, reply('mailer-daemon@googlemail.com', { subject: 'Delivery Status Notification (Failure)' }))
     ).rejects.toBeInstanceOf(RetryLaterError);
     errSpy.mockRestore();
-    expect(suppressBounced).toHaveBeenCalledTimes(3);
-    expect(tx.conversationMessage.delete).toHaveBeenCalledWith({ where: { id: 'msg1' } });
-    expect(tx.recipientHistory.deleteMany).toHaveBeenCalledWith({ where: { refId: 'msg1' } });
-    vi.mocked(suppressBounced).mockReset().mockResolvedValue(['gone@corp.com']);
+    expect(tx.conversationMessage.create).not.toHaveBeenCalled();
+    // With the write working, the notice is acted on with the conversation as context, then stored there.
+    const out = await ingestInboundMessage(mailbox, reply('mailer-daemon@googlemail.com', { subject: 'Delivery Status Notification (Failure)' }));
+    expect(out.status).toBe('STORED');
+    expect(vi.mocked(applyDeliveryReport).mock.calls[1]![0]).toMatchObject({ conversation: { workspaceId: 'w-teammate', recipientEmail: 'gone@corp.com' } });
     db.conversation.findUnique.mockReset().mockResolvedValue(null);
-  }, 10_000);
+  });
+
+  it('an automatic reply saying the recruiter has left the company suppresses them (LEFT_COMPANY), without a conversation', async () => {
+    const out = await ingestInboundMessage(
+      mailbox,
+      reply('ravi@corp.com', {
+        headers: { 'auto-submitted': 'auto-replied' },
+        subject: 'Automatic reply: Hiring partners',
+        plainTextBody: 'Thank you for your email. Ravi is no longer with Corp. Please write to hr@corp.com instead.',
+      }),
+    );
+    expect(out.status).toBe('IGNORED');
+    expect(created).toHaveLength(0);
+    const ctx = vi.mocked(applyDeliveryReport).mock.calls[0]![0] as any;
+    expect(ctx.report.kind).toBe('LEFT_COMPANY');
+    expect(ctx.report.failures[0]).toMatchObject({ email: 'ravi@corp.com', category: 'LEFT_COMPANY' });
+  });
+
+  it('an ordinary out-of-office is not a left-the-company signal', async () => {
+    await ingestInboundMessage(mailbox, reply('ooo2@corp.com', { headers: { 'auto-submitted': 'auto-replied' }, subject: 'Out of office', plainTextBody: 'I am on leave until Monday with limited access to email.' }));
+    expect(applyDeliveryReport).not.toHaveBeenCalled();
+  });
 
   it('leaves unrelated mail alone', async () => {
     db.recruiterBlastGroup.findFirst.mockResolvedValue(null);

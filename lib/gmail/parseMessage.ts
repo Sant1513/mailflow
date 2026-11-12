@@ -63,6 +63,48 @@ export interface ParsedMessage {
   attachments: ParsedAttachment[];
   /** Raw header map (lower-cased names) for the classifier. */
   headers: Record<string, string>;
+  /** The machine-readable parts of a delivery / complaint report (lib/email/dsn.ts), when present. */
+  report?: ReportParts | null;
+}
+
+/**
+ * Parts of a multipart/report: the message/delivery-status body (RFC 3464), a feedback report
+ * (ARF spam complaint), and the headers of the original message the report is about
+ * (text/rfc822-headers or the attached message/rfc822).
+ */
+export interface ReportParts {
+  deliveryStatus: string | null;
+  feedbackReport: string | null;
+  originalHeaders: Record<string, string> | null;
+}
+
+/** "Name: value" header lines (with folded continuations) into a lower-cased map. */
+export function parseHeaderBlock(text: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  let last: string | null = null;
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+    if (!line.trim()) {
+      if (Object.keys(map).length) break; // end of the header block
+      continue;
+    }
+    if (/^[ \t]/.test(line) && last) {
+      map[last] = `${map[last]} ${line.trim()}`;
+      continue;
+    }
+    const m = line.match(/^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$/);
+    if (!m) {
+      last = null;
+      continue;
+    }
+    const key = m[1]!.toLowerCase();
+    if (!(key in map)) {
+      map[key] = m[2]!.trim();
+      last = key;
+    } else {
+      last = null;
+    }
+  }
+  return map;
 }
 
 /** Gmail encodes bodies as base64url without padding. */
@@ -110,14 +152,56 @@ function headerMap(headers: GmailHeader[] | null | undefined): Record<string, st
   return map;
 }
 
-/** Walks the MIME tree collecting the first text/plain, first text/html, and attachments. */
-function walkParts(
-  part: GmailPart | null | undefined,
-  acc: { plain: string | null; html: string | null; attachments: ParsedAttachment[] }
-): void {
+interface WalkAcc {
+  plain: string | null;
+  html: string | null;
+  attachments: ParsedAttachment[];
+  report: ReportParts;
+  /** Inside an attached message/rfc822: its text is the original's, not this message's. */
+  inner?: WalkAcc;
+}
+
+/**
+ * Walks the MIME tree collecting the first text/plain, first text/html, attachments, and the
+ * parts of a delivery report. The text of an attached message (the copy of the original a
+ * bounce carries) is only used when the message has no text of its own.
+ */
+function walkParts(part: GmailPart | null | undefined, acc: WalkAcc, insideAttachedMessage = false): void {
   if (!part) return;
   const mime = (part.mimeType ?? '').toLowerCase();
   const filename = part.filename ?? '';
+
+  if (mime === 'message/delivery-status' || mime === 'message/global-delivery-status') {
+    const text = decodeBase64Url(part.body?.data);
+    if (text && !insideAttachedMessage) acc.report.deliveryStatus = acc.report.deliveryStatus ? `${acc.report.deliveryStatus}\n\n${text}` : text;
+    return;
+  }
+  if (mime === 'message/feedback-report') {
+    const text = decodeBase64Url(part.body?.data);
+    if (text && !insideAttachedMessage) acc.report.feedbackReport = text;
+    return;
+  }
+  if ((mime === 'text/rfc822-headers' || mime === 'text/global-headers') && !insideAttachedMessage && !acc.report.originalHeaders) {
+    const text = decodeBase64Url(part.body?.data);
+    if (text) acc.report.originalHeaders = parseHeaderBlock(text);
+    if (!filename) return;
+  }
+  if ((mime === 'message/rfc822' || mime === 'message/global') && !insideAttachedMessage) {
+    // Gmail gives the attached message's own headers on its first child part; a raw body is
+    // parsed when that's all there is.
+    if (!acc.report.originalHeaders) {
+      const childHeaders = headerMap(part.parts?.[0]?.headers);
+      if (childHeaders['message-id'] || childHeaders['to'] || childHeaders['subject']) acc.report.originalHeaders = childHeaders;
+      else if (part.body?.data) acc.report.originalHeaders = parseHeaderBlock(decodeBase64Url(part.body.data));
+    }
+    if (filename) {
+      acc.attachments.push({ filename, mimeType: mime, size: part.body?.size ?? 0, gmailAttachmentId: part.body?.attachmentId ?? null });
+      return;
+    }
+    acc.inner = acc.inner ?? { plain: null, html: null, attachments: acc.attachments, report: acc.report };
+    for (const child of part.parts ?? []) walkParts(child, acc.inner, true);
+    return;
+  }
 
   if (filename) {
     acc.attachments.push({
@@ -132,7 +216,7 @@ function walkParts(
     acc.html = decodeBase64Url(part.body.data);
   }
 
-  for (const child of part.parts ?? []) walkParts(child, acc);
+  for (const child of part.parts ?? []) walkParts(child, acc, insideAttachedMessage);
 }
 
 export function parseGmailMessage(message: GmailMessage): ParsedMessage {
@@ -141,8 +225,14 @@ export function parseGmailMessage(message: GmailMessage): ParsedMessage {
   }
 
   const headers = headerMap(message.payload?.headers);
-  const acc = { plain: null as string | null, html: null as string | null, attachments: [] as ParsedAttachment[] };
+  const acc: WalkAcc = { plain: null, html: null, attachments: [], report: { deliveryStatus: null, feedbackReport: null, originalHeaders: null } };
   walkParts(message.payload, acc);
+  // A message whose only text is inside an attached message (forwarded as attachment) keeps that text.
+  if (acc.plain === null && acc.html === null && acc.inner) {
+    acc.plain = acc.inner.plain;
+    acc.html = acc.inner.html;
+  }
+  const hasReport = !!(acc.report.deliveryStatus || acc.report.feedbackReport || acc.report.originalHeaders);
 
   const receivedAt = message.internalDate ? new Date(Number(message.internalDate)) : new Date();
   const dateHeader = headers['date'] ? new Date(headers['date']) : null;
@@ -168,6 +258,7 @@ export function parseGmailMessage(message: GmailMessage): ParsedMessage {
     plainTextBody: acc.plain,
     attachments: acc.attachments,
     headers,
+    report: hasReport ? acc.report : null,
   };
 }
 

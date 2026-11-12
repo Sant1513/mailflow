@@ -184,3 +184,36 @@ describe('Gmail sync — the cursor and errors', () => {
     expect(isTransientSyncError(Object.assign(new Error('Invalid id value'), { code: 400 }))).toBe(false);
   });
 });
+
+describe('Gmail sync — bounce / delivery reports', () => {
+  const meta = (over: Record<string, unknown>) => ({ threadId: 'new-thread', labelIds: ['INBOX'], inReplyTo: null, references: null, ...over }) as any;
+
+  it('fetches an Office 365 NDR from postmaster@ in a new thread with no In-Reply-To (2026-11-12 miss)', async () => {
+    const source = sourceWith(1);
+    source.getMessageMetadata.mockResolvedValue(meta({ fromEmail: 'postmaster@atfenix.com', subject: 'Undeliverable: Masai School | Hiring partners', contentType: 'multipart/report; report-type=delivery-status' }));
+    source.getMessage.mockResolvedValue({ id: 'm0', threadId: 'new-thread', labelIds: ['INBOX'], payload: { headers: [] } });
+    await syncAccount(account, source as any);
+    expect(source.getMessage).toHaveBeenCalledWith('m0');
+    expect(ingestInboundMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetches a Gmail DSN from mailer-daemon@, and one recognised only by "Mail Delivery System" + Auto-Submitted', async () => {
+    const source = sourceWith(2);
+    source.getMessageMetadata.mockImplementation(async (id: string) =>
+      id === 'm0'
+        ? meta({ fromEmail: 'mailer-daemon@googlemail.com', subject: 'Delivery Status Notification (Failure)' })
+        : meta({ fromEmail: 'noc@isp.example', fromName: 'Mail Delivery System', subject: 'Returned mail: see transcript for details', autoSubmitted: 'auto-generated' }),
+    );
+    source.getMessage.mockImplementation(async (id: string) => ({ id, threadId: 'new-thread', labelIds: ['INBOX'], payload: { headers: [] } }));
+    await syncAccount(account, source as any);
+    expect(source.getMessage).toHaveBeenCalledTimes(2);
+    expect(ingestInboundMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('still leaves ordinary mail from strangers alone', async () => {
+    const source = sourceWith(1);
+    source.getMessageMetadata.mockResolvedValue(meta({ fromEmail: 'stranger@x.com', subject: 'Lunch?' }));
+    await syncAccount(account, source as any);
+    expect(source.getMessage).not.toHaveBeenCalled();
+  });
+});

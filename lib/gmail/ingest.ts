@@ -5,11 +5,12 @@ import { triageReply } from '@/lib/ai/triage';
 import { normalizeSubject, type ParsedMessage } from '@/lib/gmail/parseMessage';
 import { MessageDirection, MessageClassification, type EmailProviderAccount } from '@prisma/client';
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
-import { parseBounce, suppressBounced } from '@/lib/email/bounces';
+import { detectLeftCompany, isComplaintReport, leftCompanyReport, parseDeliveryReport, type DeliveryReport } from '@/lib/email/dsn';
+import { applyDeliveryReport, willSuppress, type NdrAction } from '@/lib/email/ndr';
 import { handleUnsubscribeEmail, parseUnsubscribeSubject } from '@/lib/email/unsubscribeByEmail';
 import { cleanName } from '@/lib/contacts/names';
 import { applyReplyRules } from '@/lib/replyRules/apply';
-import { findRecruiterSend, markRecruiterBounced, markRecruiterReplied, recruiterContact, recruiterThreadKey, type RecruiterReplyMatch } from '@/lib/recruiterSend/replies';
+import { findRecruiterSend, markRecruiterReplied, recruiterContact, recruiterThreadKey, type RecruiterReplyMatch } from '@/lib/recruiterSend/replies';
 
 /**
  * §47-§50 inbound ingestion. Given an already-parsed Gmail message and the
@@ -43,8 +44,6 @@ export class RetryLaterError extends Error {
     this.name = 'RetryLaterError';
   }
 }
-
-const SUPPRESS_ATTEMPTS = 3;
 
 export type IngestOutcome =
   | { status: 'STORED'; conversationId: string; messageId: string; classification: string; created: boolean }
@@ -150,6 +149,37 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   const isReply = countsAsReply(cls.classification);
   const isBounce = cls.classification === 'BOUNCE' || cls.classification === 'DELIVERY_FAILURE';
 
+  // ── Bounces, spam complaints, "has left the company" auto-replies (lib/email/ndr.ts) ──
+  // Acted on before anything is stored: matched to the send it's about (Message-ID, thread, or the
+  // failed address + this mailbox's recent sends), suppressed by category, and the send marked
+  // bounced. A failure goes back to the sync, which keeps the message for the next run; the
+  // writes are idempotent, so a retry never double-counts.
+  let report: DeliveryReport | null = null;
+  if (isBounce || isComplaintReport(message)) {
+    report = parseDeliveryReport(message, [account.emailAddress], { assumeReport: isBounce });
+  } else if (!isReply && fromEmail && (cls.classification === 'OUT_OF_OFFICE' || cls.classification === 'AUTO_REPLY')) {
+    const phrase = detectLeftCompany(message);
+    if (phrase) report = leftCompanyReport(fromEmail, phrase, message);
+  }
+  let reportActions: NdrAction[] = [];
+  if (report) {
+    const r = report;
+    reportActions = await applyDeliveryReport({
+      account,
+      report: r,
+      gmailMessageId: message.gmailMessageId,
+      gmailThreadId: message.gmailThreadId,
+      receivedAt: message.receivedAt,
+      conversation: knownThread ? { workspaceId: knownThread.workspaceId, recipientEmail: knownThread.recipientEmail } : null,
+    }).catch((err) => {
+      console.error('[ingest] delivery report handling failed; will retry', err);
+      throw new RetryLaterError(`Delivery report handling failed: ${(err as Error).message ?? String(err)}`, err);
+    });
+  }
+  const reportSummary = reportActions.length
+    ? reportActions.map((a) => `${a.email ?? '?'} ${a.category}${willSuppress(a.decision) ? ' (suppressed)' : ` (${a.decision.toLowerCase()})`}`).join(', ')
+    : 'nothing matched';
+
   if (!knownThread) {
     // Not a known thread. Does it answer something we sent?
     const referenced = [message.inReplyTo, ...(message.references ?? '').split(/\s+/)]
@@ -169,17 +199,8 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
     const recruiterSend = contactId ? null : await findRecruiterSend(account, referenced, message.gmailThreadId);
     if (recruiterSend) {
       if (isBounce) {
-        // On the suppression list with the reason and which send, and "bounced" on the send's page.
-        const label = `Bounce notice (Recruiter Bulk Send “${recruiterSend.blastName}”)`;
-        // Nothing is stored for this notice, so a failure goes back to the sync to try again.
-        const bounced = await suppressBounced({ workspaceId: recruiterSend.workspaceId, conversationRecipient: null, message, ownAddresses: [account.emailAddress], label }).catch((err) => {
-          console.error('[ingest] recruiter bounce suppression failed; will retry', err);
-          throw new RetryLaterError(`Recruiter bounce suppression failed: ${(err as Error).message ?? String(err)}`, err);
-        });
-        await markRecruiterBounced(recruiterSend.blastId, bounced, `Bounced: ${parseBounce(message, [account.emailAddress]).detail}`).catch((err) =>
-          console.error('[ingest] recruiter bounce mark failed', err),
-        );
-        return { status: 'IGNORED', reason: 'Bounce from a recruiter send: the address was suppressed.' };
+        // Already suppressed and marked "bounced" on the send's page above; not a conversation.
+        return { status: 'IGNORED', reason: `Bounce from a recruiter send: ${reportSummary}.` };
       }
       if (!fromEmail) return { status: 'IGNORED', reason: 'Recruiter reply without a sender address.' };
       knownThread = await prisma.conversation.findUnique({
@@ -197,6 +218,7 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
     // inbox is for. We only track threads that MailFlow started or that the
     // student started in direct reply to something MailFlow sent (Rule 2).
     if (!contactId) {
+      if (report) return { status: 'IGNORED', reason: `${report.kind === 'BOUNCE' ? 'Delivery report' : report.kind === 'COMPLAINT' ? 'Spam complaint' : 'Automatic reply'}: ${reportSummary}.` };
       return { status: 'IGNORED', reason: `Not a MailFlow thread and the message does not reply to a message MailFlow sent.` };
     }
   }
@@ -351,37 +373,8 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   // every inbound reply. The work is bounded, so a generous ceiling is safe.
   { timeout: 30_000, maxWait: 10_000 });
 
-  // A bounce notice: suppress the dead address so it is never mailed again (lib/email/bounces.ts).
+  // Bounce notices were already acted on above, before storing (lib/email/ndr.ts).
   const { owner, ...stored } = result;
-  if (isBounce) {
-    // Retried, and if it still fails the stored notice is taken back out: a stored message is
-    // never fetched again (it would be a DUPLICATE), so the dead address would stay mailable.
-    let lastError: unknown = null;
-    for (let attempt = 1; attempt <= SUPPRESS_ATTEMPTS; attempt++) {
-      try {
-        await suppressBounced({
-          // The workspace that SENT it (a campaign sent through a teammate's backup mailbox belongs
-          // to the campaign's workspace, not the mailbox owner's); recordHardBounce covers the rest.
-          workspaceId: owner.conversationWorkspaceId,
-          conversationRecipient: knownThread?.recipientEmail ?? null,
-          message,
-          ownAddresses: [account.emailAddress],
-        });
-        lastError = null;
-        break;
-      } catch (err) {
-        lastError = err;
-        if (attempt < SUPPRESS_ATTEMPTS) await new Promise((r) => setTimeout(r, 400 * attempt));
-      }
-    }
-    if (lastError) {
-      console.error('[ingest] bounce suppression failed; removing the notice so the next sync retries', lastError);
-      await unstoreMessage(stored.messageId, stored.conversationId, stored.created).catch((err) =>
-        console.error('[ingest] could not remove the bounce notice for retry', { messageId: stored.messageId, err })
-      );
-      throw new RetryLaterError(`Bounce suppression failed: ${(lastError as Error).message ?? String(lastError)}`, lastError);
-    }
-  }
 
   if (isReply) {
     // Their display name ("Bhuvan C <…>") for a contact that has none (never overwrites).
@@ -422,18 +415,4 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   }
 
   return { status: 'STORED', ...stored, classification: cls.classification };
-}
-
-/** Takes a just-stored inbound message back out, so the next sync ingests it again. */
-async function unstoreMessage(messageId: string, conversationId: string, conversationCreated: boolean): Promise<void> {
-  await prisma.$transaction(async (tx) => {
-    await tx.recipientHistory.deleteMany({ where: { refId: messageId } });
-    await tx.attachment.deleteMany({ where: { conversationMessageId: messageId } });
-    await tx.conversationMessage.delete({ where: { id: messageId } });
-    if (conversationCreated) {
-      await tx.conversation.deleteMany({ where: { id: conversationId, messages: { none: {} } } });
-    } else {
-      await tx.conversation.update({ where: { id: conversationId }, data: { messageCount: { decrement: 1 } } });
-    }
-  });
 }

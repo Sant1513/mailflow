@@ -24,8 +24,8 @@ export interface ClassificationResult {
   reason: string;
 }
 
-const BOUNCE_SENDERS = /^(mailer-daemon|postmaster|mail-daemon|bounce|no-?reply-bounce)@/i;
-const DELIVERY_SUBJECT = /(delivery (status )?(notification|failure)|undeliverable|returned mail|mail delivery (failed|subsystem)|failure notice|could not be delivered)/i;
+const BOUNCE_SENDERS = /^(mailer-daemon|postmaster|mail-daemon|mailerdaemon|bounces?|no-?reply-bounce|microsoftexchange[0-9a-f]*)@/i;
+const DELIVERY_SUBJECT = /(delivery (status )?(notification|failure|has failed|delayed)|undeliverable|undelivered mail|returned mail|mail delivery (failed|failure|subsystem|system)|failure notice|could(n['’]t| not) be delivered|message (not delivered|blocked)|non-?delivery|mail system error)/i;
 const OOO_SUBJECT = /(out of (the )?office|auto(matic)?[- ]?reply|automatic response|away from (my )?(office|desk|email)|on (annual |vacation |sick )?leave|currently unavailable)/i;
 const NOREPLY_SENDER = /^(no-?reply|do-?not-?reply|notifications?|noreply)[@.-]/i;
 
@@ -38,6 +38,9 @@ export function classifyInbound(message: Pick<ParsedMessage, 'headers' | 'from' 
   const contentType = (h['content-type'] ?? '').toLowerCase();
   if (contentType.includes('multipart/report') && contentType.includes('delivery-status')) {
     return { classification: 'DELIVERY_FAILURE', confidence: 0.98, reason: 'multipart/report delivery-status' };
+  }
+  if (h['x-failed-recipients']) {
+    return { classification: 'DELIVERY_FAILURE', confidence: 0.97, reason: 'X-Failed-Recipients' };
   }
   if (BOUNCE_SENDERS.test(fromEmail)) {
     return { classification: 'BOUNCE', confidence: 0.97, reason: `sender ${fromEmail}` };
