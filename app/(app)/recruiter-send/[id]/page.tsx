@@ -11,6 +11,7 @@ import { VariablePicker, variableProblems } from '@/components/recruiter-send/Va
 import { RecipientPanel } from '@/components/recruiter-send/RecipientPanel';
 import { RecruiterListPreview } from '@/components/recruiter-send/RecruiterListPreview';
 import { ExportMenu } from '@/components/ui/ExportMenu';
+import { estimateRemaining, formatCountdown, formatDuration, formatIst, formatIstSeconds, type EtaBasis } from '@/lib/recruiterSend/eta';
 
 type Mode = 'BCC' | 'INDIVIDUAL';
 interface Video { mode: 'attach'; ref: string; fileName: string; size: number; contentType: string }
@@ -175,6 +176,8 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
   // Live progress while sending: the small /progress response every 15 s (paused while the tab is
   // hidden, refreshed when it is shown); the full send is loaded again only when its status changes.
+  // Time left for a running send: when it should finish, from its pace over the last 10 minutes.
+  const [eta, setEta] = useState<{ at: number | null; basis: EtaBasis; rate: number | null } | null>(null);
   const live = detail && ['SENDING', 'SCHEDULED'].includes(detail.blast.status);
   const liveStatus = detail?.blast.status;
   useEffect(() => {
@@ -186,6 +189,10 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       if (stopped || !res?.ok) return;
       const p = await res.json().catch(() => null);
       if (!p?.blast) return;
+      if (p.pace) {
+        const e = estimateRemaining({ remaining: p.pace.remaining, sentLast10Min: p.pace.sentLast10Min, sentTotal: p.stats?.messagesSent ?? 0, startedAt: p.blast.startedAt });
+        setEta({ at: e.ms === null ? null : Date.now() + e.ms, basis: e.basis, rate: e.ratePerMin });
+      }
       if (p.blast.status !== liveStatus) {
         load();
         return;
@@ -199,6 +206,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       } : d));
     };
     const t = setInterval(tick, 15_000);
+    void tick(); // the first reading right away, so the time left shows without waiting 15 s
     const onVisible = () => { if (!document.hidden) tick(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -465,7 +473,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
       {b.note && <p className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">{b.note}</p>}
 
-      {!draft && <Progress detail={detail} page={recipientPage} onPage={setRecipientPage} />}
+      {!draft && <Progress detail={detail} page={recipientPage} onPage={setRecipientPage} eta={eta} />}
 
       {draft && (
         <>
@@ -839,7 +847,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
               <div className="mt-4 space-y-3 text-sm">
                 <p>
                   <b>{check.eligible.toLocaleString()}</b> of {check.total.toLocaleString()} recruiters will get it, in <b>{check.messages.toLocaleString()}</b> email{check.messages === 1 ? '' : 's'}
-                  {form.mode === 'BCC' ? ` (up to ${check.perMessage} each)` : ''}. About {check.estimatedMinutes} minute{check.estimatedMinutes === 1 ? '' : 's'} with the pause you set.
+                  {form.mode === 'BCC' ? ` (up to ${check.perMessage} each)` : ''}. At least {check.estimatedMinutes} minute{check.estimatedMinutes === 1 ? '' : 's'} (just the pause you set); once it is sending, this page counts down the real time left.
                 </p>
                 {check.messagesPossibleToday < check.messages && (
                   <p className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
@@ -882,7 +890,7 @@ function summaryItems(form: Blast, check: Check, detail: Detail, library: { id: 
     ['Send as', form.mode === 'BCC' ? `BCC groups of up to ${check.perMessage}` : 'Individual copies (one email per recruiter)'],
     ['Recruiters', `${check.eligible.toLocaleString()} will get it${skipped ? ` · ${skipped.toLocaleString()} skipped` : ''} (of ${check.total.toLocaleString()})`],
     ['Batches', `${check.messages.toLocaleString()} email${check.messages === 1 ? '' : 's'}${check.sendOrder !== 'SEQUENTIAL' && check.rounds ? ` in ${check.rounds.toLocaleString()} round${check.rounds === 1 ? '' : 's'} (all mailboxes together)` : ''}`],
-    ['Pause', `${form.gapSeconds}s between emails from the same mailbox · about ${check.estimatedMinutes} min in all`],
+    ['Pause', `${form.gapSeconds}s between emails from the same mailbox · at least ${check.estimatedMinutes} min (the real time left shows once it is sending)`],
     ['From name', form.fromName ?? ''],
     [form.sendOrder === 'SEQUENTIAL' ? 'Sending accounts (in order)' : 'Sending accounts (together)', mailboxes],
     ['To', form.mode === 'BCC' ? form.toAddress ?? '' : 'each recruiter'],
@@ -923,7 +931,70 @@ function pickEditable(b: Blast) {
 
 const RECIPIENTS_PER_PAGE = 200; // matches app/api/recruiter-blasts/[id]/route.ts
 
-function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPage: (p: number) => void }) {
+/** Start, end (expected while it is sending), how long it has run, and a live time-left countdown. */
+/** "13 emails", "1.2 emails", "1 email": the pace in words. */
+function perMinute(rate: number): string {
+  const n = rate >= 10 ? String(Math.round(rate)) : rate.toFixed(1).replace(/\.0$/, '');
+  return `${n} email${n === '1' ? '' : 's'}`;
+}
+
+function SendTimes({ blast, eta }: { blast: Blast; eta: { at: number | null; basis: EtaBasis; rate: number | null } | null }) {
+  const sending = blast.status === 'SENDING';
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!sending) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [sending]);
+  const started = blast.startedAt ? new Date(blast.startedAt).getTime() : null;
+  const ended = blast.completedAt ? new Date(blast.completedAt).getTime() : null;
+  const elapsed = started ? (ended ?? now) - started : null;
+  const left = eta?.at != null ? Math.max(0, eta.at - now) : null;
+  const wait = (blast.note ?? '').replace(/^Waiting:\s*/i, '').trim();
+  const cell = 'min-w-0';
+  const label = 'text-xs text-muted-foreground';
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-3 border-t pt-3 sm:grid-cols-4" aria-label="Send times">
+      <div className={cell}>
+        <div className={label}>{started ? 'Started' : 'Scheduled for'}</div>
+        <div className="text-sm font-semibold">{formatIst(started ?? blast.scheduledAt)}</div>
+      </div>
+      <div className={cell}>
+        <div className={label}>{ended ? 'Ended' : sending && eta?.at != null ? 'Expected end' : 'Ended'}</div>
+        <div className="text-sm font-semibold">{ended ? formatIst(ended) : sending && eta?.at != null ? formatIst(eta.at) : '—'}</div>
+      </div>
+      <div className={cell}>
+        <div className={label}>Time taken so far</div>
+        <div className="text-sm font-semibold tabular-nums">{elapsed !== null ? formatDuration(elapsed) : '—'}</div>
+      </div>
+      <div className={cell}>
+        <div className={label}>{ended ? 'Finished' : 'Time left'}</div>
+        {ended ? (
+          <div className="text-sm font-semibold">Done in {elapsed !== null ? formatDuration(elapsed) : '—'}</div>
+        ) : sending ? (
+          <>
+            <div className="text-xl font-semibold tabular-nums" aria-live="off">
+              {left !== null ? (left > 0 ? formatCountdown(left) : 'finishing…') : eta?.basis === 'waiting' ? 'waiting' : '…'}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {eta?.basis === 'waiting'
+                ? wait || 'Nothing sent for 10 minutes: waiting for a mailbox (its limit or a pause). It carries on by itself.'
+                : eta?.rate
+                  ? `about ${perMinute(eta.rate)} a minute; worked out again as it sends`
+                  : 'working it out from the first emails…'}
+            </div>
+          </>
+        ) : blast.status === 'PAUSED' ? (
+          <div className="text-sm font-semibold">Paused</div>
+        ) : (
+          <div className="text-sm font-semibold">—</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Progress({ detail, page, onPage, eta }: { detail: Detail; page: number; onPage: (p: number) => void; eta: { at: number | null; basis: EtaBasis; rate: number | null } | null }) {
   const b = detail.blast;
   const [open, setOpen] = useState<string | null>(null);
   const [listOpen, setListOpen] = useState(false);
@@ -945,6 +1016,7 @@ function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPa
         <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={sentMessages} aria-valuemax={totalMessages} aria-label="Emails sent">
           <div className="h-full bg-primary" style={{ width: `${share * 100}%` }} />
         </div>
+        <SendTimes blast={b} eta={eta} />
         {b.mode === 'BCC' && <p className="mt-2 text-xs text-muted-foreground">Replies show who engaged. Opens aren&apos;t tracked for BCC sends (one email goes to many recruiters, so it can&apos;t say who opened); use individual copies to see opens.</p>}
       </section>
 
@@ -961,8 +1033,8 @@ function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPa
                   <td className="py-1 pr-2">{g.seq}</td>
                   <td className="py-1 pr-2">{g.recipientCount}</td>
                   <td className="py-1 pr-2 text-xs">{g.fromEmail ?? '—'}</td>
-                  <td className="whitespace-nowrap py-1 pr-2 text-xs">{g.sentAt && g.status === 'SENT' ? new Date(g.sentAt).toLocaleString() : '—'}</td>
-                  {showOpens && <td className="py-1 pr-2">{g.openCount}{g.firstOpenedAt && <span className="block text-xs text-muted-foreground">first {new Date(g.firstOpenedAt).toLocaleString()}</span>}</td>}
+                  <td className="whitespace-nowrap py-1 pr-2 text-xs">{g.sentAt && g.status === 'SENT' ? formatIstSeconds(g.sentAt) : '—'}</td>
+                  {showOpens && <td className="py-1 pr-2">{g.openCount}{g.firstOpenedAt && <span className="block text-xs text-muted-foreground">first {formatIstSeconds(g.firstOpenedAt)}</span>}</td>}
                   <td className="py-1 text-xs">{g.status.toLowerCase()}{g.error && g.status !== 'SENT' && <span className="block text-red-600">{g.error}</span>}</td>
                 </tr>
               ))}
@@ -987,7 +1059,7 @@ function Progress({ detail, page, onPage }: { detail: Detail; page: number; onPa
                 <tr key={r.email} onClick={() => setOpen(r.email)} title="Show the email this recruiter got" className={`cursor-pointer border-t border-border-subtle align-top hover:bg-elevated ${open === r.email ? 'bg-primary/10' : ''}`}>
                   <td className="py-1 pr-2"><span className="flex items-center gap-2"><Avatar email={r.email} name={r.name} size={24} /><span className="min-w-0">{r.name ? <>{r.name} <span className="text-xs text-muted-foreground">{r.email}</span></> : r.email}</span></span></td>
                   <td className="py-1 pr-2 text-xs">{r.status.toLowerCase()}{r.skipReason && <span className="block text-muted-foreground">{r.skipReason}</span>}</td>
-                  {b.mode === 'INDIVIDUAL' && <td className="py-1 pr-2 text-xs">{r.openCount > 0 ? `✓ ${r.openCount}× · ${r.openedAt ? new Date(r.openedAt).toLocaleString() : ''}` : '—'}</td>}
+                  {b.mode === 'INDIVIDUAL' && <td className="py-1 pr-2 text-xs">{r.openCount > 0 ? `✓ ${r.openCount}× · ${r.openedAt ? formatIstSeconds(r.openedAt) : ''}` : '—'}</td>}
                   <td className="py-1 text-xs">{r.repliedAt ? <a onClick={(ev) => ev.stopPropagation()} className="text-primary hover:underline" href={`/inbox?filter=all&q=${encodeURIComponent(r.email)}`}>✓ {new Date(r.repliedAt).toLocaleString()}</a> : '—'}</td>
                 </tr>
               ))}

@@ -20,7 +20,7 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
   // Same watchdog as the full GET: a send that should be moving but isn't gets a fresh run.
   try { waitUntil(nudgeStuckSends('page').catch(() => 0)); } catch { void nudgeStuckSends('page').catch(() => 0); }
 
-  const [statusCounts, replied, groupTotals, openedRecruiters, groups] = await Promise.all([
+  const [statusCounts, replied, groupTotals, openedRecruiters, groups, sentLast10Min] = await Promise.all([
     prisma.recruiterBlastRecipient.groupBy({ by: ['status'], where: { blastId: blast.id }, _count: { _all: true } }),
     prisma.recruiterBlastRecipient.count({ where: { blastId: blast.id, repliedAt: { not: null } } }),
     prisma.recruiterBlastGroup.groupBy({ by: ['status'], where: { blastId: blast.id }, _count: { _all: true }, _sum: { openCount: true } }),
@@ -31,13 +31,15 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
       take: 500,
       select: { id: true, seq: true, status: true, recipientCount: true, fromEmail: true, sentAt: true, openCount: true, firstOpenedAt: true, lastOpenedAt: true, error: true },
     }),
+    // How fast it is really going: emails out in the last 10 minutes (the page turns this into time left).
+    prisma.recruiterBlastGroup.count({ where: { blastId: blast.id, status: 'SENT', sentAt: { gte: new Date(Date.now() - 10 * 60_000) } } }),
   ]);
   const counts = Object.fromEntries(statusCounts.map((c) => [c.status, c._count._all]));
   const sentByMailbox: Record<string, number> = {};
   for (const g of groups) if (g.status === 'SENT' && g.fromEmail) sentByMailbox[g.fromEmail] = (sentByMailbox[g.fromEmail] ?? 0) + 1;
 
   return NextResponse.json({
-    blast: { id: blast.id, status: blast.status, scheduledAt: blast.scheduledAt, startedAt: blast.startedAt, completedAt: blast.completedAt, updatedAt: blast.updatedAt, runOn: blast.runOn, runOnChangedAt: blast.runOnChangedAt },
+    blast: { id: blast.id, status: blast.status, scheduledAt: blast.scheduledAt, startedAt: blast.startedAt, completedAt: blast.completedAt, updatedAt: blast.updatedAt, runOn: blast.runOn, runOnChangedAt: blast.runOnChangedAt, note: blast.note },
     counts: { total: Object.values(counts).reduce((n: number, v) => n + (v as number), 0), ...counts, REPLIED: replied },
     stats: {
       messagesSent: groupTotals.find((g) => g.status === 'SENT')?._count._all ?? 0,
@@ -45,6 +47,8 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
       opens: groupTotals.reduce((n, g) => n + (g._sum.openCount ?? 0), 0),
       openedRecruiters,
     },
+    // For the page's time left: pending emails and the last 10 minutes' pace.
+    pace: { sentLast10Min, remaining: groupTotals.find((g) => g.status === 'PENDING')?._count._all ?? 0 },
     groups,
     sentByMailbox,
   });

@@ -22,7 +22,7 @@ export async function requireBlastReader(): Promise<AppSession> {
 export async function loadBlastStatus(session: AppSession, id: string) {
   const blast = await prisma.recruiterBlast.findUnique({
     where: { id },
-    select: { id: true, organizationId: true, workspaceId: true, status: true, scheduledAt: true, startedAt: true, completedAt: true, updatedAt: true, runOn: true, runOnChangedAt: true },
+    select: { id: true, organizationId: true, workspaceId: true, status: true, scheduledAt: true, startedAt: true, completedAt: true, updatedAt: true, runOn: true, runOnChangedAt: true, note: true },
   });
   if (!blast) return null;
   if (blast.organizationId !== session.organizationId) throw new ForbiddenError('Not your organisation');
