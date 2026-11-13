@@ -260,8 +260,26 @@ let runner = null;
 let wantRunner = false;
 let runnerMissingLogged = false;
 
+/**
+ * The sender's database link. The transaction pooler (port 6543) with ONE connection made every
+ * query cost ~175 ms and queued them all (planning one round took 10 s; a 2,900-recruiter send
+ * ran ~11 emails a minute however short the pause). The direct link takes ~35 ms a query, and 5
+ * connections let a round's claims and checks run side by side.
+ */
+function runnerDbUrl() {
+  if (!CLOUD_URL) return CLOUD_PRISMA_URL;
+  try {
+    const u = new URL(CLOUD_URL);
+    u.searchParams.delete('pgbouncer');
+    u.searchParams.set('connection_limit', '5');
+    return u.toString();
+  } catch {
+    return CLOUD_PRISMA_URL;
+  }
+}
+
 function runnerEnv() {
-  const env = { ...APP_ENV, DATABASE_URL: CLOUD_PRISMA_URL, DIRECT_URL: CLOUD_URL || CLOUD_PRISMA_URL };
+  const env = { ...APP_ENV, DATABASE_URL: runnerDbUrl(), DIRECT_URL: CLOUD_URL || CLOUD_PRISMA_URL };
   // Never the laptop's own database, never a hand-over to the local app, and not the active
   // server's "send everything" mode: the runner sends laptop sends only.
   delete env.CONTROL_DATABASE_URL;

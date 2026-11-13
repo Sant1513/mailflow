@@ -205,3 +205,42 @@ describe('PARALLEL sending', () => {
     expect(claims.map((q) => q.where.blast.groups.none.accountId).sort()).toEqual(['a1', 'a2']);
   });
 });
+
+describe('speed: every mailbox in a round, fair order (laptop sender)', () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => `m${String(i + 1).padStart(2, '0')}`);
+
+  it('the default round is capped at MAX_PARALLEL; the laptop sender asks for every mailbox', async () => {
+    const ids = many(13);
+    setup(ids, ids);
+    const capped = await run();
+    // The first round takes MAX_PARALLEL; the rest follow once those mailboxes' pause is over or in the same run.
+    expect(maxInFlight).toBeLessThanOrEqual(MAX_PARALLEL);
+    expect(capped.sent).toBeGreaterThan(0);
+
+    sent.length = 0;
+    maxInFlight = 0;
+    setup(ids, ids);
+    const all = await runRecruiterWorker({ budgetMs: 45_000, send, staggerMs: () => 0, maxParallel: 50, sleep: async (ms) => { vi.setSystemTime(Date.now() + ms); } });
+    expect(all.sent).toBe(13);
+    expect(maxInFlight).toBe(13); // all 13 mailboxes out together in one round
+  });
+
+  it('a capped round serves the mailbox that has waited longest first, so none is left behind', async () => {
+    const ids = many(13);
+    setup(ids, ids);
+    // m01..m10 sent a while ago (a pause ago); m11..m13 have never sent.
+    state.groups.push(...ids.slice(0, 10).map((id, i) => ({ id: `old${i}`, blastId: 'b1', seq: 100 + i, status: 'SENT', plannedAccountId: id, accountId: id, recipientCount: 1, sentAt: new Date(Date.now() - 120_000 + i * 1000), attempts: 1, createdAt: new Date() })));
+    await runRecruiterWorker({ budgetMs: 45_000, send, staggerMs: () => 0, maxParallel: 3, sleep: async (ms) => { vi.setSystemTime(Date.now() + ms); } });
+    // The first round's 3 messages come from the never-sent mailboxes, not from m01..m03.
+    expect(sent.slice(0, 3).map((s) => s.from.split('@')[0]).sort()).toEqual(['m11', 'm12', 'm13']);
+  });
+
+  it('the mailbox checks run together, and a mailbox that cannot send is still reported', async () => {
+    const ids = many(4);
+    setup(ids, ids);
+    backoff.set('m02', 60_000); // Gmail asked m02 to slow down
+    const r = await run();
+    expect(sent.map((s) => s.from.split('@')[0]).sort()).toEqual(['m01', 'm03', 'm04']);
+    expect(r.sent).toBe(3);
+  });
+});

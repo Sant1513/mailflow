@@ -19,8 +19,16 @@ import { prisma } from '../lib/db/client';
 import { runRecruiterWorker } from '../lib/recruiterSend/worker';
 
 const IDLE_MS = 20_000;
-/** One run's length; short enough that a stop request is honoured within about a minute. */
-const RUN_BUDGET_MS = 60_000;
+/**
+ * One run's length. The laptop has no 60 s function limit like Vercel, so a run keeps sending
+ * round after round; a stop request is honoured between rounds (seconds), and the run ends by
+ * itself after this long so it starts fresh now and then.
+ */
+const RUN_BUDGET_MS = 5 * 60_000;
+/** Time kept at the end of a run: a Gmail send can take 10-20 s, never started this close to the end. */
+const RESERVE_MS = 25_000;
+/** Messages out at once in a round: one per mailbox, as many mailboxes as there are. */
+const MAX_PARALLEL = 50;
 
 let stopping = false;
 const log = (...parts: unknown[]) => console.log(new Date().toISOString(), '[recruiter-runner]', ...parts);
@@ -48,7 +56,7 @@ async function main() {
   while (!stopping) {
     const started = Date.now();
     try {
-      const r = await runRecruiterWorker({ runOn: 'laptop', budgetMs: RUN_BUDGET_MS, stop: () => stopping });
+      const r = await runRecruiterWorker({ runOn: 'laptop', budgetMs: RUN_BUDGET_MS, reserveMs: RESERVE_MS, maxParallel: MAX_PARALLEL, trace: true, stop: () => stopping });
       if (r.sent || r.failed) log(`sent ${r.sent}, failed ${r.failed}${r.waiting ? ` · ${r.waiting}` : ''}`);
       else if (r.waiting && Date.now() - quietSince > 10 * 60_000) {
         quietSince = Date.now();
@@ -59,7 +67,7 @@ async function main() {
     }
     // A run that found nothing to do returns at once: wait before looking again. A run that
     // was busy until its budget ran out goes straight on.
-    if (Date.now() - started < RUN_BUDGET_MS - 20_000) await idle(IDLE_MS);
+    if (Date.now() - started < RUN_BUDGET_MS - RESERVE_MS - 20_000) await idle(IDLE_MS);
   }
   log('stopped.');
 }

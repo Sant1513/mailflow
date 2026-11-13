@@ -222,6 +222,8 @@ type Outcome = 'sent' | 'failed' | 'retry';
 
 /** At most this many Gmail messages are out at once in one run (a run has under 60 s). */
 export const MAX_PARALLEL = 10;
+/** Time kept at the end of a Vercel run (60 s limit) to send safely and hand over. */
+export const SEND_RESERVE_MS = 18_000;
 
 /**
  * Who in this message still gets it: anyone unsubscribed or bounced since the send started
@@ -366,9 +368,15 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
   // Which mailboxes can send at all right now.
   const usable: string[] = [];
   const reasons: string[] = [];
-  for (const id of blast.accountIds) {
-    const size = pending.find((g) => g.plannedAccountId === id)?.recipientCount ?? pending[0]!.recipientCount;
-    const r = await checkMailbox(blast, id, size, { used, allowed });
+  // All the mailboxes at once: each check is a few independent queries, and one after another
+  // they cost seconds per round on the laptop's link to the cloud database.
+  const checks = await Promise.all(
+    blast.accountIds.map(async (id) => {
+      const size = pending.find((g) => g.plannedAccountId === id)?.recipientCount ?? pending[0]!.recipientCount;
+      return { id, r: await checkMailbox(blast, id, size, { used, allowed }) };
+    }),
+  );
+  for (const { id, r } of checks) {
     if (r.account) usable.push(id);
     else reasons.push(r.reason!);
   }
@@ -402,6 +410,7 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
     const group = pending.find((g) => g.plannedAccountId === id);
     if (group) ready.push({ group, accountId: id });
   }
+  ready.sort((a, b) => (last.get(a.accountId) ?? 0) - (last.get(b.accountId) ?? 0));
   return { ready, nextGap, waiting: null };
 }
 
@@ -412,24 +421,39 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
  * the app running on the laptop as the active server. `stop` ends the run early (between
  * messages; anything already claimed is still sent and recorded).
  */
-export async function runRecruiterWorker(opts: { budgetMs?: number; send?: RecruiterSender; staggerMs?: () => number; sleep?: (ms: number) => Promise<unknown>; runOn?: RunScope; stop?: () => boolean } = {}): Promise<{ sent: number; failed: number; waiting: string | null }> {
+export async function runRecruiterWorker(opts: {
+  budgetMs?: number;
+  send?: RecruiterSender;
+  staggerMs?: () => number;
+  sleep?: (ms: number) => Promise<unknown>;
+  runOn?: RunScope;
+  stop?: () => boolean;
+  /** Messages out at once in a round (default MAX_PARALLEL; the laptop sender passes its mailbox count). */
+  maxParallel?: number;
+  /** Time kept at the end of a run to send safely and hand over (default 18 s, for Vercel's 60 s limit). */
+  reserveMs?: number;
+  /** Log one line per round: how long planning and sending took. */
+  trace?: boolean;
+} = {}): Promise<{ sent: number; failed: number; waiting: string | null }> {
   const scope: RunScope = opts.runOn ?? (onLaptopServer() ? 'all' : 'cloud');
   const stopped = () => !!opts.stop?.();
   const send = opts.send ?? gmailSender;
   const pause = opts.sleep ?? sleep; // tests pass their own clock
-  // Messages of one round leave a little apart (0.7–1.5 s each), not in the same instant.
-  const stagger = opts.staggerMs ?? (() => 700 + Math.random() * 800);
+  // Messages of one round leave a little apart (0.15–0.5 s each), not in the same instant.
+  const stagger = opts.staggerMs ?? (() => 150 + Math.random() * 350);
+  const maxParallel = Math.max(1, opts.maxParallel ?? MAX_PARALLEL);
   const deadline = Date.now() + (opts.budgetMs ?? 45_000);
   const timeLeft = () => deadline - 5_000 - Date.now();
   // A Gmail send (150 Bcc, maybe a video) can take 10-20 s. Never start one this close to the end:
   // the run would hit the 60 s function limit and be killed before handing over to the next run,
   // and the send would sit still (it stalled after 3 batches twice).
-  const SEND_RESERVE_MS = 18_000;
+  const reserveMs = opts.reserveMs ?? SEND_RESERVE_MS;
   let handOver = false;
   let sent = 0;
   let failed = 0;
   let waiting: string | null = null;
   const waitingIds = new Set<string>();
+  let planMs = 0; // planning time since the last round was sent (for the trace line)
   const count = (o: Outcome) => {
     if (o === 'sent') sent++;
     else if (o === 'failed') failed++;
@@ -449,6 +473,8 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
     const blasts = await prisma.recruiterBlast.findMany({ where: { status: 'SENDING', ...runOnWhere(scope) }, orderBy: { startedAt: 'asc' }, take: 20 });
     if (!blasts.length) break;
     let progressed = false;
+    const roundStart = Date.now();
+    planMs = 0;
     let nextGap = Infinity; // shortest pause still to run, when everything is between messages
     // PARALLEL: this round's messages, from every send, sent together below.
     const round: { blast: BlastRow; group: GroupRow; account: EmailProviderAccount; recipients: Person[] }[] = [];
@@ -458,28 +484,34 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
       if (await finishIfDone(blast.id)) continue;
 
       if (blast.sendOrder !== 'SEQUENTIAL') {
-        if (round.length >= MAX_PARALLEL) continue;
+        if (round.length >= maxParallel) continue;
+        const planStart = Date.now();
         const plan = await planRound(blast);
+        planMs += Date.now() - planStart;
         if (plan.waiting) {
           await setWaiting(blast, plan.waiting);
           continue;
         }
         nextGap = Math.min(nextGap, plan.nextGap);
-        for (const { group, accountId } of plan.ready) {
-          if (round.length >= MAX_PARALLEL) break;
-          const recipients = await liveRecipients(blast, group.id);
-          if (!recipients.length) {
-            progressed = true;
-            continue;
-          }
-          if (timeLeft() < SEND_RESERVE_MS + (round.length + 1) * 1_500) {
-            handOver = true;
-            break;
-          }
-          const account = await prisma.emailProviderAccount.findUnique({ where: { id: accountId } });
-          if (!account || !(await claim(blast, group.id, account, true, scope))) continue;
+        // As many of the ready mailboxes as fit in this round and in the time left to send safely.
+        const room = maxParallel - round.length;
+        const fit = Math.max(0, Math.floor((timeLeft() - reserveMs) / 1_500) - round.length);
+        const take = plan.ready.slice(0, Math.min(room, fit));
+        if (take.length < Math.min(room, plan.ready.length)) handOver = true;
+        // Prepared at the same time: each message's recruiters, mailbox and claim are independent.
+        const prepared = await Promise.all(
+          take.map(async ({ group, accountId }) => {
+            const recipients = await liveRecipients(blast, group.id);
+            if (!recipients.length) return 'empty' as const;
+            const account = await prisma.emailProviderAccount.findUnique({ where: { id: accountId } });
+            if (!account || !(await claim(blast, group.id, account, true, scope))) return null;
+            return { group, account, recipients };
+          }),
+        );
+        for (const p of prepared) {
+          if (p === null) continue;
           progressed = true;
-          round.push({ blast, group, account, recipients });
+          if (p !== 'empty') round.push({ blast, ...p });
         }
         if (handOver) break;
         continue;
@@ -489,7 +521,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
       const last = await prisma.recruiterBlastGroup.findFirst({ where: { blastId: blast.id, status: { in: ['SENT', 'SENDING'] }, sentAt: { not: null } }, orderBy: { sentAt: 'desc' }, select: { sentAt: true } });
       const wait = last?.sentAt ? last.sentAt.getTime() + blast.gapSeconds * 1000 - Date.now() : 0;
       if (wait > 0) {
-        if (wait > timeLeft() - SEND_RESERVE_MS) {
+        if (wait > timeLeft() - reserveMs) {
           nextGap = Math.min(nextGap, wait);
           continue;
         }
@@ -513,7 +545,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
         await setWaiting(blast, `Waiting: ${reasons.join('; ') || 'no sending mailbox chosen'}. Sending carries on by itself when one is free.`);
         continue;
       }
-      if (timeLeft() < SEND_RESERVE_MS) {
+      if (timeLeft() < reserveMs) {
         handOver = true; // not enough time left to send safely: let the next run do it
         break;
       }
@@ -525,6 +557,7 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
     // The round: every mailbox's message at once, a moment apart.
     if (round.length) {
       let offset = 0;
+      const sendStart = Date.now();
       const outcomes = await Promise.all(
         round.map((m, i) => {
           if (i > 0) offset += stagger();
@@ -533,13 +566,14 @@ export async function runRecruiterWorker(opts: { budgetMs?: number; send?: Recru
         }),
       );
       outcomes.forEach(count);
+      if (opts.trace) console.log(`[recruiter-send] round of ${round.length}: planning + claiming ${((sendStart - roundStart) / 1000).toFixed(1)} s (planning ${(planMs / 1000).toFixed(1)} s), sending ${((Date.now() - sendStart) / 1000).toFixed(1)} s`);
     }
 
     if (handOver) break;
     if (!progressed) {
       // Everything is between messages: wait here rather than hand over to a new run that
       // would only find the same pause, but keep enough time to send and hand over.
-      const usable = timeLeft() - SEND_RESERVE_MS;
+      const usable = timeLeft() - reserveMs;
       if (Number.isFinite(nextGap) && usable > 1_000 && !stopped()) {
         await pause(Math.min(nextGap, usable));
         continue;
