@@ -54,7 +54,7 @@ function Row({ cells, bold, widths }: { cells: (string | { text: string; color?:
 
 export interface ReportImage { bytes: Uint8Array; width: number; height: number }
 
-export async function renderReportImage(a: DailyActivity, d: NeedsAttention, opts: { test?: boolean } = {}): Promise<ReportImage> {
+export async function renderReportImage(a: DailyActivity, d: NeedsAttention, opts: { test?: boolean; unansweredAfterHours?: number } = {}): Promise<ReportImage> {
   const t = a.totals;
   const weekly = a.kind === 'weekly';
   const users = a.users.filter((u) => u.emails > 0 || u.failed > 0).slice(0, 10);
@@ -69,7 +69,7 @@ export async function renderReportImage(a: DailyActivity, d: NeedsAttention, opt
   }
   const launchers = [...byLauncher.values()].slice(0, 8);
   const attention: [string, number][] = [
-    ['replies waiting for an answer', d.unansweredReplies.length],
+    [`replies unanswered for over ${opts.unansweredAfterHours ?? 24} hours`, d.unansweredReplies.length],
     ['conversations past their SLA', d.slaBreaches.length],
     ['documents expiring unsigned', d.expiringDocuments.length],
     ['campaigns waiting for approval', d.pendingCampaigns.length],
@@ -119,7 +119,7 @@ export async function renderReportImage(a: DailyActivity, d: NeedsAttention, opt
           <div style={{ display: 'flex', width: 14 }} />
           <Tile label="Replies received" value={num(a.inboxTotal.received)} />
           <div style={{ display: 'flex', width: 14 }} />
-          <Tile label="Waiting for an answer" value={num(a.inboxTotal.pending)} accent={a.inboxTotal.pending ? RED : GREEN} sub={`${num(a.inboxTotal.closed)} closed`} />
+          <Tile label="Open, waiting for a reply" value={num(a.inboxTotal.pending)} accent={a.inboxTotal.pending ? RED : GREEN} sub={`${num(a.inboxTotal.closed)} closed`} />
         </div>
 
         {weekly && a.previous ? (

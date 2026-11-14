@@ -17,7 +17,8 @@ async function postReport(organizationId: string, kind: 'daily' | 'weekly', a: D
   const msg = renderReportSlack(a, d, { test });
   const fallback = () => postSystemSlack(organizationId, msg.text, { channel, blocks: msg.blocks, ...SLACK_AS[kind] });
   try {
-    const img = await renderReportImage(a, d, { test });
+    const unansweredAfterHours = (await getOrgSettings(organizationId).catch(() => null))?.digest.unansweredAfterHours;
+    const img = await renderReportImage(a, d, { test, unansweredAfterHours });
     const t = a.totals;
     const fromYmd = new Date(a.from.getTime() + 330 * 60_000).toISOString().slice(0, 10);
     const link = `${appBaseUrl()}/admin/organization?lfrom=${fromYmd}&lto=${a.ymd}`;
