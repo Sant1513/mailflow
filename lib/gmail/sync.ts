@@ -402,7 +402,7 @@ export async function syncAccount(
     result.fetched += 1;
     const outcome: IngestOutcome = await ingestInboundMessage(account, parseGmailMessage(raw));
     if (outcome.status === 'STORED') result.stored += 1;
-    else if (outcome.status === 'DUPLICATE') result.duplicates += 1;
+    else if (outcome.status === 'DUPLICATE' || outcome.status === 'DUPLICATE_OTHER_MAILBOX') result.duplicates += 1;
     else if (outcome.status === 'OUTBOUND_ALREADY_RECORDED') result.outbound += 1;
     else result.ignored += 1;
   };

@@ -10,6 +10,7 @@ import { applyDeliveryReport, willSuppress, type NdrAction } from '@/lib/email/n
 import { handleUnsubscribeEmail, parseUnsubscribeSubject } from '@/lib/email/unsubscribeByEmail';
 import { cleanName } from '@/lib/contacts/names';
 import { applyReplyRules } from '@/lib/replyRules/apply';
+import { messageIdVariants } from '@/lib/gmail/dedupe';
 import { findRecruiterSend, markRecruiterReplied, recruiterContact, recruiterThreadKey, type RecruiterReplyMatch } from '@/lib/recruiterSend/replies';
 
 /**
@@ -48,6 +49,8 @@ export class RetryLaterError extends Error {
 export type IngestOutcome =
   | { status: 'STORED'; conversationId: string; messageId: string; classification: string; created: boolean }
   | { status: 'DUPLICATE'; messageId: string }
+  // The same email (Message-ID) is already stored for another mailbox of this workspace.
+  | { status: 'DUPLICATE_OTHER_MAILBOX'; messageId: string; conversationId: string }
   | { status: 'OUTBOUND_ALREADY_RECORDED' }
   | { status: 'IGNORED'; reason: string };
 
@@ -223,7 +226,29 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
     }
   }
 
+  // The workspace this message will be stored in (a recruiter reply goes to the admin's).
+  const targetWorkspaceId = knownThread?.workspaceId ?? recruiter?.workspaceId ?? account.workspaceId;
+  const idVariants = messageIdVariants(message.messageIdHeader);
+
   const result = await prisma.$transaction(async (tx) => {
+    // The same email delivered to another mailbox of this workspace (a group address and a CC, two
+    // group members) is stored once, by whichever mailbox synced first. Bounce/unsubscribe handling
+    // already ran above, so suppressions apply either way. Inside the transaction so it reads the
+    // latest committed state; two mailboxes syncing in the same instant may both store a copy,
+    // which is accepted (a duplicate is better than a lost reply).
+    if (idVariants.length > 0) {
+      const other = await tx.conversationMessage.findFirst({
+        where: {
+          direction: MessageDirection.INBOUND,
+          messageIdHeader: { in: idVariants },
+          conversation: { workspaceId: targetWorkspaceId, emailProviderAccountId: { not: account.id } },
+        },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, conversationId: true },
+      });
+      if (other) return { duplicateOf: other } as const;
+    }
+
     let conversation = knownThread;
     let created = false;
 
@@ -372,6 +397,10 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
   // default interactive-transaction timeout (P2028), which would drop
   // every inbound reply. The work is bounded, so a generous ceiling is safe.
   { timeout: 30_000, maxWait: 10_000 });
+
+  if ('duplicateOf' in result && result.duplicateOf) {
+    return { status: 'DUPLICATE_OTHER_MAILBOX', messageId: result.duplicateOf.id, conversationId: result.duplicateOf.conversationId };
+  }
 
   // Bounce notices were already acted on above, before storing (lib/email/ndr.ts).
   const { owner, ...stored } = result;

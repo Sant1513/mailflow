@@ -74,7 +74,7 @@ export function LivePreview({ html, envelope }: { html: string; envelope: Envelo
     ...(e.replyTo ? [['Reply-To', `${e.replyTo}, ${e.fromEmail ?? 'the sending mailbox'}`] as [string, string]] : []),
   ];
   return (
-    <div className="overflow-hidden rounded-lg border bg-card">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
       <dl className="space-y-0.5 border-b px-3 py-2 text-xs">
         {rows.map(([k, v]) => (
           <div key={k} className="flex gap-1">
@@ -88,7 +88,7 @@ export function LivePreview({ html, envelope }: { html: string; envelope: Envelo
         </div>
       </dl>
       {e.previewAs && <div className="border-b bg-primary/5 px-3 py-1.5 text-[11px] text-muted-foreground">Shown with <b className="text-foreground">{e.previewAs}</b>&rsquo;s values; every recruiter gets their own.</div>}
-      <EmailViewer html={html} storageKey="recruiter-live" defaultHeight={480} empty="Write the message to see the preview." />
+      <EmailViewer fill html={html} storageKey="recruiter-live" defaultHeight={480} empty="Write the message to see the preview." />
       {e.attachments.length > 0 && (
         <div className="border-t px-3 py-2 text-xs">
           {e.attachments.map((a) => <div key={a} className="truncate">📎 {a}</div>)}
@@ -422,9 +422,10 @@ export function WhoReceives({
             onClose={() => setSelected(null)}
           />
         ) : (
-        <div className="min-w-0 overflow-hidden rounded-lg border bg-card">
+        <div className="flex min-h-[480px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card">
           {canPreview && <p className="border-b bg-primary/5 px-3 py-1.5 text-[11px] text-muted-foreground">Click any recruiter to see the email <b className="text-foreground">they</b> get: their values, batch and mailbox.</p>}
           <EmailViewer
+            fill
             html={html}
             storageKey="recruiter-review"
             header={<div className="min-w-0 truncate text-xs"><span className="text-muted-foreground">Subject: </span><span className="font-medium">{subject || '—'}</span></div>}

@@ -10,7 +10,7 @@ const PRESET_WIDTH: Record<PreviewMode, number> = { desktop: 700, mobile: 375 };
  * The email in a frame you can size: Desktop / Phone presets, a width slider, and a drag handle
  * (bottom edge) for the height. Remembers the size per viewer (this browser only).
  */
-export function EmailViewer({ html, storageKey, defaultHeight = 520, header, empty }: { html: string; storageKey: string; defaultHeight?: number; header?: React.ReactNode; empty?: string }) {
+export function EmailViewer({ html, storageKey, defaultHeight = 520, header, empty, fill }: { fill?: boolean; html: string; storageKey: string; defaultHeight?: number; header?: React.ReactNode; empty?: string }) {
   const [mode, setMode] = useState<PreviewMode>('desktop');
   const [width, setWidth] = useState<number>(PRESET_WIDTH.desktop);
   const [height, setHeight] = useState<number>(defaultHeight);
@@ -52,7 +52,7 @@ export function EmailViewer({ html, storageKey, defaultHeight = 520, header, emp
   };
 
   return (
-    <div className="flex min-w-0 flex-col">
+    <div className={`flex min-w-0 flex-col ${fill ? 'h-full min-h-0 flex-1' : ''}`}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
         <div className="min-w-0 flex-1">{header}</div>
         <div className="flex flex-wrap items-center gap-2">
@@ -71,10 +71,10 @@ export function EmailViewer({ html, storageKey, defaultHeight = 520, header, emp
           <button type="button" onClick={() => { pick('desktop'); setHeight(defaultHeight); }} className="text-[11px] text-primary hover:underline">Reset</button>
         </div>
       </div>
-      <div ref={frame} className="overflow-auto" style={{ height, minHeight: 260, maxHeight: 1600, resize: 'vertical' }} title="Drag the bottom edge to make the preview taller or shorter">
+      <div ref={frame} className={`overflow-auto ${fill ? 'min-h-[360px] flex-1' : ''}`} style={fill ? undefined : { height, minHeight: 260, maxHeight: 1600, resize: 'vertical' }} title={fill ? undefined : 'Drag the bottom edge to make the preview taller or shorter'}>
         {html ? <EmailPreview html={html} mode={mode} width={width} height={Math.max(220, height - 40)} /> : <p className="p-6 text-center text-sm text-muted-foreground">{empty ?? 'Nothing to preview yet.'}</p>}
       </div>
-      <div className="border-t px-3 py-1 text-center text-[10px] text-muted-foreground">⇕ drag the edge above to resize</div>
+      {!fill && <div className="border-t px-3 py-1 text-center text-[10px] text-muted-foreground">⇕ drag the edge above to resize</div>}
     </div>
   );
 }

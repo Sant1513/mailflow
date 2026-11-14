@@ -438,7 +438,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
   return (
     <StepsContext.Provider value={steps}>
-    <div className={`space-y-3 p-4 sm:p-6 ${draft ? 'max-w-7xl' : 'max-w-5xl'}`}>
+    <div className={`space-y-3 p-4 sm:p-6 ${draft ? 'max-w-[1800px]' : 'max-w-5xl'}`}>
       <Link href="/recruiter-send" className="text-sm text-muted-foreground hover:underline">← Recruiter Bulk Send</Link>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -481,7 +481,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           <button type="button" onClick={() => setOpenSteps(new Set([1, 2, 3, 4, 5, 6, 7]))} className="text-primary hover:underline">Open all steps</button>
           <button type="button" onClick={() => setOpenSteps(new Set([7]))} className="text-primary hover:underline">Close all</button>
         </div>
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,600px)]">
         <div className="min-w-0 space-y-3">
           <Section n={1} title="Recruiters" summary={stepSummary[1]} done={stepDone[1]} hint="Paste from Google Sheets/Excel with the header row (every column is kept for {{Column}} in the email, e.g. a UTM link per recruiter), paste plain addresses, upload a CSV/Excel file, or use saved data. Duplicates are removed; unsubscribed, bounced and bad addresses are skipped at the check.">
             {listCollapsed ? (
@@ -766,7 +766,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           </Section>
 
         </div>
-        <aside className="min-w-0 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-auto">
+        <aside className="min-w-0 lg:sticky lg:top-4 lg:h-[calc(100dvh-2rem)]">
           <LivePreview
             html={preview}
             envelope={{

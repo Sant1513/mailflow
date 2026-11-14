@@ -17,7 +17,7 @@ const tx = {
     update: vi.fn(),
     deleteMany: vi.fn(),
   },
-  conversationMessage: { create: vi.fn(async () => ({ id: 'msg1' })), delete: vi.fn() },
+  conversationMessage: { create: vi.fn(async () => ({ id: 'msg1' })), delete: vi.fn(), findFirst: vi.fn(async () => null) },
   attachment: { deleteMany: vi.fn() },
   record: { updateMany: vi.fn() },
   recipientHistory: { create: vi.fn(), deleteMany: vi.fn() },

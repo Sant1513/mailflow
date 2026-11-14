@@ -175,6 +175,19 @@ describe('Gmail sync — the cursor and errors', () => {
     expect(r.newHistoryId).toBe('999');
   });
 
+  it('counts a copy already stored for another mailbox as a duplicate, with no error, and the cursor advances', async () => {
+    const source = sourceWith(2);
+    source.getMessageMetadata.mockImplementation(async (id: string) => coded(id) as any);
+    source.getMessage.mockImplementation(async (id: string) => ({ id, threadId: 'x', labelIds: ['INBOX'], payload: { headers: [] } }));
+    vi.mocked(ingestInboundMessage).mockResolvedValue({ status: 'DUPLICATE_OTHER_MAILBOX', messageId: 'm', conversationId: 'c' } as any);
+    const r = await syncAccount(account, source as any);
+    expect(r.duplicates).toBe(2);
+    expect(r.ignored).toBe(0);
+    expect(r.errors).toHaveLength(0);
+    expect(r.newHistoryId).toBe('999');
+    vi.mocked(ingestInboundMessage).mockReset().mockResolvedValue({ status: 'STORED' } as any);
+  });
+
   it('classifies errors', () => {
     expect(isTransientSyncError(Object.assign(new Error('x'), { code: 429 }))).toBe(true);
     expect(isTransientSyncError(Object.assign(new Error('x'), { response: { status: 502 } }))).toBe(true);
