@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { DateInput } from '@/components/ui/DateInput';
 import { LoadError, loadErrorMessage } from '@/components/ui/LoadError';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
@@ -536,7 +537,7 @@ export default function ConversationPage() {
               </span>
             </label>
           ))}
-          <input type="date" value={followUpDate} onChange={(e) => setFollowUpDate(e.target.value)} className="mt-1 w-full rounded border px-2 py-1 text-xs" />
+          <DateInput value={followUpDate} onChange={(e) => setFollowUpDate(e.target.value)} className="mt-1 w-full rounded border px-2 py-1 text-xs" />
           <input value={followUpNote} onChange={(e) => setFollowUpNote(e.target.value)} placeholder="What to check" className="mt-1 w-full rounded border px-2 py-1 text-xs" />
           <button onClick={addFollowUp} disabled={!followUpDate} className="mt-1 w-full rounded border px-2 py-1 text-xs hover:bg-elevated disabled:opacity-50">
             Set follow-up

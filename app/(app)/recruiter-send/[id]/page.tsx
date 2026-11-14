@@ -438,7 +438,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
   return (
     <StepsContext.Provider value={steps}>
-    <div className={`space-y-3 p-4 sm:p-6 ${draft ? 'max-w-[1800px]' : 'max-w-5xl'}`}>
+    <div className={`space-y-3 p-4 sm:p-6 ${draft ? 'max-w-[1800px]' : 'max-w-[1500px]'}`}>
       <Link href="/recruiter-send" className="text-sm text-muted-foreground hover:underline">← Recruiter Bulk Send</Link>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">

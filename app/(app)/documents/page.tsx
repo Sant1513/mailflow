@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { DateInput } from '@/components/ui/DateInput';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
@@ -372,9 +373,8 @@ export default function ESignDocumentsPage() {
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">From</label>
-            <input
-              type="date"
-              value={from}
+            <DateInput
+                            value={from}
               max={to || undefined}
               onChange={(e) => {
                 setFrom(e.target.value);
@@ -385,9 +385,8 @@ export default function ESignDocumentsPage() {
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">To</label>
-            <input
-              type="date"
-              value={to}
+            <DateInput
+                            value={to}
               min={from || undefined}
               onChange={(e) => {
                 setTo(e.target.value);

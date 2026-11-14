@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { DateInput } from '@/components/ui/DateInput';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts';
@@ -203,8 +204,8 @@ export function SendLedger() {
             return <button key={d} type="button" onClick={() => set({ ldays: d, lfrom: null, lto: null })} className={`rounded-full px-3 py-1 text-xs font-semibold ${on ? 'bg-ink text-ink-foreground' : 'text-muted-foreground hover:text-foreground'}`}>{d}d</button>;
           })}
         </div>
-        <label className="flex items-center gap-1 text-xs text-muted-foreground">From <input type="date" value={filters.from} onChange={(e) => set({ lfrom: e.target.value, lto: filters.to || new Date().toISOString().slice(0, 10), ldays: null })} className="h-9 rounded-full border border-border-subtle bg-card px-2 text-xs" /></label>
-        <label className="flex items-center gap-1 text-xs text-muted-foreground">To <input type="date" value={filters.to} onChange={(e) => set({ lto: e.target.value, lfrom: filters.from || e.target.value, ldays: null })} className="h-9 rounded-full border border-border-subtle bg-card px-2 text-xs" /></label>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">From <DateInput value={filters.from} onChange={(e) => set({ lfrom: e.target.value, lto: filters.to || new Date().toISOString().slice(0, 10), ldays: null })} className="h-9 rounded-full border border-border-subtle bg-card px-2 text-xs" /></label>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">To <DateInput value={filters.to} onChange={(e) => set({ lto: e.target.value, lfrom: filters.from || e.target.value, ldays: null })} className="h-9 rounded-full border border-border-subtle bg-card px-2 text-xs" /></label>
         {data && (
           <>
             <MultiSelect label="Workspace" options={data.options.workspaces} value={filters.workspace} onChange={(v) => set({ lws: v })} />

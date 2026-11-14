@@ -922,13 +922,12 @@ async function watchDispatch(s) {
   log(`Warning: ${text}`);
   const token = APP_ENV.SLACK_BOT_TOKEN?.trim();
   if (!token) return;
-  const { rows } = await control.query(`SELECT "slackChannelId" FROM "IntegrationSettings" WHERE "slackChannelId" IS NOT NULL LIMIT 1`);
-  const channel = rows[0]?.slackChannelId;
-  if (!channel) return;
+  // A warning goes to one person as a private message, not to the team channel.
+  const to = APP_ENV.SLACK_ALERT_USER_ID?.trim() || 'U04DRTCE9L4';
   await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ channel, text: `:warning: ${text}` }),
+    body: JSON.stringify({ channel: to, text: `:warning: ${text}` }),
   });
 }
 

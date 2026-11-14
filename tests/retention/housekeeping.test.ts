@@ -17,7 +17,7 @@ vi.mock('@/lib/db/client', () => ({ prisma: db }));
 vi.mock('@/lib/settings/org', () => ({ getOrgSettings: vi.fn(async () => ({ senderAccountId: null })) }));
 const notify = {
   emailsForRoles: vi.fn(async () => ['boss@masaischool.com']),
-  postSystemSlack: vi.fn(async () => 'SENT to C1'),
+  postAlertDm: vi.fn(async () => 'SENT to U1'),
   sendSystemEmail: vi.fn(async () => 'SENT to 1'),
   systemEmailShell: vi.fn((_t: string, _i: string, body: string) => body),
 };
@@ -113,7 +113,7 @@ describe('free-plan warning', () => {
     const r = await runDailyHousekeeping({ now });
     expect(r.usage).toEqual({ databaseBytes: 48 * MB, storageBytes: 0 });
     expect(r.warnings).toEqual([]);
-    expect(notify.postSystemSlack).not.toHaveBeenCalled();
+    expect(notify.postAlertDm).not.toHaveBeenCalled();
   });
 
   it('warns super admins by Slack and email once a day when the database passes 350 MB', async () => {
@@ -121,7 +121,7 @@ describe('free-plan warning', () => {
     db.$executeRaw.mockImplementation(async (strings: string[]) => (strings.join('?').includes('lastUsageAlertOn') ? 1 : 0));
     const r = await runDailyHousekeeping({ now });
     expect(r.warnings).toEqual(['Database is 360 MB of the free 500 MB']);
-    expect(notify.postSystemSlack).toHaveBeenCalledTimes(1);
+    expect(notify.postAlertDm).toHaveBeenCalledTimes(1);
     expect(notify.sendSystemEmail).toHaveBeenCalledWith(expect.objectContaining({ to: ['boss@masaischool.com'] }));
   });
 
@@ -130,7 +130,7 @@ describe('free-plan warning', () => {
     db.$executeRaw.mockResolvedValue(0);
     const r = await runDailyHousekeeping({ now });
     expect(r.warnings).toHaveLength(2);
-    expect(notify.postSystemSlack).not.toHaveBeenCalled();
+    expect(notify.postAlertDm).not.toHaveBeenCalled();
   });
 
   it('no Supabase Storage schema (laptop database): storage is simply not measured', async () => {

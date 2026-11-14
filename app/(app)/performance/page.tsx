@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { DateInput } from '@/components/ui/DateInput';
 import { istYmd } from '@/lib/dates/istRange';
 import Link from 'next/link';
 
@@ -141,11 +142,11 @@ export default function PerformancePage() {
       <div className="mb-6 flex flex-wrap items-end gap-3 rounded-lg border bg-card p-4">
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">From</label>
-          <input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className="!py-1 text-sm" />
+          <DateInput value={from} max={to} onChange={(e) => setFrom(e.target.value)} className="!py-1 text-sm" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">To</label>
-          <input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} className="!py-1 text-sm" />
+          <DateInput value={to} min={from} onChange={(e) => setTo(e.target.value)} className="!py-1 text-sm" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Quick range</label>

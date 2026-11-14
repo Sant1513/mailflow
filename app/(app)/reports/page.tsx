@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { DateInput } from '@/components/ui/DateInput';
 import { istYmd } from '@/lib/dates/istRange';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -272,17 +273,15 @@ export default function ReportsPage() {
           </div>
 
           {/* Date range pickers */}
-          <input
-            type="date"
-            value={from}
+          <DateInput
+                        value={from}
             max={to}
             onChange={(e) => setFrom(e.target.value)}
             className="rounded-md border border-border bg-card px-2 py-1.5 text-xs text-foreground"
           />
           <span className="text-xs text-muted-foreground">to</span>
-          <input
-            type="date"
-            value={to}
+          <DateInput
+                        value={to}
             min={from}
             max={toDateInput(new Date())}
             onChange={(e) => setTo(e.target.value)}

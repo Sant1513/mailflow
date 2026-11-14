@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { DateInput } from '@/components/ui/DateInput';
 
 const PAGE_SIZE = 50;
 
@@ -105,12 +106,12 @@ export default function AuditLogsPage() {
           {/* Date range */}
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">From</label>
-            <input type="date" value={from} max={to} onChange={(e) => { setFrom(e.target.value); setPage(1); }}
+            <DateInput value={from} max={to} onChange={(e) => { setFrom(e.target.value); setPage(1); }}
               className="!py-1 text-sm" />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">To</label>
-            <input type="date" value={to} min={from} onChange={(e) => { setTo(e.target.value); setPage(1); }}
+            <DateInput value={to} min={from} onChange={(e) => { setTo(e.target.value); setPage(1); }}
               className="!py-1 text-sm" />
           </div>
           {/* Presets */}

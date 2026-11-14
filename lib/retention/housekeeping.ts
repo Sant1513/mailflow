@@ -1,7 +1,7 @@
 import { Prisma, Role } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { getOrgSettings } from '@/lib/settings/org';
-import { emailsForRoles, postSystemSlack, sendSystemEmail, systemEmailShell } from '@/lib/notify/system';
+import { emailsForRoles, postAlertDm, sendSystemEmail, systemEmailShell } from '@/lib/notify/system';
 
 /**
  * Daily housekeeping (/api/cron/housekeeping): keeps the database inside Supabase's free 500 MB
@@ -170,7 +170,7 @@ async function sendUsageAlert(organizationId: string, warnings: string[]): Promi
   const text = `MailFlow is close to a free-plan limit: ${warnings.join('; ')}. Old rows are cleaned up daily; if it keeps growing, ask for a cleanup of old email bodies.`;
   const settings = await getOrgSettings(organizationId).catch(() => null);
   const [slack, email] = await Promise.all([
-    postSystemSlack(organizationId, `:warning: ${text}`),
+    postAlertDm(`:warning: ${text}`),
     sendSystemEmail({
       organizationId,
       senderAccountId: settings?.senderAccountId ?? null,

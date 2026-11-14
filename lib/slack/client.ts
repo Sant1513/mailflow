@@ -89,6 +89,33 @@ export class SlackClient {
     return this.call('reactions.add', { channel, timestamp, name });
   }
 
+  /**
+   * Uploads a file (an image) into a channel with a short message above it (Slack's 3-step
+   * upload; needs the files:write scope). Returns a plain result like every other call.
+   */
+  async uploadFile(input: { channel: string; filename: string; bytes: Uint8Array; title?: string; comment?: string; contentType?: string }): Promise<SlackResult> {
+    const form = new URLSearchParams({ filename: input.filename, length: String(input.bytes.byteLength) });
+    try {
+      const a = await fetch('https://slack.com/api/files.getUploadURLExternal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Bearer ${this.token}` },
+        body: form,
+        signal: AbortSignal.timeout(15_000),
+      });
+      const ja = (await a.json()) as { ok: boolean; error?: string; upload_url?: string; file_id?: string };
+      if (!ja.ok || !ja.upload_url || !ja.file_id) return { ok: false, error: ja.error ?? 'no upload url' };
+      const up = await fetch(ja.upload_url, { method: 'POST', headers: { 'Content-Type': input.contentType ?? 'image/png' }, body: input.bytes as unknown as BodyInit, signal: AbortSignal.timeout(30_000) });
+      if (!up.ok) return { ok: false, error: `upload HTTP ${up.status}` };
+      return await this.call('files.completeUploadExternal', {
+        files: [{ id: ja.file_id, title: input.title ?? input.filename }],
+        channel_id: input.channel,
+        ...(input.comment ? { initial_comment: input.comment } : {}),
+      });
+    } catch (err) {
+      return { ok: false, error: (err as Error)?.message ?? 'network error' };
+    }
+  }
+
   /** Validates a channel id and whether the bot can post there. */
   async channelInfo(channel: string): Promise<SlackResult<{ channel: { id: string; name: string; is_member: boolean } }>> {
     return this.call('conversations.info', { channel });

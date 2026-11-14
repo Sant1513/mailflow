@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DateInput } from '@/components/ui/DateInput';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
@@ -300,11 +301,11 @@ function SuppressionsView() {
           </div>
           <div>
             <label className={label} htmlFor="sup-from">Added from (IST)</label>
-            <input id="sup-from" type="date" className={select} value={get('from')} max={get('to') || undefined} onChange={(e) => setParams({ from: e.target.value || null })} />
+            <DateInput id="sup-from" className={select} value={get('from')} max={get('to') || undefined} onChange={(e) => setParams({ from: e.target.value || null })} />
           </div>
           <div>
             <label className={label} htmlFor="sup-to">Added to (IST)</label>
-            <input id="sup-to" type="date" className={select} value={get('to')} min={get('from') || undefined} onChange={(e) => setParams({ to: e.target.value || null })} />
+            <DateInput id="sup-to" className={select} value={get('to')} min={get('from') || undefined} onChange={(e) => setParams({ to: e.target.value || null })} />
           </div>
           <div>
             <label className={label} htmlFor="sup-sort">Sort</label>

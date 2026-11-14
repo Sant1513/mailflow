@@ -84,6 +84,34 @@ export async function postSystemSlack(organizationId: string, text: string, opts
   return res.ok ? `SENT to ${channel}` : `FAILED: ${res.error ?? 'unknown Slack error'}${res.error === 'not_in_channel' ? ' (add the MailFlow app to the channel)' : ''}`;
 }
 
+/** Who gets MailFlow's warnings and errors, as a private message (never the team channel). */
+export const ALERT_SLACK_USER_ID = 'U04DRTCE9L4';
+
+/** A warning or error, sent as a direct message from the MailFlow app; never throws. */
+export async function postAlertDm(text: string, env: Record<string, string | undefined> = process.env): Promise<ChannelOutcome> {
+  const slack = SlackClient.fromEnv(env);
+  if (!slack) return 'SKIPPED: Slack is not configured';
+  const to = env.SLACK_ALERT_USER_ID?.trim() || ALERT_SLACK_USER_ID;
+  const res = await slack.postMessage({ channel: to, text });
+  return res.ok ? `SENT to ${to}` : `FAILED: ${res.error ?? 'unknown Slack error'}`;
+}
+
+/** Posts a report picture to the Slack channel with a one-line message; falls back to blocks if uploads aren't allowed. */
+export async function postReportImage(organizationId: string, opts: { channel?: string; text: string; filename: string; bytes: Uint8Array; fallback: () => Promise<ChannelOutcome> }): Promise<ChannelOutcome> {
+  const slack = SlackClient.fromEnv();
+  if (!slack) return 'SKIPPED: Slack is not configured';
+  let channel = opts.channel?.trim();
+  if (!channel) {
+    const settings = await prisma.integrationSettings.findUnique({ where: { organizationId }, select: { slackChannelId: true } }).catch(() => null);
+    channel = settings?.slackChannelId ?? '';
+  }
+  if (!channel) return 'SKIPPED: no Slack channel set in System Settings';
+  const r = await slack.uploadFile({ channel, filename: opts.filename, bytes: opts.bytes, title: opts.filename.replace(/.png$/, ''), comment: opts.text });
+  if (r.ok) return `SENT to ${channel} (picture)`;
+  const fb = await opts.fallback();
+  return fb.startsWith('SENT') ? (`${fb} (as text: ${r.error ?? 'picture upload failed'})` as ChannelOutcome) : fb;
+}
+
 /** Shared email layout for system mail. `body` is trusted HTML built by the caller. */
 export function systemEmailShell(title: string, intro: string, body: string): string {
   return [

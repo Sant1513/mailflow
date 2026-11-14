@@ -1,10 +1,33 @@
 import { Prisma, Role } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { getOrgSettings } from '@/lib/settings/org';
-import { emailsForRoles, postSystemSlack, sendSystemEmail, type ChannelOutcome } from '@/lib/notify/system';
-import { collectNeedsAttention, digestTotal } from '@/lib/digest/needsAttention';
-import { collectDailyActivity, dueReportDay, latestReportDay, reportWindow, weekWindow } from '@/lib/digest/dailyActivity';
-import { renderDailyEmail, renderReportSlack } from '@/lib/digest/dailyEmail';
+import { emailsForRoles, postReportImage, postSystemSlack, sendSystemEmail, type ChannelOutcome } from '@/lib/notify/system';
+import { collectNeedsAttention, digestTotal, type NeedsAttention } from '@/lib/digest/needsAttention';
+import { collectDailyActivity, type DailyActivity, dueReportDay, latestReportDay, reportWindow, weekWindow } from '@/lib/digest/dailyActivity';
+import { dailyLabel, renderDailyEmail, renderReportSlack } from '@/lib/digest/dailyEmail';
+import { renderReportImage } from '@/lib/digest/reportImage';
+import { appBaseUrl } from '@/lib/app-url';
+
+/**
+ * The report in Slack: one picture with everything in it and a one-line message above it.
+ * If Slack won't take the picture (missing files:write permission) or it can't be drawn, the
+ * old text report goes out instead, so a report is never lost.
+ */
+async function postReport(organizationId: string, kind: 'daily' | 'weekly', a: DailyActivity, d: NeedsAttention, channel: string | undefined, test = false): Promise<ChannelOutcome> {
+  const msg = renderReportSlack(a, d, { test });
+  const fallback = () => postSystemSlack(organizationId, msg.text, { channel, blocks: msg.blocks, ...SLACK_AS[kind] });
+  try {
+    const img = await renderReportImage(a, d, { test });
+    const t = a.totals;
+    const fromYmd = new Date(a.from.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+    const link = `${appBaseUrl()}/admin/organization?lfrom=${fromYmd}&lto=${a.ymd}`;
+    const text = `*${test ? '[Test] ' : ''}${kind === 'weekly' ? 'Weekly' : 'Daily'} report · ${dailyLabel(a)}*
+${t.emails.toLocaleString('en-IN')} emails · ${t.failed.toLocaleString('en-IN')} failed · ${a.inboxTotal.received.toLocaleString('en-IN')} replies · <${link}|Open dashboard>`;
+    return await postReportImage(organizationId, { channel, text, filename: `mailflow-${kind}-report-${a.ymd}.png`, bytes: img.bytes, fallback });
+  } catch {
+    return fallback();
+  }
+}
 
 /** Today's date in India (YYYY-MM-DD), the unit for "once a day". */
 export function istDate(now: Date = new Date()): string {
@@ -65,8 +88,7 @@ export async function dispatchDailyReport(organizationId: string, opts: { testTo
       subject: opts.testTo ? `[Test] ${subject}` : subject,
       html,
     });
-    const msg = renderReportSlack(activity, needs);
-    const slack = !opts.testTo && settings.digest.slack ? await postSystemSlack(organizationId, msg.text, { channel: settings.digest.slackChannel, blocks: msg.blocks, ...SLACK_AS.daily }) : undefined;
+    const slack = !opts.testTo && settings.digest.slack ? await postReport(organizationId, 'daily', activity, needs, settings.digest.slackChannel) : undefined;
     // Nothing went out: release the day so the next run tries again.
     if (!opts.testTo && !email.startsWith('SENT') && !slack?.startsWith('SENT')) await releaseReportDay(organizationId, day, settings.lastDailyReportOn);
     return { organizationId, sent: email.startsWith('SENT') || !!slack?.startsWith('SENT'), items, email, slack, reason: `report for ${day}` };
@@ -126,8 +148,7 @@ export async function dispatchWeeklyReport(organizationId: string, opts: { testT
       ? [opts.testTo]
       : [...(settings.weeklyReport.emailSuperAdmins ? await emailsForRoles(organizationId, [Role.SUPER_ADMIN]) : []), ...settings.weeklyReport.extraEmails];
     const email = await sendSystemEmail({ organizationId, senderAccountId: settings.senderAccountId, to, visible: !!opts.testTo, subject: opts.testTo ? `[Test] ${subject}` : subject, html });
-    const msg = renderReportSlack(activity, needs);
-    const slack = !opts.testTo && settings.weeklyReport.slack ? await postSystemSlack(organizationId, msg.text, { channel: settings.weeklyReport.slackChannel, blocks: msg.blocks, ...SLACK_AS.weekly }) : undefined;
+    const slack = !opts.testTo && settings.weeklyReport.slack ? await postReport(organizationId, 'weekly', activity, needs, settings.weeklyReport.slackChannel) : undefined;
 
     const sent = email.startsWith('SENT') || !!slack?.startsWith('SENT');
     // Nothing went out: release the day so the next run tries again.
@@ -144,6 +165,5 @@ export async function testReportSlack(organizationId: string, kind: 'daily' | 'w
   const settings = await getOrgSettings(organizationId);
   const window = kind === 'weekly' ? weekWindow(now) : reportWindow(latestReportDay(now));
   const [needs, activity] = await Promise.all([collectNeedsAttention(organizationId, settings.digest, now), collectDailyActivity(organizationId, window)]);
-  const msg = renderReportSlack(activity, needs, { test: true });
-  return postSystemSlack(organizationId, msg.text, { channel: kind === 'weekly' ? settings.weeklyReport.slackChannel : settings.digest.slackChannel, blocks: msg.blocks, ...SLACK_AS[kind] });
+  return postReport(organizationId, kind, activity, needs, kind === 'weekly' ? settings.weeklyReport.slackChannel : settings.digest.slackChannel, true);
 }
