@@ -67,14 +67,44 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
     groups,
     mailboxes: mailboxes.map((m) => ({ ...m, sentLast24h: usage.find((u) => u.id === m.id)?.sentLast24h ?? 0, dailyLimit: dailyLimit() })),
     hasSignature: !!me?.emailSignature?.trim(),
+    followUp: await followUpContext(blast),
     ...(await previewFields(blast)),
   });
 });
+
+/**
+ * Follow-ups: the earlier email (shown beside the new one) and the chain of rounds. Null for an
+ * ordinary send that has no follow-ups; an ordinary send's own follow-ups are listed too.
+ */
+async function followUpContext(blast: { id: string; parentBlastId: string | null; rootBlastId: string | null; round: number }) {
+  const rootId = blast.rootBlastId ?? blast.id;
+  const chain = await prisma.recruiterBlast.findMany({
+    where: { OR: [{ id: rootId }, { rootBlastId: rootId }] },
+    orderBy: [{ round: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true, name: true, round: true, status: true, parentBlastId: true, startedAt: true, completedAt: true },
+  });
+  if (chain.length < 2 && !blast.parentBlastId) return null;
+  const parent = blast.parentBlastId
+    ? await prisma.recruiterBlast.findUnique({
+        where: { id: blast.parentBlastId },
+        select: { id: true, name: true, round: true, subject: true, html: true, mode: true, toAddress: true, ccAddresses: true, fromName: true, completedAt: true, startedAt: true },
+      })
+    : null;
+  const sentFrom = parent
+    ? await prisma.recruiterBlastGroup.findMany({ where: { blastId: parent.id, status: 'SENT' }, distinct: ['fromEmail'], select: { fromEmail: true } })
+    : [];
+  return {
+    chain: chain.map((c) => ({ ...c, current: c.id === blast.id })),
+    parent: parent ? { ...parent, html: sanitizeEmailHtml(parent.html), sentFrom: sentFrom.map((g) => g.fromEmail).filter(Boolean) } : null,
+  };
+}
 
 const patchSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   mode: z.enum(['BCC', 'INDIVIDUAL']).optional(),
   sendOrder: z.enum(['PARALLEL', 'SEQUENTIAL']).optional(),
+  /** Follow-ups: what to do when the mailbox that sent the original is unavailable. */
+  onMailboxDown: z.enum(['WAIT', 'FALLBACK']).optional(),
   toAddress: z.string().trim().max(320).nullable().optional(),
   ccAddresses: z.array(z.string().trim().max(320)).max(10).optional(),
   subject: z.string().max(300).optional(),
@@ -141,6 +171,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       ...(body.name !== undefined ? { name: body.name } : {}),
       ...(body.mode !== undefined ? { mode: body.mode } : {}),
       ...(body.sendOrder !== undefined ? { sendOrder: body.sendOrder } : {}),
+      ...(body.onMailboxDown !== undefined ? { onMailboxDown: body.onMailboxDown } : {}),
       ...(body.toAddress !== undefined ? { toAddress: body.toAddress || null } : {}),
       ...(body.subject !== undefined ? { subject: body.subject } : {}),
       ...(body.fromName !== undefined ? { fromName: body.fromName || null } : {}),

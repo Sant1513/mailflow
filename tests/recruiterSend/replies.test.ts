@@ -28,6 +28,7 @@ const db = {
   conversation: { findUnique: vi.fn(async (_q: any): Promise<any> => null) },
   emailJob: { findFirst: vi.fn(async () => null) },
   recruiterBlastGroup: { findFirst: vi.fn(), findMany: vi.fn() },
+  recruiterBlast: { findUnique: vi.fn(async () => ({ rootBlastId: null })) },
   recruiterBlastRecipient: { updateMany: vi.fn(async () => ({ count: 1 })) },
   contact: { upsert: vi.fn(async () => ({ id: 'contact-r' })), updateMany: vi.fn(async () => ({ count: 0 })) },
   $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
@@ -100,7 +101,7 @@ describe('recruiter replies', () => {
     });
     expect(db.contact.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId_primaryEmail: { workspaceId: 'w-admin', primaryEmail: 'priya@corp.com' } } }));
     expect(notifications[0]).toMatchObject({ workspaceId: 'w-admin', userId: 'u-admin' });
-    expect(db.recruiterBlastRecipient.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ blastId: 'b1', email: 'priya@corp.com' }) }));
+    expect(db.recruiterBlastRecipient.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ blast: { OR: [{ id: 'b1' }, { rootBlastId: 'b1' }] }, email: 'priya@corp.com' }) }));
   });
 
   it('recognises replies that arrive at the Reply-To mailbox, not only the sending one', async () => {

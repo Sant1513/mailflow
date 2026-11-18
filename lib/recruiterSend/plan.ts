@@ -5,6 +5,7 @@ import { dailyLimit, DAILY_UNIQUE_RECIPIENT_LIMIT, usageLast24h } from '@/lib/qu
 import { isValidEmail } from '@/lib/quickSend/prepare';
 import { MAX_GROUP_SIZE, planGroups, previewHtml, type BlastMode } from '@/lib/recruiterSend/core';
 import { missingValues, personalize, variableCheck } from '@/lib/recruiterSend/personalize';
+import { followUpGroups, planFollowUpMailboxes, sourceAccounts, type FollowUpGroup, type OnMailboxDown } from '@/lib/recruiterSend/followUp';
 
 /**
  * The pre-send check for a recruiter send: who will get it, who is skipped and why (same
@@ -43,6 +44,10 @@ export interface BlastPlan {
   rounds: number;
   /** Mailbox id each batch is planned to go from (in batch order), for start. */
   plannedAccountIds: (string | null)[];
+  /** Every batch with its recruiters, the earlier message it replies to and that message's mailbox (follow-ups; for start). */
+  groupSpecs: { ids: string[]; sourceGroupId: string | null; pinnedAccountId: string | null }[];
+  /** Follow-ups: emails that continue an earlier thread / start a new one, and earlier mailboxes not chosen to send from. Null for an ordinary send. */
+  followUp: { replying: number; newThread: number; missingMailboxes: string[] } | null;
   /**
    * One page of recruiters with what will happen to them: their batch and mailbox, or why
    * they're skipped. Filtered by peopleFilter / batch / q; peopleTotal counts the filtered list.
@@ -172,12 +177,12 @@ export function estimateMinutes(rounds: number, gapSeconds: number, order: SendO
   return Math.max(1, Math.ceil((rounds * perRound) / 60));
 }
 
-type PlanBlastInput = { id: string; workspaceId: string; mode: string; sendOrder?: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null };
+type PlanBlastInput = { id: string; workspaceId: string; parentBlastId?: string | null; onMailboxDown?: string; mode: string; sendOrder?: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null };
 
 /** The expensive part of a plan: every recruiter checked and personalised, batches and mailboxes. */
 async function planCore(blast: PlanBlastInput) {
   // A stable order: the batches the check shows are the batches start creates.
-  const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { id: true, email: true, name: true, data: true } });
+  const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { id: true, email: true, name: true, data: true, sourceGroupId: true } });
   const problems = await checkAddresses(recipients.map((r) => r.email), blast.workspaceId);
   const eligibleIds: string[] = [];
   const skipped: { email: string; reason: string }[] = [];
@@ -219,22 +224,40 @@ async function planCore(blast: PlanBlastInput) {
 
   const limits = (blast.accountLimits && typeof blast.accountLimits === 'object' ? blast.accountLimits : {}) as Record<string, number>;
   const ordered = blast.accountIds.map((id) => capacity.find((c) => c.accountId === id)).filter((c): c is (typeof capacity)[number] => !!c);
-  const groups = planGroups(eligibleIds, mode, blast.groupSize);
+  // A follow-up keeps recruiters who share an earlier email together and sends it from that email's mailbox.
+  const isFollowUp = !!blast.parentBlastId;
+  const onDown: OnMailboxDown = blast.onMailboxDown === 'FALLBACK' ? 'FALLBACK' : 'WAIT';
+  const sourceOf = new Map(recipients.map((r) => [r.id, r.sourceGroupId ?? null]));
+  const specs: FollowUpGroup[] = isFollowUp
+    ? followUpGroups(eligibleIds.map((id) => ({ id, sourceGroupId: sourceOf.get(id) ?? null })), mode, blast.groupSize)
+    : planGroups(eligibleIds, mode, blast.groupSize).map((ids) => ({ ids, sourceGroupId: null }));
+  const groups = specs.map((s) => s.ids);
+  const pinOf = isFollowUp ? await sourceAccounts(specs.map((s) => s.sourceGroupId)) : new Map<string, string | null>();
+  const pinned = specs.map((s) => (s.sourceGroupId ? pinOf.get(s.sourceGroupId) ?? null : null));
   const sendOrder: SendOrder = blast.sendOrder === 'SEQUENTIAL' ? 'SEQUENTIAL' : 'PARALLEL';
-  const assigned = planMailboxes(
-    groups.map((g) => g.length),
-    ordered.map((c) => ({ messagesLeft: c.messagesLeft, peopleLeft: c.peopleLeft, sendLimit: Number(limits[c.accountId]) > 0 ? Number(limits[c.accountId]) : null })),
-    sendOrder,
-  );
+  const room = ordered.map((c) => ({ accountId: c.accountId, messagesLeft: c.messagesLeft, peopleLeft: c.peopleLeft, sendLimit: Number(limits[c.accountId]) > 0 ? Number(limits[c.accountId]) : null }));
+  const assigned = isFollowUp
+    ? planFollowUpMailboxes(groups.map((g, i) => ({ size: g.length, pinnedAccountId: pinned[i] ?? null })), room, onDown)
+    : planMailboxes(groups.map((g) => g.length), room, sendOrder);
   const planned = assigned.map((a) => (a.mailbox === null ? null : ordered[a.mailbox]!.emailAddress));
-  const plannedAccountIds = assigned.map((a) => (a.mailbox === null ? null : ordered[a.mailbox]!.accountId));
+  // A follow-up message waiting for its earlier mailbox keeps that mailbox as its plan.
+  const plannedAccountIds = assigned.map((a, i) => (a.mailbox === null ? (isFollowUp ? pinned[i] ?? null : null) : ordered[a.mailbox]!.accountId));
+  const groupSpecs = specs.map((s, i) => ({ ids: s.ids, sourceGroupId: s.sourceGroupId, pinnedAccountId: pinned[i] ?? null }));
+  const continues = (i: number) => !!specs[i]!.sourceGroupId && !!pinned[i] && plannedAccountIds[i] === pinned[i];
+  const followUp = isFollowUp
+    ? {
+        replying: specs.filter((_, i) => continues(i)).length,
+        newThread: specs.filter((_, i) => !continues(i)).length,
+        missingMailboxes: [...new Set(pinned.filter((p): p is string => !!p && !blast.accountIds.includes(p)))],
+      }
+    : null;
   const rounds = assigned.reduce((n, a) => Math.max(n, a.round ?? 0), 0);
   // Batches with no room today go out later; the estimate covers the ones that can go today.
   const estimatedMinutes = estimateMinutes(rounds, blast.gapSeconds, sendOrder, ordered.length);
   const batchOf = new Map<string, number>();
   groups.forEach((g, i) => g.forEach((id) => batchOf.set(id, i)));
 
-  return { recipients, eligibleIds, skipped, skippedReasons, skippedByReason, content, vars, messages, perMessage, capacity, messagesPossibleToday, groups, sendOrder, assigned, planned, plannedAccountIds, rounds, estimatedMinutes, batchOf };
+  return { recipients, eligibleIds, skipped, skippedReasons, skippedByReason, content, vars, messages, perMessage, capacity, messagesPossibleToday, groups, groupSpecs, followUp, sendOrder, assigned, planned, plannedAccountIds, rounds, estimatedMinutes, batchOf };
 }
 
 /**
@@ -245,7 +268,7 @@ async function planCore(blast: PlanBlastInput) {
 const CORE_TTL_MS = 60_000;
 const coreCache = new Map<string, { at: number; core: Promise<Awaited<ReturnType<typeof planCore>>> }>();
 function coreKey(blast: PlanBlastInput): string {
-  return JSON.stringify([blast.id, blast.mode, blast.sendOrder, blast.groupSize, blast.gapSeconds, blast.accountIds, blast.accountLimits, blast.subject, blast.html, blast.plainText, blast.columns, blast.emailColumn]);
+  return JSON.stringify([blast.id, blast.parentBlastId, blast.onMailboxDown, blast.mode, blast.sendOrder, blast.groupSize, blast.gapSeconds, blast.accountIds, blast.accountLimits, blast.subject, blast.html, blast.plainText, blast.columns, blast.emailColumn]);
 }
 function cachedCore(blast: PlanBlastInput, reuse: boolean) {
   const key = coreKey(blast);
@@ -263,7 +286,7 @@ export async function planBlast(
   blast: PlanBlastInput,
   options: PlanPageOptions = {},
 ): Promise<BlastPlan> {
-  const { recipients, eligibleIds, skipped, skippedReasons, skippedByReason, content, vars, messages, perMessage, capacity, messagesPossibleToday, groups, sendOrder, assigned, planned, plannedAccountIds, rounds, estimatedMinutes, batchOf } = await cachedCore(blast, options.reuse === true);
+  const { recipients, eligibleIds, skipped, skippedReasons, skippedByReason, content, vars, messages, perMessage, capacity, messagesPossibleToday, groups, groupSpecs, followUp, sendOrder, assigned, planned, plannedAccountIds, rounds, estimatedMinutes, batchOf } = await cachedCore(blast, options.reuse === true);
 
   // The recruiter table: filter the whole list, then return only the requested page.
   const peopleFilter: PeopleFilter = options.peopleFilter ?? 'all';
@@ -322,7 +345,7 @@ export async function planBlast(
   return { personalization, total: recipients.length, eligibleIds, skippedReasons, skipped: skipped.slice(0, 200), skippedByReason, messages, perMessage, capacity, messagesPossibleToday, estimatedMinutes,
     batches, batchesTotal: groups.length, batchPage, batchPages, batchFirst, batchesLater, byMailbox,
     people, peopleTotal: matching.length, peoplePage, peoplePages, peoplePageSize, peopleFilter, batch: batchFilter, q,
-    sendOrder, rounds, plannedAccountIds };
+    sendOrder, rounds, plannedAccountIds, groupSpecs, followUp };
 }
 
 /**

@@ -4,7 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
+import { STATUS_STYLE, stripRe } from '@/lib/recruiterSend/ui';
+import { FollowUpAudience, MailboxDownChoice, OriginalEmail, type FollowUpContext } from '@/components/recruiter-send/FollowUpPanel';
 import { Avatar } from '@/components/ui/Avatar';
 import { LivePreview, Pager, SendSummary, WhoReceives, type MailboxShare, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
 import { VariablePicker, variableProblems } from '@/components/recruiter-send/Variables';
@@ -24,12 +25,14 @@ interface Blast {
   columns: string[]; emailColumn: string | null; sendOrder: 'PARALLEL' | 'SEQUENTIAL';
   /** Where the messages go out from; runOnChangedAt is set when the cloud took over from a silent laptop. */
   runOn?: 'cloud' | 'laptop'; runOnChangedAt?: string | null;
+  /** Follow-ups (Recruiter Follow-up tab): the send this follows up, its round, and what to do when the original mailbox is unavailable. */
+  parentBlastId?: string | null; round?: number; onMailboxDown?: 'WAIT' | 'FALLBACK'; followUpAudience?: string | null;
 }
 interface LaptopStatus { laptopOnline: boolean; activeServer: 'cloud' | 'laptop' }
 interface Mailbox { id: string; emailAddress: string; ownerName: string | null; status: string; own: boolean; sentLast24h: number; dailyLimit: number }
 interface Group { id: string; seq: number; status: string; recipientCount: number; fromEmail: string | null; sentAt: string | null; openCount: number; firstOpenedAt: string | null; lastOpenedAt: string | null; error: string | null }
 interface RecipientRow { email: string; name: string | null; status: string; skipReason: string | null; sentAt: string | null; openedAt: string | null; openCount: number; repliedAt: string | null }
-interface Detail { blast: Blast; counts: Record<string, number>; stats: { messagesSent: number; messagesTotal: number; opens: number; openedRecruiters: number }; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; hasSignature: boolean; previewHtml: string; previewSubject?: string; previewRecipient?: string | null }
+interface Detail { blast: Blast; counts: Record<string, number>; stats: { messagesSent: number; messagesTotal: number; opens: number; openedRecruiters: number }; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; hasSignature: boolean; previewHtml: string; previewSubject?: string; previewRecipient?: string | null; followUp?: FollowUpContext | null }
 interface Check {
   total: number; eligible: number; skipped: { email: string; reason: string }[]; skippedByReason: Record<string, number>; messages: number; perMessage: number;
   capacity: { accountId: string; emailAddress: string; messagesLeft: number; peopleLeft: number }[]; messagesPossibleToday: number; estimatedMinutes: number; preview: string; previewSubject?: string; previewRecipient?: string | null;
@@ -38,6 +41,8 @@ interface Check {
   batches: PlannedBatch[]; people: PlannedPerson[]; peopleTotal: number; peoplePage: number; peoplePages: number; peoplePageSize?: number;
   batchesTotal: number; batchPage: number; batchPages: number; batchFirst?: Record<string, string>;
   batchesLater: number; byMailbox: MailboxShare[];
+  /** Follow-ups: emails that continue the earlier thread / start a new one, and earlier mailboxes that are not chosen. */
+  followUp?: { replying: number; newThread: number; missingMailboxes: string[] } | null;
 }
 
 const FIELD = 'w-full rounded border bg-background px-2 py-1.5 text-sm';
@@ -222,7 +227,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     const next = { ...form, ...patch };
     setForm(next);
     // Batches depend on these; the plan refreshes by itself once the change is saved.
-    const affectsPlan = (['accountIds', 'accountLimits', 'groupSize', 'mode', 'sendOrder'] as const).some((k) => k in patch);
+    const affectsPlan = (['accountIds', 'accountLimits', 'groupSize', 'mode', 'sendOrder', 'onMailboxDown'] as const).some((k) => k in patch);
     // Variables decide who has every value they need, so the plan follows the text too.
     const affectsVariables = ('subject' in patch || 'body' in patch) && /\{\{/.test(`${patch.subject ?? ''}${patch.body ?? ''}${form.subject}${form.body}`);
     setSaving('saving');
@@ -367,13 +372,15 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   async function removeDraft() {
     if (!confirm('Delete this draft?')) return;
     const res = await fetch(`/api/recruiter-blasts/${params.id}`, { method: 'DELETE' }).catch(() => null);
-    if (res?.ok) router.push('/recruiter-send');
+    if (res?.ok) router.push(form?.parentBlastId ? '/recruiter-follow-up' : '/recruiter-send');
   }
 
   if (error) return <div className="p-6 text-sm text-red-600">{error}</div>;
   if (!detail || !form) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   const b = detail.blast;
   const draft = b.status === 'DRAFT';
+  const isFollowUp = !!b.parentBlastId;
+  const parentSubject = detail.followUp?.parent?.subject ?? '';
   const chosen = form.accountIds;
   const mailboxOrder = [...chosen.map((id) => detail.mailboxes.find((m) => m.id === id)).filter((m): m is Mailbox => !!m), ...detail.mailboxes.filter((m) => !chosen.includes(m.id))];
   const limits = form.accountLimits ?? {};
@@ -439,7 +446,9 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   return (
     <StepsContext.Provider value={steps}>
     <div className={`space-y-3 p-4 sm:p-6 ${draft ? 'max-w-[1800px]' : 'max-w-[1500px]'}`}>
-      <Link href="/recruiter-send" className="text-sm text-muted-foreground hover:underline">← Recruiter Bulk Send</Link>
+      {isFollowUp
+        ? <Link href="/recruiter-follow-up" className="text-sm text-muted-foreground hover:underline">← Recruiter Follow-up</Link>
+        : <Link href="/recruiter-send" className="text-sm text-muted-foreground hover:underline">← Recruiter Bulk Send</Link>}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           {draft ? (
@@ -449,6 +458,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           )}
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className={`rounded px-1.5 py-0.5 ${STATUS_STYLE[b.status] ?? ''}`}>{b.status.toLowerCase()}</span>
+            {isFollowUp && <span className="rounded bg-sky-100 px-1.5 py-0.5 text-sky-900 dark:bg-sky-950 dark:text-sky-100">Follow-up · round {b.round}</span>}
             <span>{b.mode === 'BCC' ? 'BCC groups' : 'Individual copies'}</span>
             {['SENDING', 'SCHEDULED', 'PAUSED'].includes(b.status) && (
               <span className={b.runOn === 'laptop' ? 'rounded bg-sky-100 px-1.5 py-0.5 text-sky-900 dark:bg-sky-950 dark:text-sky-100' : undefined}>
@@ -466,13 +476,17 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           {b.status === 'PAUSED' && <button type="button" onClick={() => control('resume')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'resume' ? 'Resuming…' : 'Resume'}</button>}
           {['SENDING', 'SCHEDULED', 'PAUSED'].includes(b.status) && <button type="button" onClick={() => control('cancel')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm text-red-700 hover:bg-elevated disabled:opacity-50">{busy === 'cancel' ? 'Cancelling…' : 'Cancel'}</button>}
           {!draft && <ExportMenu href={`/api/recruiter-blasts/${b.id}/export`} perPerson={b.mode !== 'BCC'} />}
-          <button type="button" onClick={copy} disabled={busy === 'copy'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">Copy</button>
+          {!isFollowUp && <button type="button" onClick={copy} disabled={busy === 'copy'} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">Copy</button>}
+          {!draft && b.status === 'COMPLETED' && (
+            <Link href="/recruiter-follow-up" className="rounded border px-3 py-1.5 text-sm hover:bg-elevated" title="Follow up the recruiters of this send">Follow up…</Link>
+          )}
           {draft && <button type="button" onClick={removeDraft} className="rounded px-3 py-1.5 text-sm text-muted-foreground hover:bg-elevated">Delete draft</button>}
         </div>
       </div>
 
       {b.note && <p className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">{b.note}</p>}
 
+      {!draft && isFollowUp && detail.followUp && <OriginalEmail context={detail.followUp} />}
       {!draft && <Progress detail={detail} page={recipientPage} onPage={setRecipientPage} eta={eta} />}
 
       {draft && (
@@ -483,6 +497,12 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
         </div>
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,600px)]">
         <div className="min-w-0 space-y-3">
+          {isFollowUp && detail.followUp && <OriginalEmail context={detail.followUp} />}
+          {isFollowUp ? (
+          <Section n={1} title="Who gets it" summary={stepSummary[1]} done={stepDone[1]} hint="Everyone who was sent an earlier email in this chain. Pick an audience, then tick or untick recruiters, or add addresses. Each recruiter's email goes into their own earlier thread.">
+            <FollowUpAudience blastId={b.id} editable={draft} onChanged={() => { load(); runCheck(); }} />
+          </Section>
+          ) : (
           <Section n={1} title="Recruiters" summary={stepSummary[1]} done={stepDone[1]} hint="Paste from Google Sheets/Excel with the header row (every column is kept for {{Column}} in the email, e.g. a UTM link per recruiter), paste plain addresses, upload a CSV/Excel file, or use saved data. Duplicates are removed; unsubscribed, bounced and bad addresses are skipped at the check.">
             {listCollapsed ? (
               <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-2 text-sm">
@@ -553,6 +573,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             )}
             {listPreviewOpen && <RecruiterListPreview blastId={b.id} open onClose={() => setListPreviewOpen(false)} />}
           </Section>
+          )}
 
           <Section n={2} title="How it goes out" summary={stepSummary[2]} done={stepDone[2]}>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -605,7 +626,13 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
           <Section n={3} title="The email" summary={stepSummary[3]} done={stepDone[3]}>
             <div className="space-y-3">
-              <label className="block"><span className={LABEL}>Subject</span><input ref={subjectRef} onFocus={() => (lastField.current = 'subject')} value={form.subject} onChange={(e) => edit({ subject: e.target.value })} className={FIELD} maxLength={300} /></label>
+              <label className="block"><span className={LABEL}>Subject</span><input ref={subjectRef} onFocus={() => (lastField.current = 'subject')} value={form.subject} onChange={(e) => edit({ subject: e.target.value })} className={FIELD} maxLength={300} />
+                {isFollowUp && (
+                  stripRe(form.subject).toLowerCase() === stripRe(parentSubject).toLowerCase()
+                    ? <span className="mt-0.5 block text-xs text-muted-foreground">Same subject as the original (with “Re:”), so Gmail keeps it in the original thread.</span>
+                    : <span className="mt-0.5 block text-xs text-amber-700 dark:text-amber-400">This subject differs from the original (“{parentSubject}”). Gmail may then show it as a separate conversation; the email is still sent.</span>
+                )}
+              </label>
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <span className="text-xs font-medium">Message</span>
@@ -815,6 +842,16 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           </Section>
 
           <Section n={7} title="Check and send" summary={stepSummary[7]} done={stepDone[7]}>
+            {isFollowUp && <MailboxDownChoice value={form.onMailboxDown ?? 'WAIT'} onChange={(v) => edit({ onMailboxDown: v })} />}
+            {isFollowUp && check?.followUp && (
+              <p className="mb-3 rounded border bg-muted/30 p-2 text-sm">
+                <b>{check.followUp.replying.toLocaleString()}</b> email{check.followUp.replying === 1 ? '' : 's'} continue{check.followUp.replying === 1 ? 's' : ''} the original Gmail thread
+                {check.followUp.newThread > 0 && <> · <b>{check.followUp.newThread.toLocaleString()}</b> start{check.followUp.newThread === 1 ? 's' : ''} a new thread (new addresses, or sent from another mailbox)</>}.
+                {check.followUp.missingMailboxes.length > 0 && (form.onMailboxDown ?? 'WAIT') === 'WAIT' && (
+                  <span className="mt-1 block text-red-700 dark:text-red-400">The original email went out from a mailbox that is not ticked in “Send from”. Tick it, or choose “Use another chosen mailbox”, before sending.</span>
+                )}
+              </p>
+            )}
             <fieldset className="mb-4 space-y-1 rounded border p-3">
               <legend className="sr-only">Send from</legend>
               <p className="text-xs font-medium">Send from</p>
@@ -926,6 +963,7 @@ function pickEditable(b: Blast) {
     name: b.name, mode: b.mode, toAddress: b.toAddress, subject: b.subject, body: b.body, format: b.format, includeSignature: b.includeSignature,
     fromName: b.fromName, replyTo: b.replyTo, ccAddresses: b.ccAddresses ?? [], accountIds: b.accountIds, accountLimits: b.accountLimits ?? {}, attachmentDocumentIds: b.attachmentDocumentIds,
     groupSize: b.groupSize, gapSeconds: b.gapSeconds, sendOrder: b.sendOrder ?? 'PARALLEL',
+    ...(b.parentBlastId ? { onMailboxDown: b.onMailboxDown ?? 'WAIT' } : {}),
   };
 }
 

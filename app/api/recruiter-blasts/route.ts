@@ -16,7 +16,8 @@ export const GET = withErrorHandling(async (req) => {
   // Watchdog: a send that should be moving but isn't gets a fresh run (in the background).
   try { waitUntil(nudgeStuckSends('page').catch(() => 0)); } catch { void nudgeStuckSends('page').catch(() => 0); }
   const paging = parsePaging(new URL(req.url).searchParams, { pageSize: 25 });
-  const where = { organizationId: session.organizationId, ...(session.role === 'SUPER_ADMIN' ? {} : { workspaceId: session.workspaceId! }) };
+  // Follow-ups live in their own tab (Recruiter Follow-up), not in this list.
+  const where = { organizationId: session.organizationId, parentBlastId: null, ...(session.role === 'SUPER_ADMIN' ? {} : { workspaceId: session.workspaceId! }) };
   const total = await prisma.recruiterBlast.count({ where });
   const blasts = await prisma.recruiterBlast.findMany({
     where,

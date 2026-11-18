@@ -23,6 +23,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     eligible: plan.eligibleIds.length,
     eligibleIds: undefined,
     plannedAccountIds: undefined,
+    groupSpecs: undefined,
     skippedReasons: undefined,
     preview: sanitizeEmailHtml(preview.html),
     previewSubject: preview.subject,

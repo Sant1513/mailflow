@@ -1536,6 +1536,16 @@ model RecruiterBlast {
   /// When runOn last changed after the start (the cloud took over from a silent laptop).
   runOnChangedAt  DateTime?
   copiedFromId    String?
+  /// Follow-up (Recruiter Follow-up tab): the send this one follows up (the previous round), the
+  /// first send of the chain, which round this is (1 = an ordinary send), who it was aimed at
+  /// (NOT_REPLIED | NOT_REPLIED_OPENED | NOT_REPLIED_UNOPENED | EVERYONE) and what to do when the
+  /// mailbox that sent the original is unavailable (WAIT: stay in its thread | FALLBACK: another
+  /// mailbox, a new thread). parentBlastId null = an ordinary send.
+  parentBlastId   String?
+  rootBlastId     String?
+  round           Int       @default(1)
+  followUpAudience String?
+  onMailboxDown   String    @default("WAIT")
   startedAt       DateTime?
   completedAt     DateTime?
   createdAt       DateTime  @default(now())
@@ -1546,6 +1556,8 @@ model RecruiterBlast {
 
   @@index([workspaceId, createdAt])
   @@index([status])
+  @@index([rootBlastId])
+  @@index([parentBlastId])
 }
 
 model RecruiterBlastRecipient {
@@ -1559,6 +1571,9 @@ model RecruiterBlastRecipient {
   status    String    @default("PENDING")
   skipReason String?
   groupId   String?
+  /// Follow-ups: the earlier Gmail message (group) this recruiter last received, so the follow-up
+  /// goes into its thread. Null = new to the chain (starts a thread).
+  sourceGroupId String?
   sentAt    DateTime?
   /// When this recruiter first replied (the conversation is in the admin sender's inbox).
   repliedAt DateTime?
@@ -1585,6 +1600,8 @@ model RecruiterBlastGroup {
   /// The mailbox this message is planned to go from (PARALLEL sends); moved to another mailbox
   /// when this one can't send (disconnected, paused by Gmail, at a limit).
   plannedAccountId String?
+  /// Follow-ups: the earlier message this one replies to (same Gmail thread, same mailbox).
+  inReplyToGroupId String?
   accountId      String?
   fromEmail      String?
   gmailMessageId String?

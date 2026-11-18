@@ -106,7 +106,16 @@ export async function suppressRejectedRecruiter(workspaceId: string, email: stri
   await recordHardBounce({ workspaceId, email, detail });
 }
 
-/** Marks the recruiter as having replied, for the send's page. */
+/**
+ * Marks the recruiter as having replied, for the send's page. Follow-ups share a Gmail thread with
+ * the send they follow up, so the reply counts for every round of the chain (a recruiter who
+ * answered round 1 is "replied" in round 2 too, and is left out of the next follow-up).
+ */
 export async function markRecruiterReplied(blastId: string, email: string, at: Date): Promise<void> {
-  await prisma.recruiterBlastRecipient.updateMany({ where: { blastId, email: email.trim().toLowerCase(), repliedAt: null }, data: { repliedAt: at } });
+  const blast = await prisma.recruiterBlast.findUnique({ where: { id: blastId }, select: { rootBlastId: true } });
+  const rootId = blast?.rootBlastId ?? blastId;
+  await prisma.recruiterBlastRecipient.updateMany({
+    where: { blast: { OR: [{ id: rootId }, { rootBlastId: rootId }] }, email: email.trim().toLowerCase(), repliedAt: null },
+    data: { repliedAt: at },
+  });
 }

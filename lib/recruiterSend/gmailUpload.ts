@@ -37,13 +37,15 @@ export async function sendViaUpload(account: EmailProviderAccount, input: SendEm
     html: input.html,
     plainText: input.plainText,
     attachments: input.attachments,
+    inReplyTo: input.inReplyTo,
+    references: input.references,
     listUnsubscribeUrl: input.listUnsubscribeUrl,
     listUnsubscribeMailto: input.listUnsubscribeMailto,
     listUnsubscribeOneClick: input.listUnsubscribeOneClick,
   });
   try {
     const gmail = gmailApi({ version: 'v1', auth: await authorizedClientFor(account) });
-    const res = await gmail.users.messages.send({ userId: 'me', requestBody: {}, media: { mimeType: 'message/rfc822', body: raw } });
+    const res = await gmail.users.messages.send({ userId: 'me', requestBody: input.threadId ? { threadId: input.threadId } : {}, media: { mimeType: 'message/rfc822', body: raw } });
     if (!res.data.id) throw new SendEmailError('Gmail accepted the message but returned no id.', 'UNKNOWN');
     return { providerMessageId: res.data.id, threadId: res.data.threadId ?? null, messageIdHeader: messageIdHeader ?? null };
   } catch (err) {

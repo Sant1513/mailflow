@@ -14,6 +14,7 @@ import { allowedMailboxIds } from '@/lib/recruiterSend/access';
 import { markRecruiterBounced, suppressRejectedRecruiter } from '@/lib/recruiterSend/replies';
 import { LAPTOP_SILENT_MS, readState } from '@/lib/system/serverState';
 import { audit } from '@/lib/audit/log';
+import { threadFor } from '@/lib/recruiterSend/followUp';
 
 /**
  * Sends Recruiter Bulk Send messages (a BCC group or one individual copy each).
@@ -216,8 +217,15 @@ export type RecruiterSender = (account: EmailProviderAccount, input: SendEmailIn
 const gmailSender: RecruiterSender = (account, input, large) => (large ? sendViaUpload(account, input) : new GmailProvider(account).sendEmail(input));
 
 type BlastRow = Awaited<ReturnType<typeof prisma.recruiterBlast.findMany>>[number];
-type GroupRow = { id: string; seq: number; attempts: number; recipientCount: number; plannedAccountId: string | null };
+type GroupRow = { id: string; seq: number; attempts: number; recipientCount: number; plannedAccountId: string | null; inReplyToGroupId?: string | null };
 type Person = { id: string; email: string; name: string | null; data: Prisma.JsonValue };
+
+/**
+ * A follow-up message that must stay in its original thread waits for the mailbox that sent the
+ * original (the send's "when the mailbox is unavailable" choice is WAIT) instead of moving to another.
+ */
+const waitsForMailbox = (blast: { onMailboxDown: string }, g: { inReplyToGroupId?: string | null; plannedAccountId: string | null }) =>
+  blast.onMailboxDown === 'WAIT' && !!g.inReplyToGroupId && !!g.plannedAccountId;
 type Outcome = 'sent' | 'failed' | 'retry';
 
 /** At most this many Gmail messages are out at once in one run (a run has under 60 s). */
@@ -230,7 +238,15 @@ export const SEND_RESERVE_MS = 18_000;
  * (a long send runs for days) is dropped. A message left with nobody is closed.
  */
 async function liveRecipients(blast: BlastRow, groupId: string): Promise<Person[]> {
-  let recipients = await prisma.recruiterBlastRecipient.findMany({ where: { groupId, status: { in: ['PENDING', 'QUEUED'] } }, select: { id: true, email: true, name: true, data: true } });
+  let recipients = await prisma.recruiterBlastRecipient.findMany({ where: { groupId, status: { in: ['PENDING', 'QUEUED'] } }, select: { id: true, email: true, name: true, data: true, repliedAt: true } });
+  // A follow-up is for people who have not answered: one who replied since it was prepared is dropped.
+  if (blast.parentBlastId) {
+    const replied = recipients.filter((r) => r.repliedAt);
+    if (replied.length) {
+      await prisma.recruiterBlastRecipient.updateMany({ where: { id: { in: replied.map((r) => r.id) } }, data: { status: 'SKIPPED', skipReason: 'Replied after the follow-up was prepared' } });
+      recipients = recipients.filter((r) => !r.repliedAt);
+    }
+  }
   if (recipients.length) {
     const suppressed = await prisma.emailSuppression.findMany({ where: { workspaceId: blast.workspaceId, email: { in: recipients.map((r) => r.email) } }, select: { email: true } });
     if (suppressed.length) {
@@ -289,8 +305,15 @@ async function deliver(blast: BlastRow, group: { id: string; attempts: number },
       }
       attachments.push({ filename: video.fileName, mimeType: video.contentType, content: bytes });
     }
+    // A follow-up continues the Gmail thread of the email it follows up, when this mailbox sent that email.
+    let thread: Awaited<ReturnType<typeof threadFor>> = null;
+    if (blast.parentBlastId) {
+      const row = await prisma.recruiterBlastGroup.findUnique({ where: { id: group.id }, select: { inReplyToGroupId: true } });
+      if (row?.inReplyToGroupId) thread = await threadFor(row.inReplyToGroupId, account.id).catch(() => null);
+    }
     const input = {
       to,
+      ...(thread ? { threadId: thread.threadId, inReplyTo: thread.inReplyTo, references: thread.references } : {}),
       cc: blast.ccAddresses,
       bcc,
       fromName: blast.fromName || account.displayName || account.emailAddress,
@@ -353,7 +376,7 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
     where: { blastId: blast.id, status: 'PENDING' },
     orderBy: { seq: 'asc' },
     take: 5000,
-    select: { id: true, seq: true, attempts: true, recipientCount: true, plannedAccountId: true },
+    select: { id: true, seq: true, attempts: true, recipientCount: true, plannedAccountId: true, inReplyToGroupId: true },
   });
   if (!pending.length) return { ready: [], nextGap: Infinity, waiting: null };
   const [used, allowed, lastSent, busyRows] = await Promise.all([
@@ -387,10 +410,16 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
   const moves = new Map<string, string[]>();
   for (const g of pending) {
     if (g.plannedAccountId && left.has(g.plannedAccountId)) continue;
+    if (waitsForMailbox(blast, g)) continue; // a follow-up waits for the mailbox of its thread
     const target = usable.reduce((best, id) => (left.get(id)! < left.get(best)! ? id : best), usable[0]!);
     left.set(target, left.get(target)! + 1);
     moves.set(target, [...(moves.get(target) ?? []), g.id]);
     g.plannedAccountId = target;
+  }
+  // Everything left is a follow-up waiting for a mailbox that can't send: say so (and stop handing over).
+  const blocked = pending.filter((g) => waitsForMailbox(blast, g) && !left.has(g.plannedAccountId!));
+  if (blocked.length === pending.length) {
+    return { ready: [], nextGap: Infinity, waiting: `Waiting: the mailbox that sent the original email can't send now (${reasons.join('; ') || 'it is not one of the chosen mailboxes'}). The follow-up goes out in its thread when it can; or choose “another mailbox (new thread)”.` };
   }
   for (const [target, ids] of moves) {
     await prisma.recruiterBlastGroup.updateMany({ where: { id: { in: ids }, status: 'PENDING' }, data: { plannedAccountId: target } });
@@ -540,7 +569,10 @@ export async function runRecruiterWorker(opts: {
       }
       const mode = blast.mode as BlastMode;
       const to = mode === 'BCC' ? blast.toAddress! : recipients[0]!.email;
-      const { account, reasons } = await chooseMailbox(blast, to, mode === 'BCC' ? recipients.map((r) => r.email) : []);
+      // A follow-up replies from the mailbox that sent the original: only that one with WAIT, first choice with FALLBACK.
+      const own = group.inReplyToGroupId ? group.plannedAccountId : null;
+      const ids = own && blast.onMailboxDown === 'WAIT' ? [own] : own && blast.accountIds.includes(own) ? [own, ...blast.accountIds.filter((i) => i !== own)] : blast.accountIds;
+      const { account, reasons } = await chooseMailbox({ ...blast, accountIds: ids }, to, mode === 'BCC' ? recipients.map((r) => r.email) : []);
       if (!account) {
         await setWaiting(blast, `Waiting: ${reasons.join('; ') || 'no sending mailbox chosen'}. Sending carries on by itself when one is free.`);
         continue;

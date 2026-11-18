@@ -1,3 +1,8 @@
+/** "Re: Hiring drive": one Re:, whatever the original already had (client-safe; used by follow-ups). */
+export function stripRe(subject: string): string {
+  return subject.replace(/^\s*((re|fwd?)\s*:\s*)+/i, '').trim();
+}
+
 /** Status badge colours for Recruiter Bulk Send pages. */
 export const STATUS_STYLE: Record<string, string> = {
   DRAFT: 'bg-muted text-muted-foreground',

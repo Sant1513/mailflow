@@ -78,12 +78,18 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   if (mode === 'INDIVIDUAL' && blast.ccAddresses.length && plan.eligibleIds.length > CC_INDIVIDUAL_MAX) {
     problems.push(`With individual copies, each CC address gets one copy per recruiter; that's at most ${CC_INDIVIDUAL_MAX} recruiters. Use BCC groups, or remove the CC.`);
   }
+  // A follow-up that waits for the mailbox that sent the original can only go out from it.
+  const isFollowUp = !!blast.parentBlastId;
+  if (isFollowUp && blast.onMailboxDown === 'WAIT' && plan.followUp?.missingMailboxes.length) {
+    const named = await prisma.emailProviderAccount.findMany({ where: { id: { in: plan.followUp.missingMailboxes } }, select: { emailAddress: true } });
+    problems.push(`The original email went out from ${named.map((m) => m.emailAddress).join(', ') || 'a mailbox that is not chosen'}. Tick it in "Send from" so the follow-up stays in that thread, or choose “another mailbox (new thread)” when the mailbox is unavailable.`);
+  }
   if (problems.length) return NextResponse.json({ error: problems.join(' ') }, { status: 400 });
 
   const when = scheduledAt ? new Date(scheduledAt) : null;
   if (when && when.getTime() < Date.now() - 60_000) return NextResponse.json({ error: 'The scheduled time is in the past.' }, { status: 400 });
 
-  const groups = planGroups(plan.eligibleIds, mode, blast.groupSize);
+  const groups = isFollowUp ? plan.groupSpecs.map((s) => s.ids) : planGroups(plan.eligibleIds, mode, blast.groupSize);
   await prisma.$transaction(
     async (tx) => {
       // Skipped recruiters keep their reason.
@@ -92,7 +98,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       }
       const created = await tx.recruiterBlastGroup.createManyAndReturn({
         // Each batch keeps the mailbox the check showed (PARALLEL: round robin across mailboxes).
-        data: groups.map((g, i) => ({ blastId: blast.id, seq: i + 1, recipientCount: g.length, plannedAccountId: plan.plannedAccountIds[i] ?? null })),
+        data: groups.map((g, i) => ({ blastId: blast.id, seq: i + 1, recipientCount: g.length, plannedAccountId: plan.plannedAccountIds[i] ?? null, inReplyToGroupId: isFollowUp ? plan.groupSpecs[i]?.sourceGroupId ?? null : null })),
         select: { id: true, seq: true },
       });
       const bySeq = new Map(created.map((c) => [c.seq, c.id]));
@@ -116,7 +122,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   await audit(session, 'RECRUITER_SEND_START', {
     targetType: 'RecruiterBlast',
     targetId: blast.id,
-    metadata: { mode, sendOrder: plan.sendOrder, rounds: plan.rounds, recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, messages: groups.length, accounts: blast.accountIds, scheduledAt: when?.toISOString() ?? null, runOn, alreadyOnLaptop },
+    metadata: { mode, sendOrder: plan.sendOrder, rounds: plan.rounds, recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, messages: groups.length, accounts: blast.accountIds, scheduledAt: when?.toISOString() ?? null, runOn, alreadyOnLaptop, ...(isFollowUp ? { followUpRound: blast.round, parentBlastId: blast.parentBlastId, onMailboxDown: blast.onMailboxDown } : {}) },
   });
   // A laptop send is picked up by the laptop's runner within about 20 seconds: no Vercel run.
   if (!when && runOn === 'cloud') kickRecruiterWorker('start');

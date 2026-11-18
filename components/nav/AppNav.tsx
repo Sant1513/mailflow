@@ -18,6 +18,7 @@ import { rememberVisit } from '@/lib/products-client';
 export const REVIEWER_ITEMS: NavItem[] = [
   { href: '/approvals', label: 'Approvals' },
   { href: '/recruiter-send', label: 'Recruiter Bulk Send' },
+  { href: '/recruiter-follow-up', label: 'Recruiter Follow-up' },
   { href: '/mailbox-usage', label: 'Mailbox usage' },
 ];
 

@@ -25,6 +25,7 @@ const PRIVATE = [
   '/performance',
   '/quick-send',
   '/recruiter-send',
+  '/recruiter-follow-up',
   '/reports',
   '/settings',
   '/suppressions',
