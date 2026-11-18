@@ -16,14 +16,39 @@ export { stripRe };
  * another mailbox and start a new thread.
  */
 
-export const FOLLOW_UP_AUDIENCES = ['NOT_REPLIED', 'NOT_REPLIED_OPENED', 'NOT_REPLIED_UNOPENED', 'EVERYONE'] as const;
-export type FollowUpAudience = (typeof FOLLOW_UP_AUDIENCES)[number];
-export const AUDIENCE_LABEL: Record<FollowUpAudience, string> = {
-  NOT_REPLIED: 'Not replied',
-  NOT_REPLIED_OPENED: 'Not replied, but opened',
-  NOT_REPLIED_UNOPENED: 'Not replied and not opened',
-  EVERYONE: 'Everyone who was sent it',
+/**
+ * Who a follow-up goes to is a multi-select of SEGMENTS. Every recruiter who was sent an email is
+ * in exactly one segment (bounced ones in none: they are never included), so ticking several
+ * simply adds them up:
+ *   NO_REPLY_OPENED    no reply, opened the last email (individual copies only)
+ *   NO_REPLY_UNOPENED  no reply, did not open it (individual copies only)
+ *   NO_REPLY_UNKNOWN   no reply, opens unknown (the last email went out in BCC)
+ *   REPLIED            has already replied (to this or an earlier round)
+ */
+export const FOLLOW_UP_SEGMENTS = ['NO_REPLY_OPENED', 'NO_REPLY_UNOPENED', 'NO_REPLY_UNKNOWN', 'REPLIED'] as const;
+export type FollowUpSegment = (typeof FOLLOW_UP_SEGMENTS)[number];
+/** Everyone who has not replied: the default selection. */
+export const NOT_REPLIED_SEGMENTS: FollowUpSegment[] = ['NO_REPLY_OPENED', 'NO_REPLY_UNOPENED', 'NO_REPLY_UNKNOWN'];
+
+/** Audience names saved by the first version (one choice); still accepted. */
+export const LEGACY_AUDIENCES = ['NOT_REPLIED', 'NOT_REPLIED_OPENED', 'NOT_REPLIED_UNOPENED', 'EVERYONE'] as const;
+const LEGACY: Record<string, FollowUpSegment[]> = {
+  NOT_REPLIED: NOT_REPLIED_SEGMENTS,
+  NOT_REPLIED_OPENED: ['NO_REPLY_OPENED'],
+  NOT_REPLIED_UNOPENED: ['NO_REPLY_UNOPENED'],
+  EVERYONE: [...FOLLOW_UP_SEGMENTS],
 };
+
+/** The segments a saved value stands for: "A,B" lists, or a legacy audience name. Unknown names are dropped. */
+export function parseSegments(saved: string | null | undefined): FollowUpSegment[] {
+  const parts = (saved ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const out = new Set<FollowUpSegment>();
+  for (const p of parts) {
+    if (LEGACY[p]) LEGACY[p]!.forEach((s) => out.add(s));
+    else if ((FOLLOW_UP_SEGMENTS as readonly string[]).includes(p)) out.add(p as FollowUpSegment);
+  }
+  return FOLLOW_UP_SEGMENTS.filter((s) => out.has(s));
+}
 export type OnMailboxDown = 'WAIT' | 'FALLBACK';
 
 export function followUpSubject(subject: string): string {
@@ -70,29 +95,32 @@ export async function chainCandidates(rootId: string): Promise<Candidate[]> {
   return [...by.values()].filter((c) => c.sent).map(({ sent: _sent, ...c }) => c);
 }
 
-/** Does this recruiter belong to the audience? Bounced recruiters are never in it. */
-export function inAudience(c: Candidate, audience: FollowUpAudience): boolean {
-  if (c.bounced) return false;
-  if (audience === 'EVERYONE') return true;
-  if (c.replied) return false;
-  if (audience === 'NOT_REPLIED_OPENED') return c.opened === true;
-  if (audience === 'NOT_REPLIED_UNOPENED') return c.opened === false;
-  return true;
+/** The one segment a recruiter is in; null for a bounced recruiter (never included). */
+export function segmentOf(c: Candidate): FollowUpSegment | null {
+  if (c.bounced) return null;
+  if (c.replied) return 'REPLIED';
+  if (c.opened === true) return 'NO_REPLY_OPENED';
+  if (c.opened === false) return 'NO_REPLY_UNOPENED';
+  return 'NO_REPLY_UNKNOWN';
 }
 
-export interface AudienceCounts { everyone: number; notReplied: number; openedNotReplied: number; unopenedNotReplied: number; replied: number; bounced: number; unknownOpens: number }
+/** Is the recruiter in any of the ticked segments? */
+export function inSegments(c: Candidate, segments: readonly FollowUpSegment[]): boolean {
+  const s = segmentOf(c);
+  return s !== null && segments.includes(s);
+}
 
-export function audienceCounts(list: Candidate[]): AudienceCounts {
-  return {
-    everyone: list.filter((c) => !c.bounced).length,
-    notReplied: list.filter((c) => inAudience(c, 'NOT_REPLIED')).length,
-    openedNotReplied: list.filter((c) => inAudience(c, 'NOT_REPLIED_OPENED')).length,
-    unopenedNotReplied: list.filter((c) => inAudience(c, 'NOT_REPLIED_UNOPENED')).length,
-    replied: list.filter((c) => c.replied).length,
-    bounced: list.filter((c) => c.bounced).length,
-    // Not replied, and no way to know whether they opened (the email went out in BCC).
-    unknownOpens: list.filter((c) => !c.bounced && !c.replied && c.opened === null).length,
-  };
+export type SegmentCounts = Record<FollowUpSegment, number> & { bounced: number; total: number };
+
+/** How many recruiters are in each segment (bounced ones counted apart; total = everyone ever sent). */
+export function segmentCounts(list: Candidate[]): SegmentCounts {
+  const counts: SegmentCounts = { NO_REPLY_OPENED: 0, NO_REPLY_UNOPENED: 0, NO_REPLY_UNKNOWN: 0, REPLIED: 0, bounced: 0, total: list.length };
+  for (const c of list) {
+    const s = segmentOf(c);
+    if (s) counts[s]++;
+    else counts.bounced++;
+  }
+  return counts;
 }
 
 const rowFor = (blastId: string, c: Candidate) => ({
@@ -103,16 +131,17 @@ const rowFor = (blastId: string, c: Candidate) => ({
   sourceGroupId: c.sourceGroupId,
 });
 
-/** Replaces the follow-up draft's recruiters with the audience (a snapshot; edit it afterwards). */
-export async function applyAudience(blastId: string, rootId: string, audience: FollowUpAudience): Promise<number> {
-  const chosen = (await chainCandidates(rootId)).filter((c) => inAudience(c, audience));
+/** Replaces the follow-up draft's recruiters with the ticked segments (a snapshot; edit it afterwards). */
+export async function applyAudience(blastId: string, rootId: string, segments: readonly FollowUpSegment[]): Promise<number> {
+  const picked = FOLLOW_UP_SEGMENTS.filter((s) => segments.includes(s));
+  const chosen = (await chainCandidates(rootId)).filter((c) => inSegments(c, picked));
   await prisma.$transaction(
     async (tx) => {
       await tx.recruiterBlastRecipient.deleteMany({ where: { blastId } });
       for (let i = 0; i < chosen.length; i += 1000) {
         await tx.recruiterBlastRecipient.createMany({ data: chosen.slice(i, i + 1000).map((c) => rowFor(blastId, c)), skipDuplicates: true });
       }
-      await tx.recruiterBlast.update({ where: { id: blastId }, data: { followUpAudience: audience } });
+      await tx.recruiterBlast.update({ where: { id: blastId }, data: { followUpAudience: picked.join(',') } });
     },
     { timeout: 60_000 },
   );
@@ -120,14 +149,21 @@ export async function applyAudience(blastId: string, rootId: string, audience: F
 }
 
 /** Add recruiters of the chain back (or new addresses: they start a thread of their own). */
-export async function addToAudience(blastId: string, rootId: string, emails: string[]): Promise<{ added: number; fromChain: number }> {
+export async function addToAudience(blastId: string, rootId: string, emails: string[]): Promise<{ added: number; fromChain: number; skippedBounced: number }> {
   const wanted = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
-  if (!wanted.length) return { added: 0, fromChain: 0 };
+  if (!wanted.length) return { added: 0, fromChain: 0, skippedBounced: 0 };
   const known = new Map((await chainCandidates(rootId)).map((c) => [c.email, c]));
   const have = new Set((await prisma.recruiterBlastRecipient.findMany({ where: { blastId, email: { in: wanted } }, select: { email: true } })).map((r) => r.email.toLowerCase()));
-  const rows = wanted.filter((e) => !have.has(e)).map((e) => rowFor(blastId, known.get(e) ?? { email: e, name: null, data: null, sourceGroupId: null, replied: false, opened: null, bounced: false, lastSentAt: null }));
+  // A recruiter whose address bounced in any round is never added, however they get here (tick or typed):
+  // a bounced address has no "sent" row, so it is looked up on its own.
+  const bouncedRows = await prisma.recruiterBlastRecipient.findMany({
+    where: { blast: { OR: [{ id: rootId }, { rootBlastId: rootId }] }, status: 'BOUNCED', email: { in: wanted, mode: 'insensitive' } },
+    select: { email: true },
+  });
+  const bounced = new Set([...bouncedRows.map((r) => r.email.toLowerCase()), ...[...known.values()].filter((c) => c.bounced).map((c) => c.email)]);
+  const rows = wanted.filter((e) => !have.has(e) && !bounced.has(e)).map((e) => rowFor(blastId, known.get(e) ?? { email: e, name: null, data: null, sourceGroupId: null, replied: false, opened: null, bounced: false, lastSentAt: null }));
   if (rows.length) await prisma.recruiterBlastRecipient.createMany({ data: rows, skipDuplicates: true });
-  return { added: rows.length, fromChain: rows.filter((r) => known.has(r.email)).length };
+  return { added: rows.length, fromChain: rows.filter((r) => known.has(r.email)).length, skippedBounced: wanted.filter((e) => bounced.has(e)).length };
 }
 
 /** One Gmail message of a follow-up: its recruiters and the earlier message it replies to. */

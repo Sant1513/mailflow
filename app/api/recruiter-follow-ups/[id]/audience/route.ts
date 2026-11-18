@@ -3,14 +3,14 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { loadBlast, requireBlastAdmin, requireBlastReader } from '@/lib/recruiterSend/access';
-import { addToAudience, applyAudience, audienceCounts, chainCandidates, FOLLOW_UP_AUDIENCES } from '@/lib/recruiterSend/followUp';
+import { addToAudience, applyAudience, chainCandidates, FOLLOW_UP_SEGMENTS, parseSegments, segmentCounts, segmentOf } from '@/lib/recruiterSend/followUp';
 import { isValidEmail } from '@/lib/quickSend/prepare';
 
 /**
  * Who a follow-up goes to. GET: everyone who was sent an email in the chain (page of 50, search
  * `q`, `show` = all | selected | replied) with their state and whether they are ticked for this
  * follow-up, plus counts for every audience. POST (drafts only):
- *   { action: 'apply', audience }       replace the list with an audience
+ *   { action: 'apply', segments }       replace the list with the ticked segments (none = nobody)
  *   { action: 'select', emails, selected }  tick / untick recruiters
  *   { action: 'add', text }             add addresses (recruiters of the chain, or new ones)
  */
@@ -39,8 +39,8 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
   const page = Math.min(pages, Math.max(1, Number.isFinite(rawPage) ? rawPage : 1));
   return NextResponse.json({
-    audience: blast.followUpAudience,
-    counts: audienceCounts(all),
+    segments: parseSegments(blast.followUpAudience),
+    counts: segmentCounts(all),
     selected: chosen.size,
     // Ticked recruiters that were not in the chain (added by address).
     added: [...chosen].filter((e) => !known.has(e)).length,
@@ -52,6 +52,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
     candidates: rows.slice((page - 1) * PAGE, page * PAGE).map((c) => ({
       email: c.email,
       name: c.name,
+      segment: segmentOf(c),
       replied: c.replied,
       opened: c.opened,
       bounced: c.bounced,
@@ -62,7 +63,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
 });
 
 const bodySchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('apply'), audience: z.enum(FOLLOW_UP_AUDIENCES) }),
+  z.object({ action: z.literal('apply'), segments: z.array(z.enum(FOLLOW_UP_SEGMENTS)).max(FOLLOW_UP_SEGMENTS.length) }),
   z.object({ action: z.literal('select'), emails: z.array(z.string().max(320)).min(1).max(5000), selected: z.boolean() }),
   z.object({ action: z.literal('add'), text: z.string().max(200_000) }),
 ]);
@@ -76,15 +77,14 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   const rootId = blast.rootBlastId ?? blast.id;
 
   if (body.action === 'apply') {
-    const count = await applyAudience(blast.id, rootId, body.audience);
+    const count = await applyAudience(blast.id, rootId, body.segments);
     return NextResponse.json({ ok: true, selected: count });
   }
   if (body.action === 'select') {
     const emails = [...new Set(body.emails.map((e) => e.trim().toLowerCase()))];
     if (body.selected) {
-      const bounced = new Set((await chainCandidates(rootId)).filter((c) => c.bounced).map((c) => c.email));
-      const res = await addToAudience(blast.id, rootId, emails.filter((e) => !bounced.has(e)));
-      return NextResponse.json({ ok: true, added: res.added, skippedBounced: emails.filter((e) => bounced.has(e)).length });
+      const res = await addToAudience(blast.id, rootId, emails);
+      return NextResponse.json({ ok: true, added: res.added, skippedBounced: res.skippedBounced });
     }
     const res = await prisma.recruiterBlastRecipient.deleteMany({ where: { blastId: blast.id, email: { in: emails } } });
     return NextResponse.json({ ok: true, removed: res.count });
@@ -94,5 +94,6 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   if (!valid.length) return NextResponse.json({ error: 'No email address found in that text.' }, { status: 400 });
   if (valid.length > 5000) return NextResponse.json({ error: 'Add up to 5,000 addresses at a time.' }, { status: 400 });
   const res = await addToAudience(blast.id, rootId, valid);
-  return NextResponse.json({ ok: true, added: res.added, fromChain: res.fromChain, newAddresses: res.added - res.fromChain });
+  if (!res.added && res.skippedBounced) return NextResponse.json({ error: res.skippedBounced === 1 ? 'That address bounced before, so it is never included.' : `${res.skippedBounced} of those addresses bounced before, so they are never included.` }, { status: 400 });
+  return NextResponse.json({ ok: true, added: res.added, fromChain: res.fromChain, newAddresses: res.added - res.fromChain, skippedBounced: res.skippedBounced });
 });

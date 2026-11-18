@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
@@ -51,28 +51,40 @@ export function OriginalEmail({ context }: { context: FollowUpContext }) {
   );
 }
 
-type AudienceKey = 'NOT_REPLIED' | 'NOT_REPLIED_OPENED' | 'NOT_REPLIED_UNOPENED' | 'EVERYONE';
-interface Counts { everyone: number; notReplied: number; openedNotReplied: number; unopenedNotReplied: number; replied: number; bounced: number; unknownOpens: number }
-interface Candidate { email: string; name: string | null; replied: boolean; opened: boolean | null; bounced: boolean; lastSentAt: string | null; selected: boolean }
-interface AudienceData { audience: AudienceKey | null; counts: Counts; selected: number; added: number; total: number; page: number; pages: number; candidates: Candidate[] }
+type Segment = 'NO_REPLY_OPENED' | 'NO_REPLY_UNOPENED' | 'NO_REPLY_UNKNOWN' | 'REPLIED';
+interface Counts { NO_REPLY_OPENED: number; NO_REPLY_UNOPENED: number; NO_REPLY_UNKNOWN: number; REPLIED: number; bounced: number; total: number }
+interface Candidate { email: string; name: string | null; segment: Segment | null; replied: boolean; opened: boolean | null; bounced: boolean; lastSentAt: string | null; selected: boolean }
+interface AudienceData { segments: Segment[]; counts: Counts; selected: number; added: number; total: number; page: number; pages: number; candidates: Candidate[] }
 
-/** Who the follow-up goes to: pick an audience, then tick / untick recruiters or add addresses. */
+const SEGMENTS: { key: Segment; label: string; hint: string }[] = [
+  { key: 'NO_REPLY_OPENED', label: 'No reply, opened it', hint: 'Opened the last email (individual copies only)' },
+  { key: 'NO_REPLY_UNOPENED', label: 'No reply, did not open it', hint: 'Did not open the last email (individual copies only)' },
+  { key: 'NO_REPLY_UNKNOWN', label: 'No reply, opens unknown', hint: 'The last email went out in BCC, so opens are not tracked per person' },
+  { key: 'REPLIED', label: 'Already replied', hint: 'Answered this or an earlier email' },
+];
+const NO_REPLY: Segment[] = ['NO_REPLY_OPENED', 'NO_REPLY_UNOPENED', 'NO_REPLY_UNKNOWN'];
+const sameSet = (a: Segment[], b: Segment[]) => a.length === b.length && a.every((x) => b.includes(x));
+
+/** Who the follow-up goes to: tick any segments, then tick / untick recruiters or add addresses. */
 export function FollowUpAudience({ blastId, editable, onChanged }: { blastId: string; editable: boolean; onChanged: () => void }) {
   const [data, setData] = useState<AudienceData | null>(null);
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
   const [show, setShow] = useState<'all' | 'selected' | 'replied'>('all');
-  const [pick, setPick] = useState<AudienceKey>('NOT_REPLIED');
+  const [pick, setPick] = useState<Segment[]>(NO_REPLY);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState('');
+  const loaded = useRef(false);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/recruiter-follow-ups/${blastId}/audience?page=${page}&show=${show}&q=${encodeURIComponent(search)}`, { cache: 'no-store' }).catch(() => null);
     const j = await res?.json().catch(() => null);
     if (res?.ok && j) {
       setData(j);
-      setPick((cur) => j.audience ?? cur);
+      // The ticks start from what was saved; after that they are the person's own until applied.
+      if (!loaded.current) setPick((cur) => { const saved = (j.segments as Segment[]).filter((k) => j.counts[k] > 0); return (j.segments as Segment[]).length ? saved : cur; });
+      loaded.current = true;
     }
   }, [blastId, page, show, search]);
   useEffect(() => { void load(); }, [load]);
@@ -97,49 +109,63 @@ export function FollowUpAudience({ blastId, editable, onChanged }: { blastId: st
 
   if (!data) return <p className="text-sm text-muted-foreground">Loading the recruiters…</p>;
   const c = data.counts;
-  // Opened / not opened are only known for recruiters who got an individual copy.
-  const openedKnown = c.notReplied - c.unknownOpens > 0;
-  const options: { key: AudienceKey; label: string; count: number; disabled?: boolean; hint?: string }[] = [
-    { key: 'NOT_REPLIED', label: 'Not replied', count: c.notReplied },
-    { key: 'NOT_REPLIED_OPENED', label: 'Not replied, but opened', count: c.openedNotReplied, disabled: !openedKnown, hint: openedKnown ? undefined : 'Opens are only known for individual copies' },
-    { key: 'NOT_REPLIED_UNOPENED', label: 'Not replied and not opened', count: c.unopenedNotReplied, disabled: !openedKnown, hint: openedKnown ? undefined : 'Opens are only known for individual copies' },
-    { key: 'EVERYONE', label: 'Everyone who was sent it', count: c.everyone },
-  ];
+  const inPick = pick.reduce((n, k) => n + c[k], 0);
+  // A saved group with nobody in it shows unticked, so it is left out of the comparison.
+  const unchanged = sameSet(pick, data.segments.filter((k) => c[k] > 0)) && data.selected === inPick && data.added === 0;
+  const toggle = (k: Segment) => setPick((cur) => (cur.includes(k) ? cur.filter((x) => x !== k) : [...cur, k]));
+  const everyone = SEGMENTS.map((x) => x.key);
 
   return (
     <div className="space-y-3 text-sm">
-      <fieldset disabled={!editable} className="grid gap-2 sm:grid-cols-2">
-        <legend className="sr-only">Audience</legend>
-        {options.map((o) => (
-          <label key={o.key} title={o.hint} className={`rounded-lg border p-2.5 ${o.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${pick === o.key ? 'border-primary ring-1 ring-primary' : ''}`}>
-            <span className="flex items-center gap-2 font-medium">
-              <input type="radio" name="audience" disabled={o.disabled} checked={pick === o.key} onChange={() => setPick(o.key)} />
-              {o.label}
-              <span className="ml-auto rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{o.count.toLocaleString()}</span>
-            </span>
-            {o.hint && <span className="mt-1 block text-xs text-muted-foreground">{o.hint}</span>}
-          </label>
-        ))}
+      <fieldset disabled={!editable} className="space-y-2">
+        <legend className="sr-only">Who gets the follow-up</legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {SEGMENTS.map((o) => {
+            const empty = c[o.key] === 0;
+            return (
+              <label key={o.key} title={o.hint} className={`rounded-lg border p-2.5 ${empty && !pick.includes(o.key) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${pick.includes(o.key) ? 'border-primary ring-1 ring-primary' : ''}`}>
+                <span className="flex items-center gap-2 font-medium">
+                  <input type="checkbox" disabled={empty && !pick.includes(o.key)} checked={pick.includes(o.key)} onChange={() => toggle(o.key)} />
+                  {o.label}
+                  <span className="ml-auto rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{c[o.key].toLocaleString()}</span>
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">{o.hint}</span>
+              </label>
+            );
+          })}
+        </div>
+        {editable && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <span className="text-muted-foreground">Quick pick:</span>
+            <button type="button" onClick={() => setPick(NO_REPLY)} className="text-primary hover:underline">Everyone who has not replied</button>
+            <button type="button" onClick={() => setPick(everyone)} className="text-primary hover:underline">Everyone</button>
+            <button type="button" onClick={() => setPick([])} className="text-primary hover:underline">Clear</button>
+          </div>
+        )}
       </fieldset>
       {editable && (
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            disabled={busy || pick === data.audience && data.selected === (options.find((o) => o.key === pick)?.count ?? -1)}
+            disabled={busy || unchanged}
             onClick={async () => {
-              if (data.selected > 0 && !confirm('Replace the list below with this audience? Recruiters you ticked or added by hand are reset.')) return;
-              const j = await act({ action: 'apply', audience: pick });
+              if (data.selected > 0 && !confirm('Replace the list below with these groups? Recruiters you ticked, unticked or added by hand are reset.')) return;
+              const j = await act({ action: 'apply', segments: pick });
               if (j) toast.success(`${Number(j.selected).toLocaleString()} recruiter${j.selected === 1 ? '' : 's'} selected.`);
             }}
             className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50"
           >
-            Use this audience
+            Use {inPick.toLocaleString()} selected
           </button>
           <span className="text-xs text-muted-foreground">
-            {c.replied.toLocaleString()} replied · {c.bounced.toLocaleString()} bounced (never included)
-            {c.unknownOpens > 0 && openedKnown ? ` · ${c.unknownOpens.toLocaleString()} with unknown opens (sent in BCC)` : ''}
+            {pick.length === 0 ? 'Tick at least one group, or tick recruiters by hand below.' : unchanged ? 'This is the list below.' : 'Not applied yet.'} {c.bounced.toLocaleString()} bounced (never included).
           </span>
         </div>
+      )}
+      {pick.includes('REPLIED') && c.REPLIED > 0 && (
+        <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+          This includes {c.REPLIED.toLocaleString()} recruiter{c.REPLIED === 1 ? '' : 's'} who already replied. If one of them replies again before the follow-up goes out, they are dropped.
+        </p>
       )}
 
       <p className="rounded-md border bg-muted/30 px-2.5 py-2">
@@ -150,9 +176,9 @@ export function FollowUpAudience({ blastId, editable, onChanged }: { blastId: st
       <div className="flex flex-wrap items-center gap-2">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search email or name" className={`${FIELD} sm:w-64`} aria-label="Search recruiters" />
         <select value={show} onChange={(e) => { setShow(e.target.value as typeof show); setPage(1); }} className="rounded border bg-background px-2 py-1.5 text-sm" aria-label="Which recruiters to list">
-          <option value="all">Everyone sent ({c.everyone + c.bounced})</option>
+          <option value="all">Everyone sent ({c.total})</option>
           <option value="selected">Getting this follow-up ({data.selected})</option>
-          <option value="replied">Replied ({c.replied})</option>
+          <option value="replied">Replied ({c.REPLIED})</option>
         </select>
       </div>
 

@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { allowedMailboxIds, loadBlast, requireBlastAdmin, requireBlastReader } from '@/lib/recruiterSend/access';
-import { applyAudience, FOLLOW_UP_AUDIENCES, followUpSubject } from '@/lib/recruiterSend/followUp';
+import { applyAudience, FOLLOW_UP_SEGMENTS, followUpSubject, LEGACY_AUDIENCES, NOT_REPLIED_SEGMENTS, parseSegments } from '@/lib/recruiterSend/followUp';
 
 /**
  * Recruiter Follow-up tab. GET: the sends that finished (any round) that can be followed up, and
@@ -55,16 +55,30 @@ export const GET = withErrorHandling(async () => {
 
 const createSchema = z.object({
   parentId: z.string().min(1),
-  audience: z.enum(FOLLOW_UP_AUDIENCES).default('NOT_REPLIED'),
+  /** The segments to start with (default: everyone who has not replied). */
+  segments: z.array(z.enum(FOLLOW_UP_SEGMENTS)).min(1).optional(),
+  /** The first version's single choice, still accepted. */
+  audience: z.enum(LEGACY_AUDIENCES).optional(),
 });
 
 export const POST = withErrorHandling(async (req) => {
   const session = await requireBlastAdmin();
-  const { parentId, audience } = createSchema.parse(await req.json());
+  const { parentId, segments: wanted, audience: legacy } = createSchema.parse(await req.json());
+  const segments = wanted ?? (legacy ? parseSegments(legacy) : NOT_REPLIED_SEGMENTS);
   const parent = await loadBlast(session, parentId);
   if (!parent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (parent.status !== 'COMPLETED') return NextResponse.json({ error: 'Only a send that has finished can be followed up.' }, { status: 409 });
   const rootId = parent.rootBlastId ?? parent.id;
+
+  // One follow-up at a time per send: an unfinished draft is reopened (not duplicated), and a follow-up
+  // that is sending, scheduled or paused blocks another (they would email the same people twice).
+  const open = await prisma.recruiterBlast.findFirst({
+    where: { parentBlastId: parent.id, status: { in: ['DRAFT', 'SCHEDULED', 'SENDING', 'PAUSED'] } },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, status: true, createdById: true },
+  });
+  if (open?.status === 'DRAFT') return NextResponse.json({ id: open.id, reused: true });
+  if (open) return NextResponse.json({ error: 'A follow-up to this send is already ' + (open.status === 'SENDING' ? 'sending' : open.status.toLowerCase()) + '. Wait for it to finish (or cancel it) before making another.', existingId: open.id }, { status: 409 });
 
   // The mailboxes that carried the chain, so the follow-up can reply from them (kept to ones this admin may still use).
   const allowed = await allowedMailboxIds(session.organizationId, session.userId);
@@ -104,11 +118,11 @@ export const POST = withErrorHandling(async (req) => {
       parentBlastId: parent.id,
       rootBlastId: rootId,
       round: parent.round + 1,
-      followUpAudience: audience,
+      followUpAudience: segments.join(','),
       onMailboxDown: 'WAIT',
     },
   });
-  const count = await applyAudience(draft.id, rootId, audience);
-  await audit(session, 'RECRUITER_FOLLOW_UP_CREATE', { targetType: 'RecruiterBlast', targetId: draft.id, metadata: { parentBlastId: parent.id, rootBlastId: rootId, round: draft.round, audience, recipients: count } });
+  const count = await applyAudience(draft.id, rootId, segments);
+  await audit(session, 'RECRUITER_FOLLOW_UP_CREATE', { targetType: 'RecruiterBlast', targetId: draft.id, metadata: { parentBlastId: parent.id, rootBlastId: rootId, round: draft.round, segments, recipients: count } });
   return NextResponse.json({ id: draft.id, recipients: count, round: draft.round });
 });

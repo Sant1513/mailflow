@@ -19,7 +19,7 @@ const db = {
     updateMany: vi.fn(async () => ({ count: 1 })),
     update: vi.fn(),
   },
-  recruiterBlastRecipient: { findMany: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
+  recruiterBlastRecipient: { findMany: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })), createMany: vi.fn(async () => ({ count: 0 })) },
   emailProviderAccount: { findUnique: vi.fn(), update: vi.fn() },
   documentTemplate: { findMany: vi.fn(async () => []) },
   emailSuppression: { findMany: vi.fn(async (): Promise<any[]> => []) },
@@ -51,28 +51,52 @@ describe('the follow-up subject', () => {
   });
 });
 
-describe('audiences', () => {
+describe('audience segments (multi-select)', () => {
   const list = [
-    cand({ email: 'plain@c.com' }),
+    cand({ email: 'unknown@c.com' }), // last email in BCC: opens unknown
     cand({ email: 'replied@c.com', replied: true, opened: true }),
     cand({ email: 'bounced@c.com', bounced: true }),
+    cand({ email: 'bouncedreplied@c.com', bounced: true, replied: true }),
     cand({ email: 'opened@c.com', opened: true }),
     cand({ email: 'unopened@c.com', opened: false }),
   ];
-  const pick = (a: Parameters<typeof fu.inAudience>[1]) => list.filter((c) => fu.inAudience(c, a)).map((c) => c.email);
+  const pick = (segs: Parameters<typeof fu.inSegments>[1]) => list.filter((c) => fu.inSegments(c, segs)).map((c) => c.email);
 
-  it('not replied leaves out anyone who replied or bounced', () => {
-    expect(pick('NOT_REPLIED')).toEqual(['plain@c.com', 'opened@c.com', 'unopened@c.com']);
+  it('puts every recruiter in exactly one segment; bounced ones in none', () => {
+    expect(list.map((c) => fu.segmentOf(c))).toEqual(['NO_REPLY_UNKNOWN', 'REPLIED', null, null, 'NO_REPLY_OPENED', 'NO_REPLY_UNOPENED']);
   });
-  it('opened / not opened only use recruiters whose opens are known (individual copies)', () => {
-    expect(pick('NOT_REPLIED_OPENED')).toEqual(['opened@c.com']);
-    expect(pick('NOT_REPLIED_UNOPENED')).toEqual(['unopened@c.com']);
+  it('a reply wins over opened: someone who replied is only ever in REPLIED', () => {
+    expect(fu.segmentOf(cand({ replied: true, opened: false }))).toBe('REPLIED');
   });
-  it('everyone still leaves out bounced addresses', () => {
-    expect(pick('EVERYONE')).toEqual(['plain@c.com', 'replied@c.com', 'opened@c.com', 'unopened@c.com']);
+  it('ticking several segments adds them up, with no one counted twice', () => {
+    expect(pick(['NO_REPLY_OPENED', 'NO_REPLY_UNOPENED'])).toEqual(['opened@c.com', 'unopened@c.com']);
+    expect(pick(['NO_REPLY_OPENED', 'NO_REPLY_OPENED', 'REPLIED'])).toEqual(['replied@c.com', 'opened@c.com']);
+    expect(pick(fu.NOT_REPLIED_SEGMENTS)).toEqual(['unknown@c.com', 'opened@c.com', 'unopened@c.com']);
   });
-  it('counts every audience, and how many have unknown opens', () => {
-    expect(fu.audienceCounts(list)).toEqual({ everyone: 4, notReplied: 3, openedNotReplied: 1, unopenedNotReplied: 1, replied: 1, bounced: 1, unknownOpens: 1 });
+  it('everyone leaves out bounced addresses; nothing ticked is nobody', () => {
+    expect(pick([...fu.FOLLOW_UP_SEGMENTS])).toEqual(['unknown@c.com', 'replied@c.com', 'opened@c.com', 'unopened@c.com']);
+    expect(pick([])).toEqual([]);
+  });
+  it('counts each segment, bounced apart, and the total ever sent', () => {
+    expect(fu.segmentCounts(list)).toEqual({ NO_REPLY_OPENED: 1, NO_REPLY_UNOPENED: 1, NO_REPLY_UNKNOWN: 1, REPLIED: 1, bounced: 2, total: 6 });
+    expect(fu.segmentCounts([])).toEqual({ NO_REPLY_OPENED: 0, NO_REPLY_UNOPENED: 0, NO_REPLY_UNKNOWN: 0, REPLIED: 0, bounced: 0, total: 0 });
+  });
+  it('the segment counts always add up to everyone who was sent an email', () => {
+    const c = fu.segmentCounts(list);
+    expect(c.NO_REPLY_OPENED + c.NO_REPLY_UNOPENED + c.NO_REPLY_UNKNOWN + c.REPLIED + c.bounced).toBe(c.total);
+  });
+  it('reads saved values: lists, the first version’s names, junk and empty', () => {
+    expect(fu.parseSegments('NO_REPLY_UNOPENED,REPLIED')).toEqual(['NO_REPLY_UNOPENED', 'REPLIED']);
+    expect(fu.parseSegments('REPLIED, NO_REPLY_OPENED')).toEqual(['NO_REPLY_OPENED', 'REPLIED']); // stable order, spaces ok
+    expect(fu.parseSegments('NOT_REPLIED')).toEqual(fu.NOT_REPLIED_SEGMENTS);
+    expect(fu.parseSegments('NOT_REPLIED_OPENED')).toEqual(['NO_REPLY_OPENED']);
+    expect(fu.parseSegments('NOT_REPLIED_UNOPENED')).toEqual(['NO_REPLY_UNOPENED']);
+    expect(fu.parseSegments('EVERYONE')).toEqual([...fu.FOLLOW_UP_SEGMENTS]);
+    expect(fu.parseSegments('NOT_REPLIED,REPLIED')).toEqual([...fu.FOLLOW_UP_SEGMENTS]);
+    expect(fu.parseSegments('bogus,,NO_REPLY_OPENED')).toEqual(['NO_REPLY_OPENED']);
+    expect(fu.parseSegments('')).toEqual([]);
+    expect(fu.parseSegments(null)).toEqual([]);
+    expect(fu.parseSegments(undefined)).toEqual([]);
   });
 });
 
@@ -137,6 +161,29 @@ describe('the chain', () => {
     db.recruiterBlast.findUnique.mockResolvedValueOnce({ rootBlastId: null });
     await markRecruiterReplied('b1', 'x@c.com', new Date());
     expect(db.recruiterBlastRecipient.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ blast: { OR: [{ id: 'b1' }, { rootBlastId: 'b1' }] } }) }));
+  });
+});
+
+describe('editing the list', () => {
+  beforeEach(() => vi.clearAllMocks());
+  const row = (email: string, status: string) => ({ email, name: null, data: null, status, groupId: 'g1', sentAt: new Date('2026-11-01'), repliedAt: null, openCount: 0, blast: { mode: 'BCC' } });
+
+  it('never adds an address that bounced, even one that has no sent email (typed in by hand)', async () => {
+    // 1) the chain, 2) who is already in the draft, 3) who bounced
+    db.recruiterBlastRecipient.findMany
+      .mockResolvedValueOnce([row('ok@c.com', 'SENT')])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ email: 'Gone@C.com' }]);
+    const res = await fu.addToAudience('draft', 'root', ['gone@c.com', 'OK@c.com', 'new@c.com']);
+    expect(res).toEqual({ added: 2, fromChain: 1, skippedBounced: 1 });
+    const created = (db.recruiterBlastRecipient.createMany.mock.calls[0] as any[])[0].data.map((r: any) => r.email);
+    expect(created).toEqual(['ok@c.com', 'new@c.com']);
+  });
+  it('does not add anyone twice, and adds nothing for an empty request', async () => {
+    db.recruiterBlastRecipient.findMany.mockResolvedValueOnce([row('a@c.com', 'SENT')]).mockResolvedValueOnce([{ email: 'a@c.com' }]).mockResolvedValueOnce([]);
+    expect((await fu.addToAudience('draft', 'root', ['a@c.com'])).added).toBe(0);
+    expect(await fu.addToAudience('draft', 'root', ['', '  '])).toEqual({ added: 0, fromChain: 0, skippedBounced: 0 });
+    expect(db.recruiterBlastRecipient.createMany).not.toHaveBeenCalled();
   });
 });
 
