@@ -511,6 +511,15 @@ model Campaign {
   /// "When someone replies" rules (lib/replyRules/config.ts): by reply type (interested, not
   /// interested, question…) send a template, set a column, assign, tag, close, stop follow-ups.
   replyRules               Json?
+  /// Quick Send follow-up: the campaign this one follows up (the previous round), the first campaign
+  /// of the chain, which round this is (1 = an ordinary send), who it was aimed at (comma-separated
+  /// segments, see lib/quickSend/followUp.ts) and what to do when the mailbox that sent the earlier
+  /// email is unavailable (WAIT: stay in its Gmail thread | FALLBACK: a backup mailbox, a new thread).
+  parentCampaignId         String?
+  rootCampaignId           String?
+  round                    Int            @default(1)
+  followUpAudience         String?
+  onMailboxDown            String         @default("WAIT")
   createdAt                DateTime       @default(now())
   updatedAt                DateTime       @updatedAt
 
@@ -531,6 +540,7 @@ model Campaign {
 
   @@index([workspaceId])
   @@index([status])
+  @@index([rootCampaignId])
 }
 
 model CampaignRecord {
@@ -614,6 +624,10 @@ model EmailJob {
   gmailMessageId  String?
   gmailThreadId   String?
   messageIdHeader String?
+  /// Quick Send follow-up: the Gmail thread to reply in and the earlier email (job) this one replies to.
+  /// Both are cleared if the email goes out from another mailbox (a new thread).
+  replyThreadId    String?
+  inReplyToJobId   String?
 
   sendReason       String?   @db.Text
   skipReason       String?   @db.Text

@@ -116,7 +116,10 @@ async function workspaceOf(blastId: string): Promise<string | null> {
 }
 
 /** The one segment a recruiter is in; null for a bounced or suppressed recruiter (never included). */
-export function segmentOf(c: Candidate): FollowUpSegment | null {
+/** What a segment depends on (shared with the Quick Send follow-up). */
+export type Segmentable = Pick<Candidate, 'replied' | 'opened' | 'bounced' | 'suppressed'>;
+
+export function segmentOf(c: Segmentable): FollowUpSegment | null {
   if (c.bounced || c.suppressed) return null;
   if (c.replied) return 'REPLIED';
   if (c.opened === true) return 'NO_REPLY_OPENED';
@@ -125,7 +128,7 @@ export function segmentOf(c: Candidate): FollowUpSegment | null {
 }
 
 /** Is the recruiter in any of the ticked segments? */
-export function inSegments(c: Candidate, segments: readonly FollowUpSegment[]): boolean {
+export function inSegments(c: Segmentable, segments: readonly FollowUpSegment[]): boolean {
   const s = segmentOf(c);
   return s !== null && segments.includes(s);
 }
@@ -133,7 +136,7 @@ export function inSegments(c: Candidate, segments: readonly FollowUpSegment[]): 
 export type SegmentCounts = Record<FollowUpSegment, number> & { bounced: number; total: number };
 
 /** How many recruiters are in each segment (bounced ones counted apart; total = everyone ever sent). */
-export function segmentCounts(list: Candidate[]): SegmentCounts {
+export function segmentCounts(list: Segmentable[]): SegmentCounts {
   const counts: SegmentCounts = { NO_REPLY_OPENED: 0, NO_REPLY_UNOPENED: 0, NO_REPLY_UNKNOWN: 0, REPLIED: 0, bounced: 0, total: list.length };
   for (const c of list) {
     const s = segmentOf(c);

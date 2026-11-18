@@ -24,6 +24,8 @@ import { inlineEmailCss, looksLikeHtml } from '@/lib/quickSend/html';
 import { checkAddresses } from '@/lib/email/addressCheck';
 import { placeRsvpBlock, renderRsvpBlock, rsvpConfigSchema, stripRsvpPlaceholder } from '@/lib/rsvp/config';
 import { QUICK_SEND_DESCRIPTION, QUICK_SEND_ON_APPROVAL, campaignStats } from '@/lib/quickSend/stats';
+import { followUpTable, planFollowUpJobs, planSummary } from '@/lib/quickSend/followUp';
+import { FOLLOW_UP_SEGMENTS } from '@/lib/recruiterSend/followUp';
 
 export const maxDuration = 60;
 
@@ -45,6 +47,8 @@ const recipientsSchema = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('dataset'), datasetId: z.string().min(1) }),
   z.object({ kind: z.literal('segment'), segmentId: z.string().min(1) }),
+  /** A follow-up: the people (by address) of the chain that starts at this finished Quick Send. */
+  z.object({ kind: z.literal('followUp'), parentCampaignId: z.string().min(1), emails: z.array(z.string().max(320)).max(MAX_ROWS) }),
 ]);
 
 const bodySchema = z.object({
@@ -68,6 +72,8 @@ const bodySchema = z.object({
   scheduledAt: z.string().datetime().optional(),
   /** RSVP buttons in the email (lib/rsvp/config.ts); omitted or disabled = none. */
   rsvp: rsvpConfigSchema.nullable().optional(),
+  /** Follow-up only: what to do when the mailbox that sent the earlier email is unavailable, and the groups it was aimed at (for the record). */
+  followUp: z.object({ onMailboxDown: z.enum(['WAIT', 'FALLBACK']).default('WAIT'), segments: z.array(z.enum(FOLLOW_UP_SEGMENTS)).max(FOLLOW_UP_SEGMENTS.length).optional() }).optional(),
   /** One key per compose (the browser makes it): a repeated "send" returns the campaign already made. */
   requestId: z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/).optional(),
 });
@@ -78,9 +84,19 @@ interface Resolved {
   emailKey: string | null;
   datasetId: string | null;
   sourceLabel: string;
+  /** Follow-up: the finished send being followed up. */
+  followUpParent?: { id: string; rootId: string; round: number; name: string; subject: string };
 }
 
 async function resolveRecipients(session: AppSession, r: z.infer<typeof recipientsSchema>): Promise<Resolved | { error: string }> {
+  if (r.kind === 'followUp') {
+    const built = await followUpTable({ workspaceId: session.workspaceId ?? '', parentCampaignId: r.parentCampaignId, emails: r.emails });
+    if ('error' in built) return built;
+    if (!built.rows.length) return { error: 'Choose at least one person to follow up.' };
+    const table = await resolveRecipients(session, { kind: 'table', headers: built.headers, rows: built.rows, emailHeader: built.emailHeader });
+    if ('error' in table) return table;
+    return { ...table, sourceLabel: `follow-up to “${built.parent.name}” (${built.rows.length} people)`, followUpParent: built.parent };
+  }
   if (r.kind === 'table') {
     const table = { headers: r.headers, rows: r.rows.map((row) => Object.fromEntries(r.headers.map((h) => [h, String(row[h] ?? '').trim()]))) };
     const columns = columnsFromTable(table, r.emailHeader);
@@ -198,6 +214,19 @@ export const POST = withErrorHandling(async (req) => {
   const wouldSend = simulation.wouldSend;
   const capacity = usage ? Math.max(0, dailyLimit() - usage.messages) : 0;
 
+  // Follow-up: how each person's email will go out (their earlier thread and mailbox), and whether it can.
+  const followUp = resolved.followUpParent ? { parent: resolved.followUpParent, onMailboxDown: body.followUp?.onMailboxDown ?? ('WAIT' as const), segments: body.followUp?.segments } : null;
+  const followPlan = followUp && sender
+    ? await planFollowUpJobs({
+        rootCampaignId: followUp.parent.rootId,
+        organizationId: session.organizationId,
+        onMailboxDown: followUp.onMailboxDown,
+        sender: { id: sender.id, emailAddress: sender.emailAddress, displayName: sender.displayName },
+        emails: simulation.evaluations.filter((e) => e.willSend && e.email).map((e) => e.email!),
+      })
+    : null;
+  const followSummary = followPlan ? planSummary(followPlan) : null;
+
   if (body.mode === 'check') {
     const first = simulation.evaluations.find((e) => e.willSend);
     const firstRow = first ? resolved.rows.find((r) => r.id === first.recordId) : null;
@@ -220,6 +249,9 @@ export const POST = withErrorHandling(async (req) => {
       hasSignature: !!me?.emailSignature?.trim(),
       treatedAsHtml: isHtml,
       attachments: orderedDocs.map((d) => ({ id: d.id, name: d.file.fileName, size: d.file.size })),
+      followUp: followUp
+        ? { round: followUp.parent.round + 1, parentName: followUp.parent.name, parentSubject: followUp.parent.subject, onMailboxDown: followUp.onMailboxDown, ...(followSummary ?? { replying: 0, newThread: 0, blocked: [] }) }
+        : null,
     });
   }
 
@@ -266,6 +298,20 @@ export const POST = withErrorHandling(async (req) => {
   if (body.requestId) {
     const already = await existingQuickSend(body.requestId, session.workspaceId);
     if (already) return already;
+  }
+  if (followUp) {
+    if (followSummary?.blocked.length) {
+      return NextResponse.json({ error: `The earlier email went out from ${followSummary.blocked.join(', ')}, which you can't send from (it is not yours and not shared as a backup). Choose “another mailbox (new thread)”, or ask its owner to share it as a backup.` }, { status: 400 });
+    }
+    // One follow-up at a time per send: a second would email the same people twice.
+    const open = await prisma.campaign.findFirst({
+      where: { parentCampaignId: followUp.parent.id, status: { in: [CampaignStatus.PENDING_APPROVAL, CampaignStatus.APPROVED, CampaignStatus.SCHEDULED, CampaignStatus.RUNNING, CampaignStatus.PAUSED] } },
+      select: { id: true, status: true },
+    });
+    if (open) {
+      const word = open.status === CampaignStatus.RUNNING ? 'sending' : open.status === CampaignStatus.PENDING_APPROVAL ? 'waiting for approval' : open.status.toLowerCase();
+      return NextResponse.json({ error: `A follow-up to this send is already ${word}. Wait for it to finish (or cancel it) before making another.`, existingCampaignId: open.id }, { status: 409 });
+    }
   }
   if (wouldSend <= 0) return NextResponse.json({ error: 'Nobody to send to: every row was skipped. Check the reasons above.' }, { status: 400 });
   const fallback = await validateFallbackList(session.organizationId, sender.id, body.fallbackAccountIds ?? []);
@@ -330,6 +376,9 @@ export const POST = withErrorHandling(async (req) => {
         bccEmails: body.bcc ?? [],
         fallbackAccountIds: fallback.ids,
         ...(rsvp ? { rsvp: rsvp as unknown as Prisma.InputJsonValue } : {}),
+        ...(followUp
+          ? { parentCampaignId: followUp.parent.id, rootCampaignId: followUp.parent.rootId, round: followUp.parent.round + 1, followUpAudience: (followUp.segments ?? []).join(',') || null, onMailboxDown: followUp.onMailboxDown }
+          : {}),
         // Attached PDFs go out unchanged: a plain copy, no reference stamp.
         documents: { create: orderedDocs.map((d, i) => ({ documentTemplateId: d.id, order: i, ...snapshotFromTemplate(d), stampReference: false })) },
       },
@@ -346,7 +395,7 @@ export const POST = withErrorHandling(async (req) => {
   await audit(session, 'QUICK_SEND', {
     targetType: 'Campaign',
     targetId: created.id,
-    metadata: { recipients: wouldSend, source: body.recipients.kind, scheduledAt: scheduledAt?.toISOString(), backups: fallback.ids.length },
+    metadata: { recipients: wouldSend, source: body.recipients.kind, scheduledAt: scheduledAt?.toISOString(), backups: fallback.ids.length, ...(followUp ? { followUpRound: followUp.parent.round + 1, parentCampaignId: followUp.parent.id, onMailboxDown: followUp.onMailboxDown } : {}) },
   });
 
   const isAdmin = session.role === Role.ADMIN || session.role === Role.SUPER_ADMIN;

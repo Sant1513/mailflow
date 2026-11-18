@@ -27,6 +27,7 @@ export interface NavItem {
 
 export const MAIL_NAV: NavItem[] = [
   { href: '/quick-send', label: 'Quick Send' },
+  { href: '/quick-send-follow-up', label: 'Quick Send Follow-up' },
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/inbox', label: 'Inbox' },
   { href: '/data', label: 'Data' },
@@ -54,7 +55,7 @@ export const SIGN_NAV: NavItem[] = [
 export const PRODUCT_NAV: Record<Product, NavItem[]> = { mail: MAIL_NAV, sign: SIGN_NAV };
 
 const MAIL_PREFIXES = [
-  '/quick-send', '/dashboard', '/inbox', '/data', '/contacts', '/campaigns', '/templates',
+  '/quick-send', '/quick-send-follow-up', '/dashboard', '/inbox', '/data', '/contacts', '/campaigns', '/templates',
   '/automations', '/batches', '/suppressions', '/deliverability', '/recruiter-send', '/recruiter-follow-up', '/mailbox-usage', '/performance', '/reports', '/history',
 ];
 

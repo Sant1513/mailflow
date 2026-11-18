@@ -24,6 +24,7 @@ const PRIVATE = [
   '/mailbox-usage',
   '/performance',
   '/quick-send',
+  '/quick-send-follow-up',
   '/recruiter-send',
   '/recruiter-follow-up',
   '/reports',

@@ -239,18 +239,41 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     return { batchId, processed: 0, sent: 0, failed: 0, skipped: 0, remaining, batchStatus: now?.status ?? batch.status, rateLimited: false };
   }
 
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: batch.campaignId },
+    select: { organizationId: true, fromName: true, fallbackAccountIds: true, onMailboxDown: true },
+  });
+
+  // Quick Send follow-ups that must stay in their Gmail thread (WAIT) can only go from their own
+  // mailbox: while it is disconnected or paused by Gmail they are left out of this pass, so the
+  // emails of mailboxes that CAN send are not held up behind them.
+  const waitingFor = new Map<string, HoldReason>();
+  if (campaign?.onMailboxDown !== 'FALLBACK') {
+    const pinned = await prisma.emailJob.findMany({
+      where: { batchId, status: EmailJobStatus.QUEUED, inReplyToJobId: { not: null }, emailProviderAccountId: { not: null } },
+      distinct: ['emailProviderAccountId'],
+      select: { emailProviderAccountId: true },
+    });
+    for (const p of pinned) {
+      const id = p.emailProviderAccountId!;
+      const acc = await prisma.emailProviderAccount.findUnique({ where: { id }, select: { status: true } });
+      if (!acc || acc.status !== 'CONNECTED') waitingFor.set(id, 'disconnected');
+      else if ((await backoffUntil(id)) > 0) waitingFor.set(id, 'backoff');
+    }
+  }
+
   const queued = await prisma.emailJob.findMany({
-    where: { batchId, status: EmailJobStatus.QUEUED },
+    where: {
+      batchId,
+      status: EmailJobStatus.QUEUED,
+      ...(waitingFor.size ? { NOT: { inReplyToJobId: { not: null }, emailProviderAccountId: { in: [...waitingFor.keys()] } } } : {}),
+    },
     orderBy: { createdAt: 'asc' },
     take: limit,
-    select: { id: true, emailProviderAccountId: true, toEmail: true, ccEmails: true, bccEmails: true, sendReason: true },
+    select: { id: true, emailProviderAccountId: true, toEmail: true, ccEmails: true, bccEmails: true, sendReason: true, inReplyToJobId: true },
   });
 
   // Backup mailboxes for this campaign, in order (only owners who opted in; see lib/campaigns/fallback.ts).
-  const campaign = await prisma.campaign.findUnique({
-    where: { id: batch.campaignId },
-    select: { organizationId: true, fromName: true, fallbackAccountIds: true },
-  });
   const optIns = campaign?.fallbackAccountIds.length ? await fallbackOptIns(campaign.organizationId) : new Set<string>();
   const fallbackIds = (campaign?.fallbackAccountIds ?? []).filter((id) => optIns.has(id));
 
@@ -287,6 +310,11 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
     if (acct) {
       const hold = await holdOf(acct, job);
       if (hold) {
+        // A follow-up that must stay in its Gmail thread waits for its mailbox (it can only reply from there).
+        if (job.inReplyToJobId && campaign?.onMailboxDown !== 'FALLBACK') {
+          heldReason = hold;
+          break;
+        }
         // The campaign's mailbox can't send now: use the first backup mailbox that can.
         for (const fb of fallbackIds) {
           if (fb === acct) continue;
@@ -333,6 +361,8 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
           ? {
               emailProviderAccountId: reroute.id,
               fromEmail: reroute.emailAddress,
+              // Another mailbox can't reply in this Gmail thread: it starts a new one.
+              ...(job.inReplyToJobId ? { replyThreadId: null, inReplyToJobId: null } : {}),
               ...(campaign?.fromName?.trim() ? {} : { fromName: reroute.displayName ?? reroute.emailAddress }),
               sendReason: `${job.sendReason ?? ''}\nSent from backup mailbox ${reroute.emailAddress} because ${reroute.because}.`.trim(),
             }
@@ -369,6 +399,10 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
       if (err instanceof SendEmailError && (err.kind === 'RATE_LIMIT' || err.kind === 'QUOTA')) continue;
     }
   }
+
+  // Nothing else could go out and follow-ups are waiting for their mailbox: the batch is on hold
+  // (it resumes by itself when the mailbox is back), not "finished".
+  if (!heldReason && waitingFor.size && queued.length === 0) heldReason = [...waitingFor.values()][0];
 
   const remaining = await prisma.emailJob.count({ where: { batchId, status: EmailJobStatus.QUEUED } });
   const batchStatus = remaining === 0 ? await reconcileBatchStatus(batchId) : BatchStatus.RUNNING;

@@ -8,6 +8,7 @@ import { renderTemplate } from '@/lib/templates/variables';
 import { enqueueEmailJobs } from '@/lib/queue/queues';
 import { kickSendWorker } from '@/lib/queue/sendWorker';
 import { documentValidationIssues, jobAttachmentRows } from '@/lib/documents/campaign';
+import { planFollowUpJobs, planSummary } from '@/lib/quickSend/followUp';
 import { CampaignStatus, BatchStatus, EmailJobStatus, type Prisma } from '@prisma/client';
 
 export interface StartSendOptions {
@@ -103,6 +104,22 @@ export async function startCampaignSend(opts: StartSendOptions): Promise<StartSe
 
   const sendable = simulation.evaluations.filter((e) => e.willSend);
   const fromName = campaign.fromName?.trim() || sender.displayName || campaign.createdBy.name;
+  // Quick Send follow-up: each person's email replies in the Gmail thread of the one they last got, from that mailbox.
+  const followPlans = campaign.parentCampaignId
+    ? await planFollowUpJobs({
+        rootCampaignId: campaign.rootCampaignId ?? campaign.parentCampaignId,
+        organizationId: campaign.organizationId,
+        onMailboxDown: campaign.onMailboxDown === 'FALLBACK' ? 'FALLBACK' : 'WAIT',
+        sender: { id: sender.id, emailAddress: sender.emailAddress, displayName: sender.displayName },
+        emails: sendable.map((e) => e.email!),
+      })
+    : null;
+  if (followPlans) {
+    const { blocked } = planSummary(followPlans);
+    if (blocked.length) {
+      return { ok: false, status: 400, body: { error: `The earlier email went out from ${blocked.join(', ')}, which you can't send from (it is not yours and not shared as a backup). Choose “another mailbox (new thread)”, or ask its owner to share it as a backup.` } };
+    }
+  }
   const sendTime = new Date();
   const recordsById = new Map(built.records.map((r) => [r.id, r]));
 
@@ -129,18 +146,22 @@ export async function startCampaignSend(opts: StartSendOptions): Promise<StartSe
         { subject: campaign.templateVersion.subject, html: campaign.templateVersion.html, plainText: campaign.templateVersion.plainText },
         record.data
       );
+      const plan = followPlans?.get(evaluation.email!.trim().toLowerCase());
+      const own = !plan || plan.accountId === sender.id;
       return {
         batchId: created.id,
         campaignId: campaign.id,
         recordId: record.id,
         templateVersionId: campaign.templateVersionId,
-        emailProviderAccountId: sender.id,
+        emailProviderAccountId: plan?.accountId ?? sender.id,
         status: EmailJobStatus.QUEUED,
         toEmail: evaluation.email!,
         ccEmails: campaign.ccEmails,
         bccEmails: campaign.bccEmails,
-        fromName,
-        fromEmail: sender.emailAddress,
+        fromName: own ? fromName : campaign.fromName?.trim() || plan!.accountName || plan!.accountEmail,
+        fromEmail: plan?.accountEmail ?? sender.emailAddress,
+        replyThreadId: plan?.replyThreadId ?? null,
+        inReplyToJobId: plan?.inReplyToJobId ?? null,
         replyTo: campaign.replyTo,
         subject: rendered.subject,
         html: campaign.templateVersion.css ? `<style>${campaign.templateVersion.css}</style>${rendered.html}` : rendered.html,

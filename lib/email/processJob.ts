@@ -13,6 +13,7 @@ import { placeRsvpBlock, readRsvpConfig, renderRsvpBlock, renderRsvpText, stripR
 import { appBaseUrl } from '@/lib/app-url';
 import { replyToHeader, unsubscribeButtonHtml } from '@/lib/recruiterSend/core';
 import { unsubscribeMailto } from '@/lib/email/unsubscribeByEmail';
+import { repliedSince, threadHeaders } from '@/lib/quickSend/followUp';
 import crypto from 'crypto';
 
 /**
@@ -83,6 +84,15 @@ export async function processEmailJob(
       data: { status: EmailJobStatus.SKIPPED, skipReason: `Suppressed: ${suppressed.reason}` },
     });
     return { status: 'SKIPPED', emailJobId, reason: `${job.toEmail} is on the suppression list (${suppressed.reason}).` };
+  }
+
+  // A follow-up is for people who have not replied: one who answered since it was prepared is skipped.
+  if (job.inReplyToJobId && job.replyThreadId && (await repliedSince(job.replyThreadId, job.createdAt).catch(() => false))) {
+    await prisma.emailJob.update({
+      where: { id: job.id },
+      data: { status: EmailJobStatus.SKIPPED, skipReason: 'Replied after the follow-up was prepared.' },
+    });
+    return { status: 'SKIPPED', emailJobId, reason: `${job.toEmail} replied after the follow-up was prepared.` };
   }
 
   if (!job.emailProviderAccount) {
@@ -171,6 +181,9 @@ export async function processEmailJob(
       job.batch.campaign.workspaceId
     );
 
+    // A Quick Send follow-up replies in the Gmail thread of the email it follows up.
+    const thread = job.replyThreadId && job.inReplyToJobId ? await threadHeaders(job.inReplyToJobId).catch(() => null) : null;
+
     result = await provider.sendEmail({
       to: job.toEmail,
       cc: job.ccEmails,
@@ -182,7 +195,8 @@ export async function processEmailJob(
       subject: job.subject,
       html: trackedHtml,
       plainText,
-      threadId: job.gmailThreadId,
+      threadId: thread ? job.replyThreadId : job.gmailThreadId,
+      ...(thread ? { inReplyTo: thread.inReplyTo, references: thread.references } : {}),
       listUnsubscribeUrl: unsubscribeUrl,
       listUnsubscribeMailto: unsubscribeMailto(job.fromEmail, `cj-${unsubscribeToken}`),
       ...(documents.length > 0

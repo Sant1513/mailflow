@@ -51,18 +51,18 @@ export function OriginalEmail({ context }: { context: FollowUpContext }) {
   );
 }
 
-type Segment = 'NO_REPLY_OPENED' | 'NO_REPLY_UNOPENED' | 'NO_REPLY_UNKNOWN' | 'REPLIED';
+export type Segment = 'NO_REPLY_OPENED' | 'NO_REPLY_UNOPENED' | 'NO_REPLY_UNKNOWN' | 'REPLIED';
 interface Counts { NO_REPLY_OPENED: number; NO_REPLY_UNOPENED: number; NO_REPLY_UNKNOWN: number; REPLIED: number; bounced: number; total: number }
 interface Candidate { email: string; name: string | null; segment: Segment | null; replied: boolean; opened: boolean | null; bounced: boolean; lastSentAt: string | null; selected: boolean }
 interface AudienceData { segments: Segment[]; counts: Counts; selected: number; added: number; total: number; page: number; pages: number; candidates: Candidate[] }
 
-const SEGMENTS: { key: Segment; label: string; hint: string }[] = [
+export const SEGMENTS: { key: Segment; label: string; hint: string }[] = [
   { key: 'NO_REPLY_OPENED', label: 'No reply, opened it', hint: 'Opened the last email (individual copies only)' },
   { key: 'NO_REPLY_UNOPENED', label: 'No reply, did not open it', hint: 'Did not open the last email (individual copies only)' },
   { key: 'NO_REPLY_UNKNOWN', label: 'No reply, opens unknown', hint: 'The last email went out in BCC, so opens are not tracked per person' },
   { key: 'REPLIED', label: 'Already replied', hint: 'Answered this or an earlier email' },
 ];
-const NO_REPLY: Segment[] = ['NO_REPLY_OPENED', 'NO_REPLY_UNOPENED', 'NO_REPLY_UNKNOWN'];
+export const NO_REPLY: Segment[] = ['NO_REPLY_OPENED', 'NO_REPLY_UNOPENED', 'NO_REPLY_UNKNOWN'];
 const sameSet = (a: Segment[], b: Segment[]) => a.length === b.length && a.every((x) => b.includes(x));
 
 /** Who the follow-up goes to: tick any segments, then tick / untick recruiters or add addresses. */

@@ -1,8 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
+import { MailboxDownChoice, type Segment } from '@/components/recruiter-send/FollowUpPanel';
+import { OriginalQuickEmail, QuickFollowUpAudience, addressesIn, emailsInSegments, type FollowUpDetail } from '@/components/quick-send/QuickFollowUpPanel';
 import { EmailPreview } from '@/components/email-preview/EmailPreview';
 import { RsvpEditor } from '@/components/rsvp/RsvpEditor';
 import { defaultRsvpConfig, type RsvpConfig } from '@/lib/rsvp/config';
@@ -41,6 +44,8 @@ interface Check {
   approval: 'none' | 'required';
   hasSignature: boolean;
   attachments: Attachment[];
+  /** Follow-up only: how the emails will go out (their earlier thread and mailbox). */
+  followUp?: { round: number; parentName: string; parentSubject: string; onMailboxDown: 'WAIT' | 'FALLBACK'; replying: number; newThread: number; blocked: string[] } | null;
 }
 
 interface Stats {
@@ -96,6 +101,27 @@ const mb = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1
  * unsubscribe and the Inbox all apply.
  */
 export default function QuickSendPage() {
+  // useSearchParams (the follow-up mode) needs a Suspense boundary.
+  return (
+    <Suspense fallback={null}>
+      <QuickSendCompose />
+    </Suspense>
+  );
+}
+
+function QuickSendCompose() {
+  // Follow-up mode (/quick-send-follow-up/new?from=<campaign>): the same screen, with the people of a
+  // finished send instead of a list, and the email going out in each person's earlier Gmail thread.
+  const fromId = useSearchParams().get('from');
+  const followUpMode = !!fromId;
+  const draftKey = fromId ? `${DRAFT_KEY}.followUp.${fromId}` : DRAFT_KEY;
+  const [fu, setFu] = useState<FollowUpDetail | null>(null);
+  const [fuError, setFuError] = useState<string | null>(null);
+  const [fuSegs, setFuSegs] = useState<Segment[]>([]);
+  const [fuPicked, setFuPicked] = useState<Set<string>>(new Set());
+  const [fuExtra, setFuExtra] = useState('');
+  const [onDown, setOnDown] = useState<'WAIT' | 'FALLBACK'>('WAIT');
+
   // 0. Campaign name (blank = the subject + date)
   const [campaignName, setCampaignName] = useState('');
 
@@ -164,7 +190,7 @@ export default function QuickSendPage() {
   // Draft autosave: a refresh or a closed tab keeps what was typed.
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(DRAFT_KEY);
+      const raw = localStorage.getItem(draftKey);
       if (raw) {
         const d = JSON.parse(raw);
         setCampaignName(d.campaignName ?? '');
@@ -184,18 +210,41 @@ export default function QuickSendPage() {
       /* storage unavailable: start empty */
     }
     restored.current = true;
-  }, []);
+  }, [draftKey]);
   useEffect(() => {
     if (!restored.current || current) return;
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(DRAFT_KEY, JSON.stringify({ campaignName, subject, body, format, fromName, replyTo, cc, bcc, pasted: pasted.length < 200_000 ? pasted : '', attachments, includeSignature, rsvp }));
+        localStorage.setItem(draftKey, JSON.stringify({ campaignName, subject, body, format, fromName, replyTo, cc, bcc, pasted: pasted.length < 200_000 ? pasted : '', attachments, includeSignature, rsvp }));
       } catch {
         /* ignore */
       }
     }, 600);
     return () => clearTimeout(t);
-  }, [campaignName, subject, body, format, fromName, replyTo, cc, bcc, pasted, attachments, includeSignature, rsvp, current]);
+  }, [campaignName, subject, body, format, fromName, replyTo, cc, bcc, pasted, attachments, includeSignature, rsvp, current, draftKey]);
+
+  // Follow-up mode: the send being followed up, its people, and the groups to start from.
+  useEffect(() => {
+    if (!fromId) return;
+    let stop = false;
+    fetch(`/api/quick-send-follow-up/${fromId}`, { cache: 'no-store' })
+      .then(async (r) => {
+        const j = await r.json().catch(() => ({}));
+        if (stop) return;
+        if (!r.ok) return setFuError(j.error ?? 'Could not load the send to follow up.');
+        const d = j as FollowUpDetail;
+        const start = d.defaultSegments.filter((k) => d.counts[k] > 0);
+        setFu(d);
+        setFuSegs(start);
+        setFuPicked(new Set(emailsInSegments(d.candidates, start)));
+        // The usual "Re: <subject>", unless a saved draft already has a subject.
+        setSubject((cur) => cur || d.suggestedSubject);
+      })
+      .catch(() => !stop && setFuError('Could not load the send to follow up.'));
+    return () => {
+      stop = true;
+    };
+  }, [fromId]);
 
   const loadRecent = useCallback(async () => {
     const res = await fetch('/api/quick-send');
@@ -240,14 +289,21 @@ export default function QuickSendPage() {
     parse({ body: fd }, file.name);
   }
 
+  const followEmails = useMemo(() => {
+    if (!fu) return [] as string[];
+    const typed = addressesIn(fuExtra).filter((e) => !fu.candidates.find((c) => c.email === e)?.undeliverable);
+    return [...new Set([...fuPicked, ...typed])];
+  }, [fu, fuPicked, fuExtra]);
+
   const recipients = useMemo(() => {
+    if (followUpMode) return fu && followEmails.length ? { kind: 'followUp' as const, parentCampaignId: fromId!, emails: followEmails } : null;
     if ((source === 'paste' || source === 'file') && table) {
       return { kind: 'table' as const, headers: table.headers, rows: table.rows, emailHeader: emailHeader || undefined };
     }
     if (source === 'dataset' && datasetId) return { kind: 'dataset' as const, datasetId };
     if (source === 'segment' && segmentId) return { kind: 'segment' as const, segmentId };
     return null;
-  }, [source, table, emailHeader, datasetId, segmentId]);
+  }, [followUpMode, fu, followEmails, fromId, source, table, emailHeader, datasetId, segmentId]);
 
   const payload = useCallback(
     (mode: 'check' | 'test' | 'send') => ({
@@ -266,8 +322,9 @@ export default function QuickSendPage() {
       fallbackAccountIds: backups,
       scheduledAt: scheduleAt ? new Date(scheduleAt).toISOString() : undefined,
       rsvp: rsvp.enabled ? rsvp : undefined,
+      followUp: followUpMode ? { onMailboxDown: onDown, segments: fuSegs } : undefined,
     }),
-    [recipients, campaignName, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt, rsvp],
+    [recipients, campaignName, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt, rsvp, followUpMode, onDown, fuSegs],
   );
 
   // ── live check: dry run + preview as you type ──
@@ -421,7 +478,7 @@ export default function QuickSendPage() {
     requestId.current = newRequestId();
     setCurrent({ id: json.campaignId, state: json.state, note: json.note });
     try {
-      localStorage.removeItem(DRAFT_KEY);
+      localStorage.removeItem(draftKey);
     } catch {
       /* ignore */
     }
@@ -451,16 +508,19 @@ export default function QuickSendPage() {
 
   const fields = check?.columns ?? (table ? table.headers.map((h) => ({ key: h, label: h })) : []);
   const overCapacity = check?.sender && check.wouldSend > check.sender.capacityToday;
-  const ready = !!check && check.wouldSend > 0 && !check.unknownVariables.length && check.sender?.status === 'CONNECTED' && !checking;
+  const ready = !!check && check.wouldSend > 0 && !check.unknownVariables.length && check.sender?.status === 'CONNECTED' && !checking && !(followUpMode && (check.followUp?.blocked.length || fu?.openFollowUp));
   const attachedBytes = attachments.reduce((n, a) => n + a.size, 0);
 
   return (
     <div className="mx-auto max-w-7xl p-4 sm:p-6">
       <div className="mb-5">
+        {followUpMode && <Link href="/quick-send-follow-up" className="mb-2 block text-sm text-muted-foreground hover:underline">← Quick Send Follow-up</Link>}
         <div className="eyebrow mb-2">Mail</div>
-        <h1 className="font-heading text-2xl font-bold tracking-tight">Quick Send</h1>
+        <h1 className="font-heading text-2xl font-bold tracking-tight">{followUpMode ? `Quick Send follow-up${fu ? ` · round ${fu.parent.round + 1}` : ''}` : 'Quick Send'}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Paste a list, write the email, send. Every email is personalised, tracked (opens, clicks, replies) and has an unsubscribe link.
+          {followUpMode
+            ? 'Write the next email to the people of a finished send. It goes into each person’s earlier Gmail thread, from the same mailbox. Everything else works like Quick Send.'
+            : 'Paste a list, write the email, send. Every email is personalised, tracked (opens, clicks, replies) and has an unsubscribe link.'}
         </p>
       </div>
 
@@ -482,6 +542,21 @@ export default function QuickSendPage() {
             <p className="mt-1 text-[11px] text-muted-foreground">How this send appears in Campaigns, reports and Approvals. Leave it blank to use the subject and date.</p>
           </section>
 
+          {followUpMode && fuError && <p className="rounded-lg border border-destructive/40 bg-card p-4 text-sm text-destructive">{fuError} <Link href="/quick-send-follow-up" className="underline">Back to Quick Send Follow-up</Link></p>}
+          {followUpMode && !fu && !fuError && <p className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">Loading the send to follow up…</p>}
+          {followUpMode && fu && <OriginalQuickEmail detail={fu} />}
+          {followUpMode && fu?.openFollowUp && (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+              A follow-up to this send is already {fu.openFollowUp.status === 'RUNNING' ? 'sending' : fu.openFollowUp.status.toLowerCase().replace(/_/g, ' ')}. <Link href={`/campaigns/${fu.openFollowUp.id}`} className="underline">Open it</Link>. You can prepare this one, but it can only be sent once that one has finished.
+            </p>
+          )}
+          {followUpMode && fu ? (
+            <section className="rounded-lg border bg-card p-4">
+              <h2 className="mb-1 text-sm font-semibold">1. Who gets it</h2>
+              <p className="mb-3 text-xs text-muted-foreground">Everyone who was sent an earlier email in this chain. Tick groups (they add up), then tick or untick people, or add addresses. Each person&apos;s email goes into their own earlier thread.</p>
+              <QuickFollowUpAudience detail={fu} segs={fuSegs} onSegs={setFuSegs} picked={fuPicked} onPicked={setFuPicked} extra={fuExtra} onExtra={setFuExtra} />
+            </section>
+          ) : followUpMode ? null : (
           <section className="rounded-lg border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">1. Who gets it</h2>
             <div className="mb-3 flex flex-wrap gap-1 rounded-full border border-border bg-muted/30 p-1 text-xs">
@@ -587,6 +662,7 @@ export default function QuickSendPage() {
               </div>
             )}
           </section>
+          )}
 
           <section className="rounded-lg border bg-card p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -826,6 +902,23 @@ export default function QuickSendPage() {
                     <p className="text-xs text-muted-foreground">
                       📎 {check.attachments.length} attachment{check.attachments.length === 1 ? '' : 's'} ({mb(check.attachments.reduce((n, a) => n + a.size, 0))}) on every email
                     </p>
+                  )}
+                  {followUpMode && (
+                    <div className="space-y-2">
+                      <MailboxDownChoice value={onDown} onChange={setOnDown} />
+                      {onDown === 'FALLBACK' && !backups.length && (
+                        <p className="text-xs text-amber-700">“Another mailbox” uses the backup mailboxes you tick under More options. With none ticked, emails whose mailbox is unavailable wait for it.</p>
+                      )}
+                      {check.followUp && (
+                        <p className="rounded border bg-muted/30 p-2 text-xs">
+                          <b>{check.followUp.replying.toLocaleString()}</b> email{check.followUp.replying === 1 ? '' : 's'} continue{check.followUp.replying === 1 ? 's' : ''} the earlier Gmail thread
+                          {check.followUp.newThread > 0 && <> · <b>{check.followUp.newThread.toLocaleString()}</b> start{check.followUp.newThread === 1 ? 's' : ''} a new thread</>}.
+                          {check.followUp.blocked.length > 0 && (
+                            <span className="mt-1 block text-destructive">The earlier email went out from {check.followUp.blocked.join(', ')}, which you can&apos;t send from (not yours, not shared as a backup). Choose “another mailbox”, or ask its owner to share it.</span>
+                          )}
+                        </p>
+                      )}
+                    </div>
                   )}
                   {!check.sender || check.sender.status !== 'CONNECTED' ? (
                     <p className="text-xs text-destructive">

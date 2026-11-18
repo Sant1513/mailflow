@@ -38,6 +38,7 @@ import {
  */
 export const NAV_ICON: Record<string, LucideIcon> = {
   '/quick-send': Zap,
+  '/quick-send-follow-up': Reply,
   '/dashboard': LayoutDashboard,
   '/inbox': Inbox,
   '/data': Database,
@@ -76,7 +77,7 @@ export const FALLBACK_ICON = Sparkles;
 /** Sidebar groups for the Mail product, in order. */
 export const MAIL_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: 'Overview', hrefs: ['/dashboard', '/inbox'] },
-  { label: 'Send', hrefs: ['/quick-send', '/campaigns', '/templates', '/documents/library', '/automations', '/batches'] },
+  { label: 'Send', hrefs: ['/quick-send', '/quick-send-follow-up', '/campaigns', '/templates', '/documents/library', '/automations', '/batches'] },
   { label: 'People', hrefs: ['/data', '/contacts', '/suppressions'] },
   { label: 'Insights', hrefs: ['/deliverability', '/performance', '/reports', '/history'] },
 ];
