@@ -28,7 +28,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
   const rootId = blast.rootBlastId ?? blast.id;
 
   const [all, chosenRows] = await Promise.all([
-    chainCandidates(rootId),
+    chainCandidates(rootId, blast.workspaceId),
     prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, select: { email: true } }),
   ]);
   const chosen = new Set(chosenRows.map((r) => r.email.toLowerCase()));
@@ -55,7 +55,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
       segment: segmentOf(c),
       replied: c.replied,
       opened: c.opened,
-      bounced: c.bounced,
+      bounced: c.bounced || c.suppressed,
       lastSentAt: c.lastSentAt,
       selected: chosen.has(c.email),
     })),
@@ -94,6 +94,6 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   if (!valid.length) return NextResponse.json({ error: 'No email address found in that text.' }, { status: 400 });
   if (valid.length > 5000) return NextResponse.json({ error: 'Add up to 5,000 addresses at a time.' }, { status: 400 });
   const res = await addToAudience(blast.id, rootId, valid);
-  if (!res.added && res.skippedBounced) return NextResponse.json({ error: res.skippedBounced === 1 ? 'That address bounced before, so it is never included.' : `${res.skippedBounced} of those addresses bounced before, so they are never included.` }, { status: 400 });
+  if (!res.added && res.skippedBounced) return NextResponse.json({ error: res.skippedBounced === 1 ? 'That address bounced or is on the suppression list, so it is never included.' : `${res.skippedBounced} of those addresses bounced or are on the suppression list, so they are never included.` }, { status: 400 });
   return NextResponse.json({ ok: true, added: res.added, fromChain: res.fromChain, newAddresses: res.added - res.fromChain, skippedBounced: res.skippedBounced });
 });

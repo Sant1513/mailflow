@@ -41,7 +41,7 @@ const fu = await import('@/lib/recruiterSend/followUp');
 const { runRecruiterWorker } = await import('@/lib/recruiterSend/worker');
 const { markRecruiterReplied } = await import('@/lib/recruiterSend/replies');
 
-const cand = (over: Partial<import('@/lib/recruiterSend/followUp').Candidate> = {}) => ({ email: 'a@corp.com', name: null, data: null, sourceGroupId: 'g1', replied: false, opened: null, bounced: false, lastSentAt: null, ...over });
+const cand = (over: Partial<import('@/lib/recruiterSend/followUp').Candidate> = {}) => ({ email: 'a@corp.com', name: null, data: null, sourceGroupId: 'g1', replied: false, opened: null, bounced: false, suppressed: false, lastSentAt: null, ...over });
 
 describe('the follow-up subject', () => {
   it('has exactly one Re:', () => {
@@ -64,6 +64,12 @@ describe('audience segments (multi-select)', () => {
 
   it('puts every recruiter in exactly one segment; bounced ones in none', () => {
     expect(list.map((c) => fu.segmentOf(c))).toEqual(['NO_REPLY_UNKNOWN', 'REPLIED', null, null, 'NO_REPLY_OPENED', 'NO_REPLY_UNOPENED']);
+  });
+  it('someone on the suppression list is in no segment, whatever else is true of them', () => {
+    expect(fu.segmentOf(cand({ suppressed: true }))).toBeNull();
+    expect(fu.segmentOf(cand({ suppressed: true, replied: true, opened: true }))).toBeNull();
+    expect(fu.inSegments(cand({ suppressed: true }), [...fu.FOLLOW_UP_SEGMENTS])).toBe(false);
+    expect(fu.segmentCounts([cand({ suppressed: true }), cand({ email: 'ok@c.com', opened: true })])).toMatchObject({ NO_REPLY_OPENED: 1, bounced: 1, total: 2 });
   });
   it('a reply wins over opened: someone who replied is only ever in REPLIED', () => {
     expect(fu.segmentOf(cand({ replied: true, opened: false }))).toBe('REPLIED');
@@ -149,6 +155,19 @@ describe('the chain', () => {
     expect(list[0]).toMatchObject({ sourceGroupId: 'g9', opened: true, replied: false, data: { Company: 'Acme' } });
     expect(list[1]).toMatchObject({ replied: true, opened: null });
     expect(list[2]).toMatchObject({ bounced: true });
+  });
+
+  it('flags everyone on the workspace suppression list (any case), and only asks when given a workspace', async () => {
+    const row = (email: string) => ({ email, name: null, data: null, status: 'SENT', groupId: 'g1', sentAt: new Date('2026-11-01'), repliedAt: null, openCount: 0, blast: { mode: 'BCC' } });
+    db.recruiterBlastRecipient.findMany.mockResolvedValueOnce([row('a@c.com'), row('b@c.com')]);
+    db.emailSuppression.findMany.mockResolvedValueOnce([{ email: 'B@C.com' }]);
+    const list = await fu.chainCandidates('root', 'w1');
+    expect(list.map((c) => [c.email, c.suppressed])).toEqual([['a@c.com', false], ['b@c.com', true]]);
+    expect(db.emailSuppression.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: 'w1', email: { in: ['a@c.com', 'b@c.com'], mode: 'insensitive' } } }));
+    db.emailSuppression.findMany.mockClear();
+    db.recruiterBlastRecipient.findMany.mockResolvedValueOnce([row('a@c.com')]);
+    expect((await fu.chainCandidates('root'))[0]!.suppressed).toBe(false);
+    expect(db.emailSuppression.findMany).not.toHaveBeenCalled();
   });
 
   it('a reply counts for every round of the chain', async () => {

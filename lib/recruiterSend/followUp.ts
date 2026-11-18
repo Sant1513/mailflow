@@ -65,12 +65,18 @@ export interface Candidate {
   replied: boolean;
   /** Opened the last email: known only when that email was an individual copy, else null. */
   opened: boolean | null;
+  /** The address bounced or was rejected in some round of this chain. */
   bounced: boolean;
+  /** On the workspace's suppression list (unsubscribed, bounced, rejected, complaint…): never emailed again. */
+  suppressed: boolean;
   lastSentAt: Date | null;
 }
 
-/** Everyone who was sent an email in this chain (the first send and its follow-ups). */
-export async function chainCandidates(rootId: string): Promise<Candidate[]> {
+/**
+ * Everyone who was sent an email in this chain (the first send and its follow-ups). With a
+ * workspace, anyone on its suppression list is flagged, so they are left out of every audience.
+ */
+export async function chainCandidates(rootId: string, workspaceId?: string | null): Promise<Candidate[]> {
   const rows = await prisma.recruiterBlastRecipient.findMany({
     where: { blast: { OR: [{ id: rootId }, { rootBlastId: rootId }] } },
     orderBy: [{ sentAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
@@ -79,7 +85,7 @@ export async function chainCandidates(rootId: string): Promise<Candidate[]> {
   const by = new Map<string, Candidate & { sent: boolean }>();
   for (const r of rows) {
     const email = r.email.toLowerCase();
-    const c = by.get(email) ?? { email, name: null, data: null, sourceGroupId: null, replied: false, opened: null, bounced: false, lastSentAt: null, sent: false };
+    const c = by.get(email) ?? { email, name: null, data: null, sourceGroupId: null, replied: false, opened: null, bounced: false, suppressed: false, lastSentAt: null, sent: false };
     if (r.repliedAt) c.replied = true;
     if (r.status === 'BOUNCED') c.bounced = true;
     if (r.status === 'SENT') {
@@ -92,12 +98,26 @@ export async function chainCandidates(rootId: string): Promise<Candidate[]> {
     }
     by.set(email, c);
   }
-  return [...by.values()].filter((c) => c.sent).map(({ sent: _sent, ...c }) => c);
+  const list = [...by.values()].filter((c) => c.sent).map(({ sent: _sent, ...c }) => c);
+  if (workspaceId && list.length) {
+    const blocked = new Set<string>();
+    for (let i = 0; i < list.length; i += 1000) {
+      const rows = await prisma.emailSuppression.findMany({ where: { workspaceId, email: { in: list.slice(i, i + 1000).map((c) => c.email), mode: 'insensitive' } }, select: { email: true } });
+      for (const r of rows) blocked.add(r.email.toLowerCase());
+    }
+    for (const c of list) c.suppressed = blocked.has(c.email);
+  }
+  return list;
 }
 
-/** The one segment a recruiter is in; null for a bounced recruiter (never included). */
+/** The workspace a draft belongs to (its suppression list decides who can be emailed). */
+async function workspaceOf(blastId: string): Promise<string | null> {
+  return (await prisma.recruiterBlast.findUnique({ where: { id: blastId }, select: { workspaceId: true } }))?.workspaceId ?? null;
+}
+
+/** The one segment a recruiter is in; null for a bounced or suppressed recruiter (never included). */
 export function segmentOf(c: Candidate): FollowUpSegment | null {
-  if (c.bounced) return null;
+  if (c.bounced || c.suppressed) return null;
   if (c.replied) return 'REPLIED';
   if (c.opened === true) return 'NO_REPLY_OPENED';
   if (c.opened === false) return 'NO_REPLY_UNOPENED';
@@ -134,7 +154,7 @@ const rowFor = (blastId: string, c: Candidate) => ({
 /** Replaces the follow-up draft's recruiters with the ticked segments (a snapshot; edit it afterwards). */
 export async function applyAudience(blastId: string, rootId: string, segments: readonly FollowUpSegment[]): Promise<number> {
   const picked = FOLLOW_UP_SEGMENTS.filter((s) => segments.includes(s));
-  const chosen = (await chainCandidates(rootId)).filter((c) => inSegments(c, picked));
+  const chosen = (await chainCandidates(rootId, await workspaceOf(blastId))).filter((c) => inSegments(c, picked));
   await prisma.$transaction(
     async (tx) => {
       await tx.recruiterBlastRecipient.deleteMany({ where: { blastId } });
@@ -152,16 +172,25 @@ export async function applyAudience(blastId: string, rootId: string, segments: r
 export async function addToAudience(blastId: string, rootId: string, emails: string[]): Promise<{ added: number; fromChain: number; skippedBounced: number }> {
   const wanted = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
   if (!wanted.length) return { added: 0, fromChain: 0, skippedBounced: 0 };
-  const known = new Map((await chainCandidates(rootId)).map((c) => [c.email, c]));
+  const workspaceId = await workspaceOf(blastId);
+  const known = new Map((await chainCandidates(rootId, workspaceId)).map((c) => [c.email, c]));
   const have = new Set((await prisma.recruiterBlastRecipient.findMany({ where: { blastId, email: { in: wanted } }, select: { email: true } })).map((r) => r.email.toLowerCase()));
-  // A recruiter whose address bounced in any round is never added, however they get here (tick or typed):
+  // A recruiter whose address bounced in any round, or is on the suppression list, is never added, however they get here (tick or typed):
   // a bounced address has no "sent" row, so it is looked up on its own.
   const bouncedRows = await prisma.recruiterBlastRecipient.findMany({
     where: { blast: { OR: [{ id: rootId }, { rootBlastId: rootId }] }, status: 'BOUNCED', email: { in: wanted, mode: 'insensitive' } },
     select: { email: true },
   });
-  const bounced = new Set([...bouncedRows.map((r) => r.email.toLowerCase()), ...[...known.values()].filter((c) => c.bounced).map((c) => c.email)]);
-  const rows = wanted.filter((e) => !have.has(e) && !bounced.has(e)).map((e) => rowFor(blastId, known.get(e) ?? { email: e, name: null, data: null, sourceGroupId: null, replied: false, opened: null, bounced: false, lastSentAt: null }));
+  const bounced = new Set([...bouncedRows.map((r) => r.email.toLowerCase()), ...[...known.values()].filter((c) => c.bounced || c.suppressed).map((c) => c.email)]);
+  // A typed address that is on the suppression list (and not part of the chain) is refused too.
+  if (workspaceId) {
+    const typed = wanted.filter((e) => !known.has(e));
+    for (let i = 0; i < typed.length; i += 1000) {
+      const rows = await prisma.emailSuppression.findMany({ where: { workspaceId, email: { in: typed.slice(i, i + 1000), mode: 'insensitive' } }, select: { email: true } });
+      for (const r of rows) bounced.add(r.email.toLowerCase());
+    }
+  }
+  const rows = wanted.filter((e) => !have.has(e) && !bounced.has(e)).map((e) => rowFor(blastId, known.get(e) ?? { email: e, name: null, data: null, sourceGroupId: null, replied: false, opened: null, bounced: false, suppressed: false, lastSentAt: null }));
   if (rows.length) await prisma.recruiterBlastRecipient.createMany({ data: rows, skipDuplicates: true });
   return { added: rows.length, fromChain: rows.filter((r) => known.has(r.email)).length, skippedBounced: wanted.filter((e) => bounced.has(e)).length };
 }

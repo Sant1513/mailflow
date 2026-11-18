@@ -158,7 +158,7 @@ export function FollowUpAudience({ blastId, editable, onChanged }: { blastId: st
             Use {inPick.toLocaleString()} selected
           </button>
           <span className="text-xs text-muted-foreground">
-            {pick.length === 0 ? 'Tick at least one group, or tick recruiters by hand below.' : unchanged ? 'This is the list below.' : 'Not applied yet.'} {c.bounced.toLocaleString()} bounced (never included).
+            {pick.length === 0 ? 'Tick at least one group, or tick recruiters by hand below.' : unchanged ? 'This is the list below.' : 'Not applied yet.'} {c.bounced.toLocaleString()} bounced or unsubscribed (never included).
           </span>
         </div>
       )}
@@ -204,7 +204,7 @@ export function FollowUpAudience({ blastId, editable, onChanged }: { blastId: st
                       type="checkbox"
                       checked={r.selected}
                       disabled={busy || r.bounced}
-                      title={r.bounced ? 'Bounced: never included' : undefined}
+                      title={r.bounced ? 'Bounced, rejected or unsubscribed: never included' : undefined}
                       aria-label={`${r.selected ? 'Remove' : 'Add'} ${r.email}`}
                       onChange={() => act({ action: 'select', emails: [r.email], selected: !r.selected })}
                     />
@@ -215,7 +215,7 @@ export function FollowUpAudience({ blastId, editable, onChanged }: { blastId: st
                   {r.name && <div className="text-xs text-muted-foreground">{r.name}</div>}
                 </td>
                 <td className="px-2 py-1.5 text-xs">
-                  {r.bounced ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-800 dark:bg-red-950 dark:text-red-200">bounced</span>
+                  {r.bounced ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-800 dark:bg-red-950 dark:text-red-200">undeliverable</span>
                     : r.replied ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800 dark:bg-green-950 dark:text-green-200">replied</span>
                     : <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">no reply</span>}
                   {r.opened === true && <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-amber-900 dark:bg-amber-950 dark:text-amber-100">opened</span>}

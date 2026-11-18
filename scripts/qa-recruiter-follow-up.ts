@@ -133,6 +133,23 @@ async function main() {
   check('applying twice does not duplicate rows', (await applyAudience(f2.draft.id, f2.rootId, [...FOLLOW_UP_SEGMENTS])) === 5 && (await rowsOf(f2.draft.id)).length === 5);
   check('duplicate segments in the request are harmless', (await applyAudience(f2.draft.id, f2.rootId, ['NO_REPLY_UNKNOWN', 'NO_REPLY_UNKNOWN'])) === 4);
 
+  // ───────── Suppression list ─────────
+  console.log('\nSuppression list');
+  const supp = await prisma.emailSuppression.create({ data: { workspaceId: ws.id, email: email('r7'), reason: 'UNSUBSCRIBED', source: 'QA' } });
+  const suppressedC = await chainCandidates(root.id, ws.id);
+  check('an unsubscribed / suppressed recruiter is flagged, and counts as never included', suppressedC.find((c) => c.email === email('r7'))?.suppressed === true && segmentCounts(suppressedC).bounced === 1 && segmentCounts(suppressedC).NO_REPLY_UNKNOWN === 3, segmentCounts(suppressedC));
+  check('applying an audience leaves the suppressed recruiter out (3, not 4)', (await applyAudience(f2.draft.id, f2.rootId, NOT_REPLIED_SEGMENTS)) === 3);
+  check('…even when every group is ticked (4: r1 replied + r2, r4, r5)', (await applyAudience(f2.draft.id, f2.rootId, [...FOLLOW_UP_SEGMENTS])) === 4);
+  const typedSupp = await addToAudience(f2.draft.id, f2.rootId, [email('r7'), `typed-suppressed+${stamp}@gmail.com`]);
+  await prisma.emailSuppression.create({ data: { workspaceId: ws.id, email: `typed-suppressed+${stamp}@gmail.com`, reason: 'BOUNCED', source: 'QA' } });
+  const typedSupp2 = await addToAudience(f2.draft.id, f2.rootId, [`typed-suppressed+${stamp}@gmail.com`]);
+  check('a suppressed chain recruiter can not be added back by hand', typedSupp.skippedBounced >= 1 && !(await rowsOf(f2.draft.id)).some((x) => x.email === email('r7')), typedSupp);
+  check('a typed address that is on the suppression list is refused', typedSupp2.added === 0 && typedSupp2.skippedBounced === 1, typedSupp2);
+  await prisma.emailSuppression.deleteMany({ where: { workspaceId: ws.id, source: 'QA' } });
+  void supp;
+  check('removing the suppression puts them back in the audience', segmentCounts(await chainCandidates(root.id, ws.id)).NO_REPLY_UNKNOWN === 4);
+  await applyAudience(f2.draft.id, f2.rootId, ['NO_REPLY_UNKNOWN']); // back to the list the next section starts from
+
   // ───────── Editing the list ─────────
   console.log('\nEditing the list');
   const before = (await rowsOf(f2.draft.id)).length;
