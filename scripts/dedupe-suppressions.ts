@@ -11,7 +11,7 @@
 import { prisma } from '../lib/db/client';
 
 const apply = process.argv.includes('--apply');
-const BATCH = 20_000;
+const BATCH = 10_000;
 
 const RANKED = `
   SELECT s.id, row_number() OVER (
@@ -25,6 +25,7 @@ const RANKED = `
 const n = (x: unknown) => Number(x);
 
 async function main() {
+  // The window query over the whole table is slow on a big list: lift the per-statement limit for this one session.
   const total = n((await prisma.$queryRawUnsafe<{ c: bigint }[]>(`SELECT count(*) c FROM "EmailSuppression"`))[0]!.c);
   const copies = n((await prisma.$queryRawUnsafe<{ c: bigint }[]>(`SELECT count(*) c FROM (${RANKED}) r WHERE rn > 1`))[0]!.c);
   const unique = n((await prisma.$queryRawUnsafe<{ c: bigint }[]>(`SELECT count(*) c FROM (${RANKED}) r WHERE rn = 1`))[0]!.c);
@@ -33,7 +34,11 @@ async function main() {
 
   let removed = 0;
   for (;;) {
-    const r = await prisma.$executeRawUnsafe(`DELETE FROM "EmailSuppression" WHERE id IN (SELECT id FROM (${RANKED}) r WHERE rn > 1 LIMIT ${BATCH})`);
+    // Each batch is its own transaction so the time limit can be lifted for just that batch.
+    const r = await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = 0`);
+      return tx.$executeRawUnsafe(`DELETE FROM "EmailSuppression" WHERE id IN (SELECT id FROM (${RANKED}) r WHERE rn > 1 LIMIT ${BATCH})`);
+    }, { timeout: 600_000, maxWait: 60_000 });
     removed += r;
     console.log(`removed ${removed} / ${copies}`);
     if (r === 0) break;
