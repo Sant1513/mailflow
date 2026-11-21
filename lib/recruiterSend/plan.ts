@@ -189,14 +189,18 @@ type PlanBlastInput = { id: string; workspaceId: string; organizationId?: string
 async function planCore(blast: PlanBlastInput) {
   // A stable order: the batches the check shows are the batches start creates.
   const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { id: true, email: true, name: true, data: true, sourceGroupId: true, repeatOk: true } });
-  const problems = await checkAddresses(recipients.map((r) => r.email), blast.workspaceId);
+  const emails = recipients.map((r) => r.email);
   // Repeat guard: who was emailed from MailFlow in the last N days. Follow-ups are exempt (re-emailing is their point).
   const windowDays = blast.parentBlastId ? 0 : repeatWindow(blast.repeatWindowDays);
-  const recent = windowDays > 0 && blast.organizationId
-    ? await recentContacts({ organizationId: blast.organizationId, emails: recipients.map((r) => r.email), days: windowDays, excludeBlastId: blast.id })
-    : new Map<string, RecentContact>();
-  // Cool-off ("do not contact until" on the contact): applies to every send, follow-ups included, and "send again" does not override it.
-  const cool = blast.organizationId ? await coolOffs(blast.organizationId, recipients.map((r) => r.email)) : new Map<string, CoolOff>();
+  // The three checks are independent, so they run together (a big list was close to the server's time limit one after another).
+  const [problems, recent, cool] = await Promise.all([
+    checkAddresses(emails, blast.workspaceId),
+    windowDays > 0 && blast.organizationId
+      ? recentContacts({ organizationId: blast.organizationId, emails, days: windowDays, excludeBlastId: blast.id })
+      : Promise.resolve(new Map<string, RecentContact>()),
+    // Cool-off ("do not contact until" on the contact): applies to every send, follow-ups included, and "send again" does not override it.
+    blast.organizationId ? coolOffs(blast.organizationId, emails) : Promise.resolve(new Map<string, CoolOff>()),
+  ]);
   const skippedKinds = new Map<string, string>();
   let recentFlagged = 0;
   let recentIncluded = 0;

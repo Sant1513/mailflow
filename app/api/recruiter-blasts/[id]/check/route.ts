@@ -11,6 +11,7 @@ import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
  * ./people, which skips the email preview.
  */
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireBlastReader(); // read-only: nothing is sent or saved

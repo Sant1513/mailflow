@@ -100,7 +100,7 @@ async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<v
 export async function checkAddresses(
   emails: string[],
   workspaceId: string | null,
-  options: { dnsCheck?: boolean } = {},
+  options: { dnsCheck?: boolean; dnsBudgetMs?: number } = {},
 ): Promise<Map<string, AddressProblem>> {
   const unique = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter((e) => e.includes('@')))];
   const problems = new Map<string, AddressProblem>();
@@ -125,7 +125,11 @@ export async function checkAddresses(
       const domain = email.slice(email.lastIndexOf('@') + 1);
       byDomain.set(domain, [...(byDomain.get(domain) ?? []), email]);
     }
-    await mapLimit([...byDomain.keys()], 10, async (domain) => {
+    // A big list has thousands of domains: look up many at once, and stop after a time budget (domains not reached are let through,
+    // as an inconclusive lookup always is) so the check can never run past the server's time limit.
+    const stopAt = Date.now() + (options.dnsBudgetMs ?? 15_000);
+    await mapLimit([...byDomain.keys()], 50, async (domain) => {
+      if (Date.now() > stopAt) return;
       if ((await domainAcceptsMail(domain)) === false) {
         for (const email of byDomain.get(domain) ?? []) {
           problems.set(email, { kind: 'NO_MAIL_SERVER', detail: `"${domain}" has no mail server, so nothing sent there can arrive.` });

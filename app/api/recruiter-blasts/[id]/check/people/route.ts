@@ -9,6 +9,7 @@ import { planBlast, planPageSchema, planPageView } from '@/lib/recruiterSend/pla
  * (same as the check), but the email preview is not. Nothing is sent or saved.
  */
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 export const POST = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
   const session = await requireBlastReader();
