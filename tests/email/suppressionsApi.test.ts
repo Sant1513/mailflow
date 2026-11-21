@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const rows = [
   {
     id: 's1',
+    workspaceId: 'w1',
     email: 'jannat.t@healthfab.in',
     reason: 'BOUNCED',
     source: 'BOUNCE',
@@ -62,7 +63,8 @@ describe('GET /api/suppressions filters', () => {
     expect(and).toContainEqual({ category: 'POLICY_BLOCK' });
     expect(and).toContainEqual({ source: 'BOUNCE' });
     expect(and).toContainEqual({ recruiterBlastId: 'blast-1' });
-    expect(and).toContainEqual({ OR: [{ detail: { contains: "bounced on a teammate's send" } }, { detail: { contains: 'known across the organisation' } }] });
+    // "Teammates'": another workspace's bounce, or an old copy.
+    expect(and).toContainEqual({ OR: [{ OR: [{ detail: { contains: "bounced on a teammate's send" } }, { detail: { contains: 'known across the organisation' } }] }, { NOT: { workspaceId: 'w1' } }] });
     expect(and).toContainEqual({ createdAt: { gte: new Date('2026-10-31T18:30:00.000Z'), lte: new Date('2026-11-09T18:29:59.999Z') } });
     const search = and.find((c) => c.OR?.some((o: any) => o.email))!;
     expect(search.OR.map((o: any) => Object.keys(o)[0])).toEqual(['email', 'detail', 'remark', 'statusCode']);

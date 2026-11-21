@@ -16,6 +16,7 @@ import { unsubscribeMailto } from '@/lib/email/unsubscribeByEmail';
 import { repliedSince, threadHeaders } from '@/lib/quickSend/followUp';
 import crypto from 'crypto';
 import { suppressedKeys } from '@/lib/email/suppressedKeys';
+import { visibleToWorkspace } from '@/lib/suppressions/scope';
 import { emailKey } from '@/lib/recruiterSend/emailKey';
 
 /**
@@ -74,9 +75,10 @@ export async function processEmailJob(
 
   // Check the suppression list — if the recipient unsubscribed, skip silently.
   // Case-insensitive: older rows were saved with the address's original capitals.
+  // Its own unsubscribes plus every bounce and spam complaint in the organisation (one shared list, lib/suppressions/scope.ts).
   const suppressed = await prisma.emailSuppression.findFirst({
     where: {
-      workspaceId: job.batch.campaign.workspaceId,
+      ...(await visibleToWorkspace(job.batch.campaign.workspaceId)),
       email: { equals: job.toEmail.trim(), mode: 'insensitive' },
     },
   });

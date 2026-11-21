@@ -7,6 +7,7 @@ import { pageInfo, parsePaging } from '@/lib/api/paging';
 import { requireCanWrite, resolveWorkspaceId } from '@/lib/permissions/workspace';
 import { csvFileName, csvResponse, toCsv, type CsvValue } from '@/lib/export/csv';
 import { CATEGORY_LABEL, isBounceCategory } from '@/lib/email/dsn';
+import { orgWorkspaceIds, SHARED_REASONS, visibleToWorkspace } from '@/lib/suppressions/scope';
 import { isOrgCopy, parseSuppressionFilters, suppressionOrderBy, suppressionWhere } from '@/lib/suppressions/filters';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +17,7 @@ const CSV_MAX = 50_000;
 
 const SELECT = {
   id: true,
+  workspaceId: true,
   email: true,
   reason: true,
   source: true,
@@ -44,7 +46,8 @@ export const GET = withErrorHandling(async (req) => {
   const url = new URL(req.url);
   const workspaceId = await resolveWorkspaceId(session, url.searchParams.get('workspaceId'));
   const filters = parseSuppressionFilters(url.searchParams);
-  const where = suppressionWhere(workspaceId, filters);
+  const visible = await visibleToWorkspace(workspaceId);
+  const where = suppressionWhere(workspaceId, filters, visible);
   const orderBy = suppressionOrderBy(filters.sort);
 
   if (url.searchParams.get('format') === 'csv') {
@@ -60,7 +63,7 @@ export const GET = withErrorHandling(async (req) => {
         r.statusCode,
         r.detail,
         SOURCE_LABEL[r.source] ?? r.source,
-        isOrgCopy(r.detail) ? 'Yes' : '',
+        isOrgCopy(r.detail) || r.workspaceId !== workspaceId ? 'Yes' : '',
         r.campaign?.name ?? '',
         r.recruiterBlastId ? (blasts.get(r.recruiterBlastId) ?? r.recruiterBlastId) : '',
         r.addedBy ? `${r.addedBy.name ?? ''} <${r.addedBy.email}>` : '',
@@ -75,8 +78,8 @@ export const GET = withErrorHandling(async (req) => {
   const [suppressions, total, campaignIds, blastIds] = await Promise.all([
     prisma.emailSuppression.findMany({ where, orderBy, skip: paging.skip, take: paging.take, select: SELECT }),
     prisma.emailSuppression.count({ where }),
-    prisma.emailSuppression.groupBy({ by: ['campaignId'], where: { workspaceId, campaignId: { not: null } }, _count: { _all: true } }),
-    prisma.emailSuppression.groupBy({ by: ['recruiterBlastId'], where: { workspaceId, recruiterBlastId: { not: null } }, _count: { _all: true } }),
+    prisma.emailSuppression.groupBy({ by: ['campaignId'], where: { AND: [visible, { campaignId: { not: null } }] }, _count: { _all: true } }),
+    prisma.emailSuppression.groupBy({ by: ['recruiterBlastId'], where: { AND: [visible, { recruiterBlastId: { not: null } }] }, _count: { _all: true } }),
   ]);
   const [campaigns, blasts] = await Promise.all([
     campaignIds.length
@@ -90,7 +93,7 @@ export const GET = withErrorHandling(async (req) => {
   ].sort((a, b) => a.label.localeCompare(b.label));
 
   return NextResponse.json({
-    suppressions: suppressions.map((s) => ({ ...s, recruiterBlast: s.recruiterBlastId ? { id: s.recruiterBlastId, name: blasts.get(s.recruiterBlastId) ?? null } : null, orgCopy: isOrgCopy(s.detail) })),
+    suppressions: suppressions.map((s) => ({ ...s, recruiterBlast: s.recruiterBlastId ? { id: s.recruiterBlastId, name: blasts.get(s.recruiterBlastId) ?? null } : null, orgCopy: isOrgCopy(s.detail) || s.workspaceId !== workspaceId })),
     ...pageInfo(total, paging),
     // Kept for older clients.
     pageCount: Math.max(1, Math.ceil(total / paging.pageSize)),
@@ -150,9 +153,14 @@ export const DELETE = withErrorHandling(async (req) => {
   const id = url.searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  await prisma.emailSuppression.deleteMany({
-    where: { id, workspaceId },
-  });
+  // A bounce or complaint is one shared entry for the organisation: removing it removes it for everyone (an unsubscribe is just this workspace's).
+  const row = await prisma.emailSuppression.findFirst({ where: { AND: [await visibleToWorkspace(workspaceId), { id }] }, select: { id: true, email: true, reason: true } });
+  if (row && (SHARED_REASONS as readonly string[]).includes(row.reason)) {
+    const ids = await orgWorkspaceIds(workspaceId);
+    await prisma.emailSuppression.deleteMany({ where: { workspaceId: { in: ids }, email: row.email, reason: { in: [...SHARED_REASONS] } } });
+  } else {
+    await prisma.emailSuppression.deleteMany({ where: { id, workspaceId } });
+  }
 
   return NextResponse.json({ ok: true });
 });

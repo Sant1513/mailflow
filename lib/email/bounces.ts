@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db/client';
+import { orgWorkspaceIds, SHARED_REASONS } from '@/lib/suppressions/scope';
 import { dispatchWebhook } from '@/lib/webhooks/dispatch';
 import { parseDeliveryReport, suppressionRule, type BounceCategory } from '@/lib/email/dsn';
 
@@ -50,20 +51,10 @@ export function parseBounce(
  * bounce category spreads (an address that doesn't exist, has left, or blocks us blocks everyone).
  * Unsubscribes stay per workspace: they're a choice about that sender. Returns rows added.
  */
-export async function syncOrgBounces(organizationId: string): Promise<number> {
-  return prisma.$executeRaw`
-    INSERT INTO "EmailSuppression" (id, "workspaceId", email, reason, source, detail, category, "statusCode", remark, "createdAt")
-    SELECT 'sb' || substr(md5(w.id || ':' || b.email || ':' || clock_timestamp()::text), 1, 23), w.id, b.email, b.reason, 'BOUNCE',
-           left(COALESCE(b.detail, b.reason) || ' (known across the organisation)', 1000), b.category, b."statusCode", b.remark, now()
-    FROM "Workspace" w
-    JOIN (
-      SELECT DISTINCT ON (s.email, s.reason) s.email, s.reason, s.detail, s.category, s."statusCode", s.remark
-      FROM "EmailSuppression" s JOIN "Workspace" ws ON ws.id = s."workspaceId"
-      WHERE ws."organizationId" = ${organizationId} AND s.reason IN ('BOUNCED', 'COMPLAINT')
-      ORDER BY s.email, s.reason, s."createdAt"
-    ) b ON TRUE
-    WHERE w."organizationId" = ${organizationId}
-    ON CONFLICT ("workspaceId", email) DO NOTHING`;
+export async function syncOrgBounces(_organizationId: string): Promise<number> {
+  // Nothing to copy any more: bounces and complaints are one list for the whole organisation (lib/suppressions/scope.ts),
+  // so a workspace created after a bounce already sees it. Kept so the sign-up and daily callers need no change.
+  return 0;
 }
 
 /**
@@ -97,7 +88,10 @@ export async function recordHardBounce(input: {
     ...(input.remark ? { remark: input.remark.slice(0, 300) } : {}),
   };
   const ws = await prisma.workspace.findUnique({ where: { id: input.workspaceId }, select: { organizationId: true } });
-  await prisma.emailSuppression.upsert({
+  // One shared list: if anyone in the organisation already has this address as a bounce or complaint, it is already blocked for everyone.
+  const orgIds = await orgWorkspaceIds(input.workspaceId);
+  const already = await prisma.emailSuppression.findFirst({ where: { workspaceId: { in: orgIds }, email, reason: { in: [...SHARED_REASONS] } }, select: { id: true } });
+  if (!already) await prisma.emailSuppression.upsert({
     where: { workspaceId_email: { workspaceId: input.workspaceId, email } },
     create: {
       workspaceId: input.workspaceId,
@@ -111,15 +105,6 @@ export async function recordHardBounce(input: {
     },
     update: {},
   });
-  if (ws) {
-    const others = await prisma.workspace.findMany({ where: { organizationId: ws.organizationId, id: { not: input.workspaceId } }, select: { id: true } });
-    if (others.length) {
-      await prisma.emailSuppression.createMany({
-        data: others.map((o) => ({ workspaceId: o.id, email, source, reason, detail: `${detail} (bounced on a teammate's send)`.slice(0, 1000), ...extra })),
-        skipDuplicates: true,
-      });
-    }
-  }
   await prisma.record.updateMany({
     where: { contact: { primaryEmail: { equals: email, mode: 'insensitive' }, ...(ws ? { workspace: { organizationId: ws.organizationId } } : { workspaceId: input.workspaceId }) } },
     data: { emailStatus: 'BOUNCED', lastEmailError: detail.slice(0, 500) },

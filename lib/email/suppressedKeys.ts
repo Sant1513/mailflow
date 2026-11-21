@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { emailKey } from '@/lib/recruiterSend/emailKey';
+import { visibleSql, visibleToWorkspace } from '@/lib/suppressions/scope';
 
 type Row = { email: string; reason: string; detail: string | null };
 
@@ -12,11 +13,13 @@ type Row = { email: string; reason: string; detail: string | null };
 export async function suppressionRows(workspaceId: string, emails: string[]): Promise<Row[]> {
   const lower = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
   const found = new Map<string, Row>();
+  const visible = await visibleToWorkspace(workspaceId);
+  const visibleRaw = await visibleSql(workspaceId);
   for (let i = 0; i < lower.length; i += 1000) {
     const chunk = lower.slice(i, i + 1000);
-    for (const r of await prisma.emailSuppression.findMany({ where: { workspaceId, email: { in: chunk } }, select: { email: true, reason: true, detail: true } })) found.set(r.email.toLowerCase(), r);
+    for (const r of await prisma.emailSuppression.findMany({ where: { ...visible, email: { in: chunk } }, select: { email: true, reason: true, detail: true } })) found.set(r.email.toLowerCase(), r);
     try {
-      const more = await prisma.$queryRaw<Row[]>(Prisma.sql`SELECT "email", "reason", "detail" FROM "EmailSuppression" WHERE "workspaceId" = ${workspaceId} AND lower("email") = ANY(${chunk}::text[])`);
+      const more = await prisma.$queryRaw<Row[]>(Prisma.sql`SELECT "email", "reason", "detail" FROM "EmailSuppression" WHERE ${visibleRaw} AND lower("email") = ANY(${chunk}::text[])`);
       for (const r of more) if (!found.has(r.email.toLowerCase())) found.set(r.email.toLowerCase(), r);
     } catch { /* the exact lookup above already answered */ }
   }
@@ -37,11 +40,12 @@ export async function suppressedKeys(workspaceId: string, emails: string[]): Pro
   for (const r of await suppressionRows(workspaceId, all)) out.add(emailKey(r.email));
   // Gmail spells one inbox many ways: look those up by key in the database (mailflow_email_key).
   const gmailKeys = [...new Set(all.filter(isGmail).map(emailKey))];
+  const visibleRaw2 = gmailKeys.length ? await visibleSql(workspaceId) : Prisma.empty;
   for (let i = 0; i < gmailKeys.length; i += 1000) {
     const chunk = gmailKeys.slice(i, i + 1000);
     const rows = await prisma.$queryRaw<{ email: string }[]>(Prisma.sql`
       SELECT "email" FROM "EmailSuppression"
-      WHERE "workspaceId" = ${workspaceId} AND mailflow_email_key("email") = ANY(${chunk}::text[])`);
+      WHERE ${visibleRaw2} AND mailflow_email_key("email") = ANY(${chunk}::text[])`);
     for (const r of rows) out.add(emailKey(r.email));
   }
   return out;

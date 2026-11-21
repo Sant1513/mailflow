@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db/client';
+import { visibleToWorkspace } from '@/lib/suppressions/scope';
 
 /**
  * Replies from the inbox must not go to an address that hard-bounced or reported spam: a
@@ -10,7 +11,7 @@ export async function blockedReplyRecipient(workspaceId: string, recipients: (st
   const emails = [...new Set(recipients.map((r) => r?.trim().toLowerCase()).filter((r): r is string => !!r))];
   if (!emails.length) return null;
   const hit = await prisma.emailSuppression.findFirst({
-    where: { workspaceId, email: { in: emails }, reason: { in: ['BOUNCED', 'COMPLAINT'] } },
+    where: { ...(await visibleToWorkspace(workspaceId)), email: { in: emails }, reason: { in: ['BOUNCED', 'COMPLAINT'] } },
     select: { email: true, reason: true, detail: true, category: true },
   });
   if (!hit) return null;

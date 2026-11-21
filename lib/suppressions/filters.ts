@@ -101,8 +101,8 @@ function typeWhere(type: SuppressionType): Prisma.EmailSuppressionWhereInput {
   }
 }
 
-export function suppressionWhere(workspaceId: string, f: SuppressionFilters): Prisma.EmailSuppressionWhereInput {
-  const and: Prisma.EmailSuppressionWhereInput[] = [{ workspaceId }];
+export function suppressionWhere(workspaceId: string, f: SuppressionFilters, visible: Prisma.EmailSuppressionWhereInput = { workspaceId }): Prisma.EmailSuppressionWhereInput {
+  const and: Prisma.EmailSuppressionWhereInput[] = [visible];
   if (f.q) {
     and.push({
       OR: [
@@ -117,8 +117,9 @@ export function suppressionWhere(workspaceId: string, f: SuppressionFilters): Pr
   if (f.category) and.push({ category: f.category === 'NONE' ? null : f.category });
   if (f.source) and.push({ source: f.source });
   if (f.reason) and.push({ reason: f.reason });
-  if (f.scope === 'org') and.push(orgCopy);
-  if (f.scope === 'own') and.push({ NOT: orgCopy });
+  // "Teammates'" = another workspace's bounce (or an old copy); "mine" = this workspace's own entries.
+  if (f.scope === 'org') and.push({ OR: [orgCopy.OR ? { OR: orgCopy.OR } : orgCopy, { NOT: { workspaceId } }] });
+  if (f.scope === 'own') and.push({ NOT: orgCopy }, { workspaceId });
   if (f.from || f.to) and.push({ createdAt: { ...(f.from ? { gte: istDayStart(f.from) } : {}), ...(f.to ? { lte: istDayEnd(f.to) } : {}) } });
   if (f.send) {
     const [kind, id] = f.send.split(':') as [string, string];
