@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
 import { useAutoSync } from '@/components/inbox/useAutoSync';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
+import { contextLine } from '@/lib/loading/pick';
 
 interface InboxRow {
   id: string;
@@ -64,6 +66,7 @@ export default function InboxPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [gmail, setGmail] = useState<{ connected: boolean; pushConfigured: boolean; email?: string } | null>(null);
   const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
@@ -99,7 +102,7 @@ export default function InboxPage() {
     } catch (err) {
       if (seq === loadSeq.current) setLoadError(err instanceof Error && err.message !== 'Failed to fetch' ? err.message : 'The inbox could not be loaded. Check your connection and try again.');
     } finally {
-      if (seq === loadSeq.current) setLoading(false);
+      if (seq === loadSeq.current) { setLoading(false); setLoadedOnce(true); }
     }
   }, [filter, scope, q, page, assigneeId, tag]);
 
@@ -351,7 +354,7 @@ export default function InboxPage() {
             {loadError ? (
               <div className="m-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{loadError} <button type="button" onClick={() => load(page)} className="ml-2 underline">Try again</button></div>
             ) : loading && rows.length === 0 ? (
-              <div className="p-6 text-sm text-muted-foreground">Loading…</div>
+              loadedOnce ? <div className="p-6 text-sm text-muted-foreground">Loading…</div> : <LoadingScreen context={[contextLine('Looking for “{}”…', q.trim()), contextLine('Narrowing it down to {}…', filter)].filter(Boolean)} />
             ) : rows.length === 0 ? (
               <div className="p-12 text-center text-sm text-muted-foreground">
                 {filter === 'unread' ? "You're all caught up." : 'No conversations yet.'}

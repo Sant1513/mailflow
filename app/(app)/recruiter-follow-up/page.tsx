@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 
 interface Source {
   id: string; name: string; subject: string; mode: 'BCC' | 'INDIVIDUAL'; round: number; rootBlastId: string | null;
@@ -62,7 +63,7 @@ export default function RecruiterFollowUpList() {
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
-      {!data && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {!data && !error && <LoadingScreen />}
 
       {data && (
         <>

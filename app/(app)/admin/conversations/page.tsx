@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface Row {
   id: string;
@@ -78,6 +79,7 @@ export default function AdminConversationsPage() {
   }
 
   return (
+    <LoadGate loading={loading}>
     <div className="p-4 sm:p-6">
       <div className="mb-4">
         <div className="eyebrow mb-2">Super Admin · audited</div>
@@ -169,5 +171,6 @@ export default function AdminConversationsPage() {
         </div>
       )}
     </div>
+    </LoadGate>
   );
 }

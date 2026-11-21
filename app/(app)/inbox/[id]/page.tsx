@@ -12,6 +12,7 @@ import { MessageBody } from '@/components/inbox/MessageBody';
 import { ReplyComposer, type ComposerPayload } from '@/components/inbox/ReplyComposer';
 import { useAutoSync } from '@/components/inbox/useAutoSync';
 import { AiDraftCard } from '@/components/inbox/AiDraftCard';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 
 const STATUSES = ['OPEN', 'IN_PROGRESS', 'WAITING_FOR_STUDENT', 'RESOLVED', 'CLOSED'];
 
@@ -295,7 +296,7 @@ export default function ConversationPage() {
     win.onafterprint = () => win.close();
   }
 
-  if (!data) return loadError ? <LoadError message={loadError} onRetry={load} backHref="/inbox" backLabel="Back to the inbox" /> : <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!data) return loadError ? <LoadError message={loadError} onRetry={load} backHref="/inbox" backLabel="Back to the inbox" /> : <LoadingScreen context={['Opening this conversation…']} />;
   const c = data.conversation;
 
   // §80: the most recent inbound message's AI intent, if ingest or the user classified it.

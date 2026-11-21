@@ -5,6 +5,8 @@ import { dailyLimit, DAILY_UNIQUE_RECIPIENT_LIMIT, usageLast24h } from '@/lib/qu
 import { isValidEmail } from '@/lib/quickSend/prepare';
 import { MAX_GROUP_SIZE, planGroups, previewHtml, type BlastMode } from '@/lib/recruiterSend/core';
 import { missingValues, personalize, variableCheck } from '@/lib/recruiterSend/personalize';
+import { coolOffReason, coolOffs, recentContacts, repeatReason, repeatWindow, type CoolOff, type RecentContact } from '@/lib/recruiterSend/recent';
+import { emailKey } from '@/lib/recruiterSend/emailKey';
 import { followUpGroups, planFollowUpMailboxes, sourceAccounts, type FollowUpGroup, type OnMailboxDown } from '@/lib/recruiterSend/followUp';
 
 /**
@@ -14,6 +16,10 @@ import { followUpGroups, planFollowUpMailboxes, sourceAccounts, type FollowUpGro
  * send today.
  */
 export interface BlastPlan {
+  /** Repeat guard: the window, recruiters skipped as recently emailed, and ones the admin chose to send again. */
+  recent: { windowDays: number; flagged: number; included: number; /** Recruiters skipped because their contact has a cool-off ("do not contact until"). */ coolOff: number };
+  /** Every skipped recipient id with the code of why (SUPPRESSED, COOL_OFF, RECENTLY_EMAILED, …), saved on the recipient at start. */
+  skippedKinds: Map<string, string>;
   total: number;
   eligibleIds: string[];
   /** Every skipped recipient id with its reason (for marking them at start). */
@@ -177,13 +183,25 @@ export function estimateMinutes(rounds: number, gapSeconds: number, order: SendO
   return Math.max(1, Math.ceil((rounds * perRound) / 60));
 }
 
-type PlanBlastInput = { id: string; workspaceId: string; parentBlastId?: string | null; onMailboxDown?: string; mode: string; sendOrder?: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null };
+type PlanBlastInput = { id: string; workspaceId: string; organizationId?: string; repeatWindowDays?: number; parentBlastId?: string | null; onMailboxDown?: string; mode: string; sendOrder?: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null };
 
 /** The expensive part of a plan: every recruiter checked and personalised, batches and mailboxes. */
 async function planCore(blast: PlanBlastInput) {
   // A stable order: the batches the check shows are the batches start creates.
-  const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { id: true, email: true, name: true, data: true, sourceGroupId: true } });
+  const recipients = await prisma.recruiterBlastRecipient.findMany({ where: { blastId: blast.id }, orderBy: { id: 'asc' }, select: { id: true, email: true, name: true, data: true, sourceGroupId: true, repeatOk: true } });
   const problems = await checkAddresses(recipients.map((r) => r.email), blast.workspaceId);
+  // Repeat guard: who was emailed from MailFlow in the last N days. Follow-ups are exempt (re-emailing is their point).
+  const windowDays = blast.parentBlastId ? 0 : repeatWindow(blast.repeatWindowDays);
+  const recent = windowDays > 0 && blast.organizationId
+    ? await recentContacts({ organizationId: blast.organizationId, emails: recipients.map((r) => r.email), days: windowDays, excludeBlastId: blast.id })
+    : new Map<string, RecentContact>();
+  // Cool-off ("do not contact until" on the contact): applies to every send, follow-ups included, and "send again" does not override it.
+  const cool = blast.organizationId ? await coolOffs(blast.organizationId, recipients.map((r) => r.email)) : new Map<string, CoolOff>();
+  const skippedKinds = new Map<string, string>();
+  let recentFlagged = 0;
+  let recentIncluded = 0;
+  let coolOffCount = 0;
+  const now = new Date();
   const eligibleIds: string[] = [];
   const skipped: { email: string; reason: string }[] = [];
   const skippedReasons = new Map<string, string>();
@@ -197,10 +215,24 @@ async function planCore(blast: PlanBlastInput) {
     const problem = !isValidEmail(r.email)
       ? { kind: 'INVALID', detail: `"${r.email}" is not a valid email address.` }
       : problems.get(r.email.toLowerCase()) ??
-        (missing.length ? { kind: 'MISSING_VALUE', detail: `No value for ${missing.map((m) => `{{${m}}}`).join(', ')} (fill it in the list, or write {{${missing[0]} | fallback}}).` } : undefined);
+        (missing.length ? { kind: 'MISSING_VALUE', detail: `No value for ${missing.map((m) => `{{${m}}}`).join(', ')} (fill it in the list, or write {{${missing[0]} | fallback}}).` } : undefined) ??
+        (() => {
+          const co = cool.get(emailKey(r.email));
+          if (!co) return undefined;
+          coolOffCount++;
+          return { kind: 'COOL_OFF', detail: coolOffReason(co) };
+        })() ??
+        (() => {
+          const c = recent.get(emailKey(r.email));
+          if (!c) return undefined;
+          if (r.repeatOk) { recentIncluded++; return undefined; }
+          recentFlagged++;
+          return { kind: 'RECENTLY_EMAILED', detail: repeatReason(c, now) };
+        })();
     if (problem) {
       skipped.push({ email: r.email, reason: problem.detail });
       skippedReasons.set(r.id, problem.detail);
+      skippedKinds.set(r.id, problem.kind);
       skippedByReason[problem.kind] = (skippedByReason[problem.kind] ?? 0) + 1;
     } else eligibleIds.push(r.id);
   }
@@ -257,7 +289,7 @@ async function planCore(blast: PlanBlastInput) {
   const batchOf = new Map<string, number>();
   groups.forEach((g, i) => g.forEach((id) => batchOf.set(id, i)));
 
-  return { recipients, eligibleIds, skipped, skippedReasons, skippedByReason, content, vars, messages, perMessage, capacity, messagesPossibleToday, groups, groupSpecs, followUp, sendOrder, assigned, planned, plannedAccountIds, rounds, estimatedMinutes, batchOf };
+  return { skippedKinds, recent: { windowDays, flagged: recentFlagged, included: recentIncluded, coolOff: coolOffCount }, recipients, eligibleIds, skipped, skippedReasons, skippedByReason, content, vars, messages, perMessage, capacity, messagesPossibleToday, groups, groupSpecs, followUp, sendOrder, assigned, planned, plannedAccountIds, rounds, estimatedMinutes, batchOf };
 }
 
 /**
@@ -268,7 +300,7 @@ async function planCore(blast: PlanBlastInput) {
 const CORE_TTL_MS = 60_000;
 const coreCache = new Map<string, { at: number; core: Promise<Awaited<ReturnType<typeof planCore>>> }>();
 function coreKey(blast: PlanBlastInput): string {
-  return JSON.stringify([blast.id, blast.parentBlastId, blast.onMailboxDown, blast.mode, blast.sendOrder, blast.groupSize, blast.gapSeconds, blast.accountIds, blast.accountLimits, blast.subject, blast.html, blast.plainText, blast.columns, blast.emailColumn]);
+  return JSON.stringify([blast.id, blast.parentBlastId, blast.onMailboxDown, blast.mode, blast.sendOrder, blast.groupSize, blast.gapSeconds, blast.accountIds, blast.accountLimits, blast.subject, blast.html, blast.plainText, blast.columns, blast.emailColumn, blast.repeatWindowDays]);
 }
 function cachedCore(blast: PlanBlastInput, reuse: boolean) {
   const key = coreKey(blast);
@@ -282,11 +314,16 @@ function cachedCore(blast: PlanBlastInput, reuse: boolean) {
   return core;
 }
 
+/** Forget the plans kept for a send (its recruiters' "send again" choices changed). */
+export function forgetPlan(blastId: string): void {
+  for (const k of coreCache.keys()) if (k.startsWith(`[${JSON.stringify(blastId)},`)) coreCache.delete(k);
+}
+
 export async function planBlast(
   blast: PlanBlastInput,
   options: PlanPageOptions = {},
 ): Promise<BlastPlan> {
-  const { recipients, eligibleIds, skipped, skippedReasons, skippedByReason, content, vars, messages, perMessage, capacity, messagesPossibleToday, groups, groupSpecs, followUp, sendOrder, assigned, planned, plannedAccountIds, rounds, estimatedMinutes, batchOf } = await cachedCore(blast, options.reuse === true);
+  const { skippedKinds, recent, recipients, eligibleIds, skipped, skippedReasons, skippedByReason, content, vars, messages, perMessage, capacity, messagesPossibleToday, groups, groupSpecs, followUp, sendOrder, assigned, planned, plannedAccountIds, rounds, estimatedMinutes, batchOf } = await cachedCore(blast, options.reuse === true);
 
   // The recruiter table: filter the whole list, then return only the requested page.
   const peopleFilter: PeopleFilter = options.peopleFilter ?? 'all';
@@ -342,7 +379,7 @@ export async function planBlast(
     sample: first && vars.used.length ? { email: first.email, values: personalize(content, first).resolved } : null,
   };
 
-  return { personalization, total: recipients.length, eligibleIds, skippedReasons, skipped: skipped.slice(0, 200), skippedByReason, messages, perMessage, capacity, messagesPossibleToday, estimatedMinutes,
+  return { skippedKinds, recent, personalization, total: recipients.length, eligibleIds, skippedReasons, skipped: skipped.slice(0, 200), skippedByReason, messages, perMessage, capacity, messagesPossibleToday, estimatedMinutes,
     batches, batchesTotal: groups.length, batchPage, batchPages, batchFirst, batchesLater, byMailbox,
     people, peopleTotal: matching.length, peoplePage, peoplePages, peoplePageSize, peopleFilter, batch: batchFilter, q,
     sendOrder, rounds, plannedAccountIds, groupSpecs, followUp };

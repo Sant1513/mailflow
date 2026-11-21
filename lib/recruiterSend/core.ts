@@ -3,6 +3,7 @@ import { appBaseUrl } from '@/lib/app-url';
 import { buildUnsubscribeUrl } from '@/lib/email/tracking';
 import { parseCsvFile, parseXlsxFile, parsePastedText, guessEmailColumn, type ParsedTable } from '@/lib/imports/parse';
 import { isValidEmail, mostlyEmailColumn, textToHtml } from '@/lib/quickSend/prepare';
+import { emailKey } from '@/lib/recruiterSend/emailKey';
 import { inlineEmailCss, looksLikeHtml } from '@/lib/quickSend/html';
 
 /**
@@ -56,10 +57,10 @@ export function recipientsFromTable(table: ParsedTable, emailColumn?: string | n
       if (line) unreadable.push(line.slice(0, 120));
       continue;
     }
-    if (found.has(email)) continue;
+    if (found.has(emailKey(email))) continue; // Gmail dots and +tags are the same inbox
     const data: Record<string, string> = {};
     for (const h of headers) data[h] = String(row[h] ?? '').trim().slice(0, 2000);
-    found.set(email, { email, name: nameHeader ? data[nameHeader] || null : null, data });
+    found.set(emailKey(email), { email, name: nameHeader ? data[nameHeader] || null : null, data });
   }
   return { recipients: [...found.values()], columns: headers, emailColumn: emailHeader, unreadable };
 }
@@ -102,7 +103,7 @@ export function parseRecipientText(text: string): { recipients: Recipient[]; unr
         : null;
     for (const e of emails) {
       const email = e.toLowerCase();
-      if (!found.has(email)) found.set(email, { email, name: name && name.length <= 120 ? name : null });
+      if (!found.has(emailKey(email))) found.set(emailKey(email), { email, name: name && name.length <= 120 ? name : null });
     }
   }
   return { recipients: [...found.values()], unreadable };

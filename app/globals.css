@@ -357,3 +357,12 @@
 .composer-rich ul { list-style: disc; padding-left: 1.4em; margin: 0 0 0.5em; }
 .composer-rich ol { list-style: decimal; padding-left: 1.4em; margin: 0 0 0.5em; }
 .composer-rich a { color: hsl(var(--primary)); text-decoration: underline; }
+
+/* Loading screen (components/loading/LoadingScreen.tsx): the line fades in softly; the ring eases between steps. */
+.loading-msg { animation: loading-msg-in 0.45s var(--ease) both; }
+.loading-ring { transition: stroke-dashoffset 120ms linear; }
+@keyframes loading-msg-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .loading-msg { animation: none; }
+  .loading-ring { transition: none; }
+}

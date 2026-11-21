@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface SigningBatch {
   id: string;
@@ -36,6 +37,7 @@ export default function BulkSendingPage() {
     new Date(d).toLocaleDateString('en-IN', { dateStyle: 'medium' });
 
   return (
+    <LoadGate loading={loading}>
     <div className="p-6">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
@@ -126,5 +128,6 @@ export default function BulkSendingPage() {
         </div>
       )}
     </div>
+    </LoadGate>
   );
 }

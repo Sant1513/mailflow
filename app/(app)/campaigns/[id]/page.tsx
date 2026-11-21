@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LoadError, loadErrorMessage } from '@/components/ui/LoadError';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
@@ -386,7 +387,7 @@ export default function CampaignDetailPage() {
     }
   }
 
-  if (!data) return loadError ? <LoadError message={loadError} onRetry={load} backHref="/campaigns" backLabel="Back to campaigns" /> : <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!data) return loadError ? <LoadError message={loadError} onRetry={load} backHref="/campaigns" backLabel="Back to campaigns" /> : <LoadingScreen context={['Opening this campaign…']} />;
 
   const canApprove = (data.viewerRole === 'ADMIN' || data.viewerRole === 'SUPER_ADMIN');
   const isAdmin = canApprove;

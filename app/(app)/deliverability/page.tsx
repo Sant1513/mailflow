@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 type Status = 'ok' | 'warn' | 'bad';
 interface Check { status: Status; label: string; detail: string; rate?: number }
@@ -39,6 +40,7 @@ export default function DeliverabilityPage() {
   const [days, setDays] = useState(30);
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
     setReport(null);
@@ -48,11 +50,13 @@ export default function DeliverabilityPage() {
         if (!r.ok) throw new Error(j.error ?? 'Could not load the report.');
         setReport(j);
         setError(null);
+        setSettled(true);
       })
       .catch((e) => setError(String(e.message ?? e)));
   }, [days]);
 
   return (
+    <LoadGate loading={!settled && !error} context={[`Looking at the last ${days} days…`]}>
     <div className="p-4 sm:p-6">
       <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-heading text-2xl font-bold tracking-tight">Deliverability</h1>
@@ -197,5 +201,6 @@ export default function DeliverabilityPage() {
         </div>
       )}
     </div>
+    </LoadGate>
   );
 }

@@ -5,6 +5,7 @@ import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface CampaignRow {
   id: string;
@@ -40,6 +41,7 @@ export default function CampaignsPage() {
   const [datasets, setDatasets] = useState<{ id: string; name: string }[]>([]);
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [creating, setCreating] = useState(false);
   const [documents, setDocuments] = useState<{ id: string; name: string; fieldCount: number }[]>([]);
   const [form, setForm] = useState<{ name: string; datasetId: string; templateId: string; documentTemplateIds: string[] }>({
@@ -70,6 +72,7 @@ export default function CampaignsPage() {
     setTemplates(t.templates ?? []);
     setDocuments(docs.documents ?? []);
     setLoading(false);
+    setLoadedOnce(true);
   }
 
   useEffect(() => {
@@ -137,6 +140,7 @@ export default function CampaignsPage() {
   }
 
   return (
+    <LoadGate loading={!loadedOnce}>
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
@@ -395,5 +399,6 @@ export default function CampaignsPage() {
         </div>
       )}
     </div>
+    </LoadGate>
   );
 }

@@ -26,7 +26,7 @@ vi.mock('@/lib/recruiterSend/access', () => ({
   allowedMailboxIds: vi.fn(async () => new Set(['a1'])),
 }));
 vi.mock('@/lib/recruiterSend/plan', () => ({
-  planBlast: vi.fn(async () => ({ eligibleIds: ['r1'], skippedReasons: new Map(), plannedAccountIds: ['a1'], sendOrder: 'PARALLEL', rounds: 1 })),
+  planBlast: vi.fn(async () => ({ recent: { windowDays: 10, flagged: 0, included: 0 }, eligibleIds: ['r1'], skippedReasons: new Map(), plannedAccountIds: ['a1'], sendOrder: 'PARALLEL', rounds: 1 })),
 }));
 const kick = vi.fn();
 vi.mock('@/lib/recruiterSend/worker', () => ({ kickRecruiterWorker: kick }));

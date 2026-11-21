@@ -23,6 +23,11 @@ export const INTENT_TAGS = {
 export type TriageIntent = keyof typeof INTENT_TAGS;
 export const TRIAGE_INTENTS = Object.keys(INTENT_TAGS) as TriageIntent[];
 
+/** Recruiter Bulk Send repeat window (mirrors lib/recruiterSend/recent.ts, which is server-only). */
+export const RECRUITER_REPEAT_DEFAULT_DAYS = 10;
+export const RECRUITER_REPEAT_MAX_DAYS = 90;
+export const RECRUITER_REPEAT_SHORT_DAYS = 7;
+
 export const orgSettingsSchema = z.object({
   /** Mailbox that sends digests and reports; null = the organisation's oldest connected Gmail. */
   senderAccountId: z.string().nullable().default(null),
@@ -81,6 +86,12 @@ export const orgSettingsSchema = z.object({
       /** Minimum AI confidence (0–1) before a conversation is closed automatically. */
       autoResolveMinConfidence: z.number().min(0.5).max(1).default(0.85),
       draftReplies: z.boolean().default(true),
+    })
+    .default({}),
+  recruiter: z
+    .object({
+      /** New recruiter sends skip anyone emailed from MailFlow in the last N days (0 = off). */
+      repeatWindowDays: z.number().int().min(0).max(RECRUITER_REPEAT_MAX_DAYS).default(RECRUITER_REPEAT_DEFAULT_DAYS),
     })
     .default({}),
 });

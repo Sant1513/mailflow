@@ -1,4 +1,6 @@
 import { prisma } from '@/lib/db/client';
+import { suppressedKeys } from '@/lib/email/suppressedKeys';
+import { emailKey } from '@/lib/recruiterSend/emailKey';
 import { MAX_GROUP_SIZE, type BlastMode } from '@/lib/recruiterSend/core';
 import { stripRe } from '@/lib/recruiterSend/ui';
 
@@ -100,12 +102,8 @@ export async function chainCandidates(rootId: string, workspaceId?: string | nul
   }
   const list = [...by.values()].filter((c) => c.sent).map(({ sent: _sent, ...c }) => c);
   if (workspaceId && list.length) {
-    const blocked = new Set<string>();
-    for (let i = 0; i < list.length; i += 1000) {
-      const rows = await prisma.emailSuppression.findMany({ where: { workspaceId, email: { in: list.slice(i, i + 1000).map((c) => c.email), mode: 'insensitive' } }, select: { email: true } });
-      for (const r of rows) blocked.add(r.email.toLowerCase());
-    }
-    for (const c of list) c.suppressed = blocked.has(c.email);
+    const blocked = await suppressedKeys(workspaceId, list.map((c) => c.email));
+    for (const c of list) c.suppressed = blocked.has(emailKey(c.email));
   }
   return list;
 }
@@ -188,10 +186,8 @@ export async function addToAudience(blastId: string, rootId: string, emails: str
   // A typed address that is on the suppression list (and not part of the chain) is refused too.
   if (workspaceId) {
     const typed = wanted.filter((e) => !known.has(e));
-    for (let i = 0; i < typed.length; i += 1000) {
-      const rows = await prisma.emailSuppression.findMany({ where: { workspaceId, email: { in: typed.slice(i, i + 1000), mode: 'insensitive' } }, select: { email: true } });
-      for (const r of rows) bounced.add(r.email.toLowerCase());
-    }
+    const hit = await suppressedKeys(workspaceId, typed);
+    for (const e of typed) if (hit.has(emailKey(e))) bounced.add(e);
   }
   const rows = wanted.filter((e) => !have.has(e) && !bounced.has(e)).map((e) => rowFor(blastId, known.get(e) ?? { email: e, name: null, data: null, sourceGroupId: null, replied: false, opened: null, bounced: false, suppressed: false, lastSentAt: null }));
   if (rows.length) await prisma.recruiterBlastRecipient.createMany({ data: rows, skipDuplicates: true });

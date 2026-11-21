@@ -2,6 +2,7 @@
 # this calls the same secured endpoints on the cadence the product wants, while keeping
 # Vercel's free CPU allowance: one cheap call every 15 minutes, the heavier jobs less often.
 #   every 15 min  dispatch       starts the campaign / recruiter senders only if there is work
+#   every 15 min  bounce-scan    every connected mailbox is searched for bounce / block notices and the dead addresses are suppressed
 #   every 30 min  gmail-sync     every connected mailbox (replies show within 30 minutes)
 #   hourly        follow-ups, sheets-sync
 # Each step is independent (continue-on-error): one failing or slow endpoint must never stop
@@ -20,6 +21,11 @@ jobs:
         run: |
           curl -fsS -m 30 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "https://mailflowbymasai.vercel.app/api/cron/dispatch?reason=github"
+      - name: Scan every connected mailbox for bounce notices (every 15 minutes)
+        continue-on-error: true
+        run: |
+          curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://mailflowbymasai.vercel.app/api/cron/bounce-scan"
       - name: Sync every connected Gmail mailbox (every 30 minutes)
         continue-on-error: true
         run: |

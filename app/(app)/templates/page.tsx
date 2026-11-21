@@ -5,6 +5,7 @@ import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface TemplateRow {
   id: string;
@@ -21,6 +22,7 @@ export default function TemplatesPage() {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const paged = useClientPaging(templates, 25);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [creating, setCreating] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -30,6 +32,7 @@ export default function TemplatesPage() {
     const json = await res.json();
     setTemplates(json.templates ?? []);
     setLoading(false);
+    setLoadedOnce(true);
   }
 
   useEffect(() => {
@@ -84,6 +87,7 @@ export default function TemplatesPage() {
   }
 
   return (
+    <LoadGate loading={!loadedOnce}>
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
@@ -161,6 +165,7 @@ export default function TemplatesPage() {
         </div>
       )}
     </div>
+    </LoadGate>
   );
 }
 

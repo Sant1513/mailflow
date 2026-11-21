@@ -12,8 +12,10 @@ import { applyAction, planDeliveryReport, type NdrAction } from '@/lib/email/ndr
  */
 
 /** Gmail search for bounce / delivery notices in the last `days` days. */
-export function ndrSearchQuery(days = 30): string {
-  return `newer_than:${days}d (from:(mailer-daemon OR postmaster) OR subject:(undeliverable OR "not delivered" OR "couldn't be delivered" OR "message blocked" OR "delivery status notification" OR "returned mail" OR "failure notice"))`;
+export function ndrSearchQuery(days = 30, sinceSeconds?: number): string {
+  // `after:` takes a Unix time in seconds: the bounce scan asks only for what arrived since it last looked.
+  const when = sinceSeconds !== undefined ? `after:${Math.floor(sinceSeconds)}` : `newer_than:${days}d`;
+  return `${when} (from:(mailer-daemon OR postmaster) OR subject:(undeliverable OR "not delivered" OR "couldn't be delivered" OR "message blocked" OR "delivery status notification" OR "returned mail" OR "failure notice"))`;
 }
 
 export interface NoticeResult {

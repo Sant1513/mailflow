@@ -11,7 +11,9 @@ import { LivePreview, Pager, SendSummary, WhoReceives, type MailboxShare, type P
 import { VariablePicker, variableProblems } from '@/components/recruiter-send/Variables';
 import { RecipientPanel } from '@/components/recruiter-send/RecipientPanel';
 import { RecruiterListPreview } from '@/components/recruiter-send/RecruiterListPreview';
+import { RecentNotice, RecentReview, RecentWindow, type RecentSummary } from '@/components/recruiter-send/RecentReview';
 import { ExportMenu } from '@/components/ui/ExportMenu';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 import { estimateRemaining, formatCountdown, formatDuration, formatIst, formatIstSeconds, type EtaBasis } from '@/lib/recruiterSend/eta';
 
 type Mode = 'BCC' | 'INDIVIDUAL';
@@ -20,7 +22,7 @@ interface VideoLink { mode: 'link'; url: string; title: string }
 interface Blast {
   id: string; name: string; mode: Mode; toAddress: string | null; subject: string; body: string; format: 'text' | 'html';
   includeSignature: boolean; fromName: string | null; replyTo: string | null; ccAddresses: string[]; accountIds: string[]; accountLimits: Record<string, number>;
-  video: Video | VideoLink | null; attachmentDocumentIds: string[]; groupSize: number; gapSeconds: number; status: string;
+  video: Video | VideoLink | null; attachmentDocumentIds: string[]; groupSize: number; gapSeconds: number; repeatWindowDays?: number; status: string;
   scheduledAt: string | null; note: string | null; startedAt: string | null; completedAt: string | null; html: string;
   columns: string[]; emailColumn: string | null; sendOrder: 'PARALLEL' | 'SEQUENTIAL';
   /** Where the messages go out from; runOnChangedAt is set when the cloud took over from a silent laptop. */
@@ -37,6 +39,8 @@ interface Check {
   total: number; eligible: number; skipped: { email: string; reason: string }[]; skippedByReason: Record<string, number>; messages: number; perMessage: number;
   capacity: { accountId: string; emailAddress: string; messagesLeft: number; peopleLeft: number }[]; messagesPossibleToday: number; estimatedMinutes: number; preview: string; previewSubject?: string; previewRecipient?: string | null;
   rounds?: number; sendOrder?: 'PARALLEL' | 'SEQUENTIAL';
+  /** Repeat guard: recruiters skipped because they were emailed recently, and ones chosen to get it again. */
+  recent?: RecentSummary;
   /** One page of each table (more pages come from …/check/people); counts and per-mailbox totals cover everyone. */
   batches: PlannedBatch[]; people: PlannedPerson[]; peopleTotal: number; peoplePage: number; peoplePages: number; peoplePageSize?: number;
   batchesTotal: number; batchPage: number; batchPages: number; batchFirst?: Record<string, string>;
@@ -51,7 +55,7 @@ const MAX_LIMIT = 100_000; // matches the PATCH schema (accountLimits 0..100000)
 const LABEL = 'mb-1 block text-xs font-medium';
 const SKIP_LABEL: Record<string, string> = {
   SUPPRESSED: 'unsubscribed or bounced before', NO_MAIL_SERVER: 'domain has no mail server', LIKELY_TYPO: 'looks like a typo',
-  NO_REPLY_ADDRESS: 'no-reply address', DISPOSABLE: 'throwaway inbox', INVALID: 'not a valid address', MISSING_VALUE: 'empty value for a {{variable}}',
+  NO_REPLY_ADDRESS: 'no-reply address', DISPOSABLE: 'throwaway inbox', INVALID: 'not a valid address', MISSING_VALUE: 'empty value for a {{variable}}', RECENTLY_EMAILED: 'emailed recently', COOL_OFF: 'on a cool-off (do not contact until)',
 };
 
 /** Which steps are open. Every step folds to a one-line summary so the page stays short. */
@@ -99,6 +103,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [recipientTab, setRecipientTab] = useState<'paste' | 'file' | 'data'>('paste');
+  const [recentOpen, setRecentOpen] = useState(false);
   const [pasted, setPasted] = useState('');
   const [datasets, setDatasets] = useState<{ id: string; name: string; _count?: { records: number } }[]>([]);
   const [library, setLibrary] = useState<{ id: string; name: string; file?: { size: number } }[]>([]);
@@ -227,7 +232,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     const next = { ...form, ...patch };
     setForm(next);
     // Batches depend on these; the plan refreshes by itself once the change is saved.
-    const affectsPlan = (['accountIds', 'accountLimits', 'groupSize', 'mode', 'sendOrder', 'onMailboxDown'] as const).some((k) => k in patch);
+    const affectsPlan = (['accountIds', 'accountLimits', 'groupSize', 'mode', 'sendOrder', 'onMailboxDown', 'repeatWindowDays'] as const).some((k) => k in patch);
     // Variables decide who has every value they need, so the plan follows the text too.
     const affectsVariables = ('subject' in patch || 'body' in patch) && /\{\{/.test(`${patch.subject ?? ''}${patch.body ?? ''}${form.subject}${form.body}`);
     setSaving('saving');
@@ -257,7 +262,13 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     const res = await fetch(`/api/recruiter-blasts/${params.id}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }).catch(() => null);
     const j = await res?.json().catch(() => ({}));
     setBusy(null);
-    if (!res?.ok) toast.error(j?.error ?? 'Something went wrong.');
+    if (!res?.ok) {
+      toast.error(j?.error ?? (res
+        ? `The server could not finish this (it answered ${res.status} instead of a normal reply, often a time-out on a big send). Reloading the page to check whether it went through; do not press the button again until you have looked.`
+        : 'Could not reach the server (the connection dropped). Reloading the page to check whether it went through; do not press the button again until you have looked.'), { duration: 12_000 });
+      // The change may have been made before the answer was lost: show what the server really has.
+      if (!j?.error) load();
+    }
     return res?.ok ? j : null;
   }
 
@@ -376,7 +387,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   }
 
   if (error) return <div className="p-6 text-sm text-red-600">{error}</div>;
-  if (!detail || !form) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!detail || !form) return <LoadingScreen context={['Opening this send…']} />;
   const b = detail.blast;
   const draft = b.status === 'DRAFT';
   const isFollowUp = !!b.parentBlastId;
@@ -424,7 +435,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     ...(b.video ? [b.video.mode === 'attach' ? `${b.video.fileName} (video)` : `${b.video.title} (video link)`] : []),
   ];
   const stepSummary: Record<number, string> = {
-    1: total ? `${total.toLocaleString()} recruiter${total === 1 ? '' : 's'}` : 'No recruiters yet',
+    1: total ? `${total.toLocaleString()} recruiter${total === 1 ? '' : 's'}${check?.recent?.flagged ? ` · ${check.recent.flagged.toLocaleString()} emailed recently, skipped` : ''}` : 'No recruiters yet',
     2: `${form.mode === 'BCC' ? `BCC groups of ${form.groupSize} · To ${form.toAddress || '— not set'}` : 'Individual copies'} · ${form.gapSeconds}s pause · ${form.sendOrder === 'SEQUENTIAL' ? 'one mailbox after another' : 'all mailboxes together'}`,
     3: form.subject.trim() ? `“${form.subject}”${ccList.length ? ` · CC ${ccList.length}` : ''}${form.replyTo ? ` · Reply-To ${form.replyTo}` : ''}` : 'No subject yet',
     4: attachedNames.length ? attachedNames.join(', ') : 'None (optional)',
@@ -498,12 +509,14 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,600px)]">
         <div className="min-w-0 space-y-3">
           {isFollowUp && detail.followUp && <OriginalEmail context={detail.followUp} />}
+          {!isFollowUp && <RecentNotice summary={check?.recent ?? null} readOnly={false} onReview={() => setRecentOpen(true)} />}
+          {recentOpen && <RecentReview blastId={b.id} open onClose={() => setRecentOpen(false)} onChanged={() => { runCheck(); load(); }} />}
           {isFollowUp ? (
           <Section n={1} title="Who gets it" summary={stepSummary[1]} done={stepDone[1]} hint="Everyone who was sent an earlier email in this chain. Pick an audience, then tick or untick recruiters, or add addresses. Each recruiter's email goes into their own earlier thread.">
             <FollowUpAudience blastId={b.id} editable={draft} onChanged={() => { load(); runCheck(); }} />
           </Section>
           ) : (
-          <Section n={1} title="Recruiters" summary={stepSummary[1]} done={stepDone[1]} hint="Paste from Google Sheets/Excel with the header row (every column is kept for {{Column}} in the email, e.g. a UTM link per recruiter), paste plain addresses, upload a CSV/Excel file, or use saved data. Duplicates are removed; unsubscribed, bounced and bad addresses are skipped at the check.">
+          <Section n={1} title="Recruiters" summary={stepSummary[1]} done={stepDone[1]} hint="Paste from Google Sheets/Excel with the header row (every column is kept for {{Column}} in the email, e.g. a UTM link per recruiter), paste plain addresses, upload a CSV/Excel file, or use saved data. Duplicates are removed (the same Gmail inbox written with dots or a +tag counts once); unsubscribed, bounced and bad addresses, recruiters emailed recently and people on a cool-off are skipped at the check.">
             {listCollapsed ? (
               <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-2 text-sm">
                 <span className="min-w-0 flex-1 truncate" title={b.columns.length ? b.columns.join(', ') : undefined}>
@@ -570,6 +583,9 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
               {total > 0 && <button type="button" onClick={() => setListPreviewOpen(true)} className="rounded border px-2.5 py-1 text-xs hover:bg-elevated">Preview list</button>}
             </div>
             </>
+            )}
+            {total > 0 && !isFollowUp && (
+              <RecentWindow windowDays={form.repeatWindowDays ?? 10} readOnly={false} onWindow={(n) => edit({ repeatWindowDays: n })} />
             )}
             {listPreviewOpen && <RecruiterListPreview blastId={b.id} open onClose={() => setListPreviewOpen(false)} />}
           </Section>
@@ -944,6 +960,7 @@ function summaryWarnings(form: Blast, check: Check): string[] {
   const w: string[] = [];
   if (!form.subject.trim()) w.push('Add a subject.');
   w.push(...variableProblems({ columns: form.columns ?? [], mode: form.mode, subject: form.subject, body: form.body }));
+  if (check.skippedByReason.RECENTLY_EMAILED) w.push(`${check.skippedByReason.RECENTLY_EMAILED.toLocaleString()} recruiter(s) were emailed in the last ${check.recent?.windowDays ?? 10} days and will be skipped. Open “Recruiters” and press “Review and choose” to send to any of them again.`);
   if (check.skippedByReason.MISSING_VALUE) w.push(`${check.skippedByReason.MISSING_VALUE} recruiter(s) have an empty value for a {{variable}} and will be skipped; fill the list in, or give it a fallback like {{Name | there}}.`);
   if (form.mode === 'BCC' && !form.toAddress) w.push('BCC sends need a visible “To” address.');
   if (check.messagesPossibleToday < check.messages) w.push(`The chosen accounts can send about ${check.messagesPossibleToday} of these ${check.messages} emails today; the rest go out as their daily limits free up.`);
@@ -962,7 +979,7 @@ function pickEditable(b: Blast) {
   return {
     name: b.name, mode: b.mode, toAddress: b.toAddress, subject: b.subject, body: b.body, format: b.format, includeSignature: b.includeSignature,
     fromName: b.fromName, replyTo: b.replyTo, ccAddresses: b.ccAddresses ?? [], accountIds: b.accountIds, accountLimits: b.accountLimits ?? {}, attachmentDocumentIds: b.attachmentDocumentIds,
-    groupSize: b.groupSize, gapSeconds: b.gapSeconds, sendOrder: b.sendOrder ?? 'PARALLEL',
+    groupSize: b.groupSize, gapSeconds: b.gapSeconds, sendOrder: b.sendOrder ?? 'PARALLEL', repeatWindowDays: b.repeatWindowDays ?? 10,
     ...(b.parentBlastId ? { onMailboxDown: b.onMailboxDown ?? 'WAIT' } : {}),
   };
 }

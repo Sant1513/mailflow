@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
+import { SigningIn } from '@/components/loading/SigningIn';
 
 function GoogleMark() {
   return (
@@ -33,6 +34,8 @@ export function LoginButton() {
   const [busy, setBusy] = useState(false);
 
   return (
+    <>
+    {busy && <SigningIn />}
     <button
       onClick={() => {
         // Show progress: the server fetches Google's discovery document
@@ -48,5 +51,6 @@ export function LoginButton() {
       <GoogleMark />
       {busy ? 'Connecting to Google…' : 'Continue with Google'}
     </button>
+    </>
   );
 }

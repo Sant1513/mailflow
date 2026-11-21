@@ -196,6 +196,9 @@ model Contact {
   name           String?
   primaryEmail   String
   phone          String?
+  /// Cool-off: bulk sends skip this person until this moment ("do not contact until"), with the reason in coolOffNote.
+  doNotContactUntil DateTime?
+  coolOffNote    String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -433,6 +436,12 @@ model EmailProviderAccount {
   /// When this mailbox's Google "Other contacts" photos were last read (lib/profilePhotos).
   photosSyncedAt  DateTime?
   lastVerifiedAt  DateTime?
+  /// Bounce scan (lib/email/bounceScan.ts): every connected mailbox is searched for delivery-failure notices every 15 minutes,
+  /// whether or not the inbox sync runs for it. Everything up to bounceScanAt has been read; a failure is kept in bounceScanError.
+  bounceScanAt    DateTime?
+  bounceScanError String?
+  /// Notices read from this mailbox so far.
+  bounceScanNotices Int       @default(0)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
@@ -1443,6 +1452,11 @@ model SystemState {
   note              String?
   /// Last run of the 15-minute /api/cron/dispatch; the laptop warns when it is hours old.
   lastDispatchAt    DateTime?
+  /// The loading screen's fresh lines for one day ({ date, pages, general, thoughts }), written by at most one
+  /// AI call a day (lib/loading/daily.ts) and shared by every server. Nothing about people or companies is in it.
+  loadingLines      Json?
+  /// When a server last claimed the right to ask the AI for them (a failed try can be repeated after 30 minutes).
+  loadingLinesTriedAt DateTime?
   updatedAt         DateTime  @updatedAt
 }
 
@@ -1560,6 +1574,10 @@ model RecruiterBlast {
   round           Int       @default(1)
   followUpAudience String?
   onMailboxDown   String    @default("WAIT")
+  /// Repeat guard: a recruiter who was emailed from MailFlow (any recruiter send, campaign or Quick
+  /// Send) in the last N days is skipped unless the admin ticks "send again". 0 = no check.
+  /// Follow-ups are exempt: re-emailing the same recruiters is their point.
+  repeatWindowDays Int      @default(10)
   startedAt       DateTime?
   completedAt     DateTime?
   createdAt       DateTime  @default(now())
@@ -1588,6 +1606,10 @@ model RecruiterBlastRecipient {
   /// Follow-ups: the earlier Gmail message (group) this recruiter last received, so the follow-up
   /// goes into its thread. Null = new to the chain (starts a thread).
   sourceGroupId String?
+  /// The admin chose to send again although this recruiter was emailed within the repeat window.
+  repeatOk  Boolean   @default(false)
+  /// Why this recruiter was skipped, as a code (RECENTLY_EMAILED | COOL_OFF | SUPPRESSED | …), for counting who keeps being skipped.
+  skipKind  String?
   sentAt    DateTime?
   /// When this recruiter first replied (the conversation is in the admin sender's inbox).
   repliedAt DateTime?
@@ -1601,6 +1623,8 @@ model RecruiterBlastRecipient {
   @@unique([blastId, email])
   @@index([blastId, status])
   @@index([groupId])
+  /// "When was this address last emailed?" (lib/recruiterSend/recent.ts)
+  @@index([email, sentAt])
 }
 
 /// One Gmail message: a BCC group of up to 250, or one individual copy.

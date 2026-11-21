@@ -118,6 +118,8 @@ const patchSchema = z.object({
   attachmentDocumentIds: z.array(z.string()).max(5).optional(),
   groupSize: z.number().int().min(1).max(MAX_GROUP_SIZE).optional(),
   gapSeconds: z.number().int().min(3).max(3600).optional(),
+  /** Repeat guard: skip recruiters emailed in the last N days (0 = off). */
+  repeatWindowDays: z.number().int().min(0).max(90).optional(),
   /** Most recruiters per mailbox for this send ({ accountId: number }); 0 / missing = no extra limit. */
   accountLimits: z.record(z.string(), z.number().int().min(0).max(100_000)).optional(),
   /** Only a link video is set here; an attached one comes from …/video after its upload. */
@@ -181,6 +183,7 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       ...(body.attachmentDocumentIds !== undefined ? { attachmentDocumentIds: [...new Set(body.attachmentDocumentIds)] } : {}),
       ...(body.groupSize !== undefined ? { groupSize: body.groupSize } : {}),
       ...(gapSeconds !== undefined ? { gapSeconds } : {}),
+      ...(body.repeatWindowDays !== undefined ? { repeatWindowDays: body.repeatWindowDays } : {}),
       ...(body.accountLimits !== undefined ? { accountLimits: Object.fromEntries(Object.entries(body.accountLimits).filter(([, v]) => v > 0)) } : {}),
       ...(body.videoLink !== undefined ? { video: video ? (video as unknown as Prisma.InputJsonValue) : Prisma.JsonNull } : {}),
       body: next.body,

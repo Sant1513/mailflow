@@ -5,6 +5,7 @@ import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface AutomationRow {
   id: string;
@@ -21,6 +22,7 @@ export default function AutomationsPage() {
   const paged = useClientPaging(automations, 25);
   const [datasets, setDatasets] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -31,6 +33,7 @@ export default function AutomationsPage() {
     setAutomations(a.automations ?? []);
     setDatasets(d.datasets ?? []);
     setLoading(false);
+    setLoadedOnce(true);
   }
 
   useEffect(() => {
@@ -55,6 +58,7 @@ export default function AutomationsPage() {
   }
 
   return (
+    <LoadGate loading={!loadedOnce}>
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
@@ -119,5 +123,6 @@ export default function AutomationsPage() {
         </div>
       )}
     </div>
+    </LoadGate>
   );
 }

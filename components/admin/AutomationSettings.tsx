@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { INTENT_TAGS, type OrgSettings } from '@/lib/settings/org-schema';
+import { INTENT_TAGS, RECRUITER_REPEAT_MAX_DAYS, RECRUITER_REPEAT_SHORT_DAYS, type OrgSettings } from '@/lib/settings/org-schema';
 import { SlackPreview } from '@/components/admin/SlackPreview';
 
 type SlackPayload = { text: string; blocks: { type: string }[]; channel: string | null; as: { username: string; iconEmoji: string } };
@@ -59,6 +59,32 @@ function ChannelField({ value, disabled, onSave, label }: { value: string; disab
       </label>
       <button onClick={() => onSave(clean)} disabled={disabled || !valid || clean === value} className="btn-secondary !py-1.5 text-xs">Save channel</button>
       {!valid && <span className="text-xs text-warning">A channel ID starts with C, G or D (Slack → channel → About → Channel ID).</span>}
+    </div>
+  );
+}
+
+/** Default repeat window for Recruiter Bulk Send; the warning follows the typed value. */
+function RepeatWindow({ value, disabled, onSave }: { value: number; disabled: boolean; onSave: (v: number) => void }) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText(String(value)), [value]);
+  const n = text.trim() === '' ? NaN : Number(text);
+  const valid = Number.isInteger(n) && n >= 0 && n <= RECRUITER_REPEAT_MAX_DAYS;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs">
+          <span className="mb-1 block font-medium">Skip recruiters emailed in the last</span>
+          <span className="flex items-center gap-2">
+            <input type="number" min={0} max={RECRUITER_REPEAT_MAX_DAYS} step={1} value={text} disabled={disabled} onChange={(e) => setText(e.target.value)} className="w-24 text-sm" />
+            <span>days</span>
+          </span>
+        </label>
+        <button onClick={() => onSave(n)} disabled={disabled || !valid || n === value} className="btn-secondary !py-1.5 text-xs">Save</button>
+        {!valid && <span className="text-xs text-warning">Enter a whole number from 0 to {RECRUITER_REPEAT_MAX_DAYS}.</span>}
+      </div>
+      <p className="text-xs text-muted-foreground">0 = never skip; max {RECRUITER_REPEAT_MAX_DAYS}. Applies to new sends. Each send can still change it. Campaigns, Quick Send and Inbox replies count as emailing.</p>
+      {valid && n === 0 && <p className="text-xs text-amber-600">The repeat check is off: nobody is skipped for being emailed recently.</p>}
+      {valid && n >= 1 && n < RECRUITER_REPEAT_SHORT_DAYS && <p className="text-xs text-amber-600">Under {RECRUITER_REPEAT_SHORT_DAYS} days: recruiters may feel over-mailed, and a few days is often not enough for a reply.</p>}
     </div>
   );
 }
@@ -216,6 +242,15 @@ export function AutomationSettings({ readOnly }: { readOnly: boolean }) {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Recruiter bulk send */}
+      <div className="space-y-3 border-t border-border-subtle pt-5">
+        <div>
+          <h3 className="text-sm font-semibold">Recruiter bulk send</h3>
+          <p className="text-xs text-muted-foreground">Default for the repeat check on new Recruiter Bulk Sends.</p>
+        </div>
+        <RepeatWindow value={s.recruiter.repeatWindowDays} disabled={off} onSave={(v) => save({ recruiter: { repeatWindowDays: v } })} />
       </div>
 
       {preview && (

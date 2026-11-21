@@ -6,6 +6,7 @@ import { audit } from '@/lib/audit/log';
 import { requireBlastAdmin, sendableMailboxes, requireBlastReader } from '@/lib/recruiterSend/access';
 import { waitUntil } from '@vercel/functions';
 import { nudgeStuckSends } from '@/lib/recruiterSend/worker';
+import { getRecruiterRepeatDays } from '@/lib/settings/org';
 import { DEFAULT_GAP } from '@/lib/recruiterSend/core';
 
 /** Mail → Recruiter Bulk Send: the list of sends (GET) and a new draft (POST). Admins only. */
@@ -58,6 +59,7 @@ export const POST = withErrorHandling(async () => {
   const session = await requireBlastAdmin();
   const mailboxes = await sendableMailboxes(session);
   const own = mailboxes.find((m) => m.own);
+  const repeatWindowDays = await getRecruiterRepeatDays(session.organizationId);
   const blast = await prisma.recruiterBlast.create({
     data: {
       organizationId: session.organizationId,
@@ -71,6 +73,7 @@ export const POST = withErrorHandling(async () => {
       body: '',
       accountIds: own ? [own.id] : [],
       gapSeconds: DEFAULT_GAP.BCC,
+      repeatWindowDays,
     },
   });
   await audit(session, 'RECRUITER_SEND_CREATE', { targetType: 'RecruiterBlast', targetId: blast.id });

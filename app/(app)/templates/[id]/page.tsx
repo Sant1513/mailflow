@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 import { EmailPreview } from '@/components/email-preview/EmailPreview';
 import { HealthCheckPanel, type HealthCheckResult } from '@/components/email-editor/HealthCheckPanel';
 import { VariableMenu } from '@/components/email-editor/VariableMenu';
@@ -228,7 +229,7 @@ export default function TemplateEditorPage() {
     setHtml((prev) => `${prev}{{${name}}}`);
   }
 
-  if (loading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (loading && !template) return <LoadingScreen context={['Opening this template…']} />;
   if (!template) return <div className="p-6 text-sm text-muted-foreground">Template not found.</div>;
 
   return (

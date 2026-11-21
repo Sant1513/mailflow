@@ -6,6 +6,9 @@ import { toast } from 'sonner';
 import { DataGrid, type GridColumn, type GridRecord, type GridSort } from '@/components/data-grid/DataGrid';
 import { ConditionBuilder, type Group } from '@/components/automation-builder/ConditionBuilder';
 import { SheetSyncPanel } from '@/components/data/SheetSyncPanel';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
+import { RecentlyEmailedFilter } from '@/components/contacts/EmailedBits';
+import { DEFAULT_RECENT_DAYS, emailedQuery, type EmailedFilter, type LastEmailedInfo } from '@/lib/contacts/recentEmailed';
 
 interface SavedView {
   id: string;
@@ -29,6 +32,8 @@ interface DatasetDetail {
   groupOf: string[] | null;
   viewId: string | null;
   truncated: boolean;
+  emailColumnKey: string | null;
+  lastEmailed: Record<string, LastEmailedInfo | null> | null;
 }
 
 const SYSTEM_FIELDS: { key: string; label: string }[] = [
@@ -56,6 +61,7 @@ export default function DatasetDetailPage() {
   const [sort, setSort] = useState<GridSort[]>([]);
   const [groupBy, setGroupBy] = useState('');
   const [viewId, setViewId] = useState<string | null>(null);
+  const [emailed, setEmailed] = useState<EmailedFilter>({ mode: 'any', days: DEFAULT_RECENT_DAYS });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [freezeFirst, setFreezeFirst] = useState(true);
@@ -87,7 +93,7 @@ export default function DatasetDetailPage() {
     if (viewId) qs.set('viewId', viewId);
     qs.set('page', String(page));
     qs.set('pageSize', String(pageSize));
-    const res = await fetch(`/api/datasets/${params.id}?${qs.toString()}`);
+    const res = await fetch(`/api/datasets/${params.id}?${qs.toString()}${emailedQuery(emailed)}`);
     if (!res.ok) {
       toast.error('Failed to load dataset');
       setLoading(false);
@@ -95,7 +101,7 @@ export default function DatasetDetailPage() {
     }
     setDetail(await res.json());
     setLoading(false);
-  }, [params.id, search, filter, sort, groupBy, viewId, page, pageSize]);
+  }, [params.id, search, filter, sort, groupBy, viewId, page, pageSize, emailed]);
 
   useEffect(() => {
     const t = setTimeout(load, search ? 250 : 0);
@@ -309,7 +315,7 @@ export default function DatasetDetailPage() {
     load();
   }
 
-  if (loading && !detail) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (loading && !detail) return <LoadingScreen context={['Opening this dataset…']} />;
   if (!detail) return <div className="p-6 text-sm text-muted-foreground">Dataset not found.</div>;
 
   const activeView = detail.savedViews.find((v) => v.id === viewId) ?? null;
@@ -355,6 +361,16 @@ export default function DatasetDetailPage() {
             <option key={v.id} value={v.id}>{v.name}</option>
           ))}
         </select>
+
+        {detail.emailColumnKey && (
+          <RecentlyEmailedFilter
+            value={emailed}
+            onChange={(v) => {
+              setEmailed(v);
+              setPage(1);
+            }}
+          />
+        )}
 
         <button onClick={() => setPanel(panel === 'filter' ? null : 'filter')} className={`btn-secondary !py-1.5 text-[11px] ${filterCount ? '!border-primary !text-primary' : ''}`}>
           Filter{filterCount ? ` (${filterCount})` : ''}
@@ -485,6 +501,7 @@ export default function DatasetDetailPage() {
           selected={selected}
           freezeFirst={freezeFirst}
           rowOffset={(detail.page - 1) * detail.pageSize}
+          lastEmailed={detail.lastEmailed}
           onCellCommit={async (r, k, v) => {
             await handleCellCommit(r, k, v);
           }}

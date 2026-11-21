@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { DateInput } from '@/components/ui/DateInput';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 const PAGE_SIZE = 50;
 
@@ -39,6 +40,7 @@ export default function AuditLogsPage() {
   const [meta, setMeta] = useState<Meta>({ actions: [], users: [], workspaces: [] });
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [settled, setSettled] = useState(false);
   const [page, setPage] = useState(1);
 
   // Filters
@@ -61,6 +63,7 @@ export default function AuditLogsPage() {
 
     const res = await fetch(`/api/admin/audit-logs?${p}`);
     setLoading(false);
+    setSettled(true);
     if (!res.ok) return;
     const json = await res.json();
     setLogs(json.logs ?? []);
@@ -91,6 +94,7 @@ export default function AuditLogsPage() {
   const fmt = (d: string) => new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 
   return (
+    <LoadGate loading={!settled} context={[`Looking at ${from} to ${to}…`]}>
     <div className="p-6">
       <div className="mb-4 flex items-start justify-between">
         <div>
@@ -244,5 +248,6 @@ export default function AuditLogsPage() {
         </>
       )}
     </div>
+    </LoadGate>
   );
 }

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 
 interface Segment {
   id: string;
@@ -39,6 +40,7 @@ export default function SegmentsPage() {
   const router = useRouter();
   const [segments, setSegments] = useState<Segment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
 
   // Create / edit form state
   const [showForm, setShowForm] = useState(false);
@@ -69,6 +71,7 @@ export default function SegmentsPage() {
     const json = await res.json();
     setSegments(json.segments ?? []);
     setLoading(false);
+    setLoadedOnce(true);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -351,7 +354,7 @@ export default function SegmentsPage() {
 
       {/* Segment list */}
       {loading ? (
-        <div className="text-sm text-muted-foreground">Loading…</div>
+        loadedOnce ? <div className="text-sm text-muted-foreground">Loading…</div> : <LoadingScreen context={['Opening your segments…']} />
       ) : segments.length === 0 ? (
         <div className="mt-16 text-center text-sm text-muted-foreground">
           No segments yet — create one above to save a filter combo.

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 import { EditSigningRequestModal } from '@/components/documents/EditSigningRequestModal';
 
 type SigningStatus = 'DRAFT' | 'SENT' | 'VIEWED' | 'SIGNED' | 'EXPIRED' | 'VOIDED';
@@ -118,7 +119,7 @@ export default function BulkSendDetailPage() {
       : '—';
 
   if (loading) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <LoadingScreen context={['Opening this bulk send…']} />;
   }
 
   if (!batch) {

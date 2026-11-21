@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 
 interface Source {
   id: string; name: string; subject: string; round: number; status: string; finishedAt: string;
@@ -47,7 +48,7 @@ export default function QuickSendFollowUpList() {
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
-      {!data && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {!data && !error && <LoadingScreen />}
 
       {data && (
         <>

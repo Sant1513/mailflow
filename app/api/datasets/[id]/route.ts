@@ -5,10 +5,13 @@ import { requireSession, ForbiddenError } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { loadDatasetForSession as loadDatasetShared } from '@/lib/records/datasetAccess';
 import { parseViewQuery, type ViewQuery } from '@/lib/records/query';
 import { queryGrid } from '@/lib/records/gridQuery';
+import { lastEmailed, recentlyEmailedKeys } from '@/lib/recruiterSend/recent';
+import { emailKey } from '@/lib/recruiterSend/emailKey';
+import { emailedCondition, parseEmailedFilter, toLastEmailedInfo, type LastEmailedInfo } from '@/lib/contacts/recentEmailed';
 
 async function loadDatasetForSession(session: Awaited<ReturnType<typeof requireSession>>, id: string) {
   const dataset = await prisma.dataset.findUnique({ where: { id } });
@@ -24,6 +27,10 @@ async function loadDatasetForSession(session: Awaited<ReturnType<typeof requireS
  * (lib/records/gridQuery.ts, rules from lib/records/query.ts); the browser only receives one
  * page (§135). `?viewId=` applies a saved view; any explicit filter/sort/groupBy in the
  * query overrides that view's setting for this request.
+ *
+ * A dataset with an EMAIL column also gets "Last emailed" per row of the page (lastEmailed, by emailKey) and the
+ * ?emailed=within|not&emailedDays=N filter, applied in the database on mailflow_email_key(data->>'<email column>')
+ * against the keys of everyone emailed in the last N days (one date-range scan), so 100,000 records stay fast and paging exact.
  */
 
 export const GET = withErrorHandling(async (req, { params }: { params: { id: string } }) => {
@@ -43,11 +50,29 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
     groupBy: requested.groupBy ?? view?.groupBy ?? undefined,
   };
 
-  const [columns, savedViews, result] = await Promise.all([
+  const [columns, savedViews] = await Promise.all([
     prisma.datasetColumn.findMany({ where: { datasetId: dataset.id }, orderBy: { order: 'asc' } }),
     prisma.savedView.findMany({ where: { datasetId: dataset.id }, orderBy: { createdAt: 'asc' } }),
-    queryGrid(dataset.id, query),
   ]);
+
+  const emailColumnKey = columns.find((c) => c.type === 'EMAIL')?.key ?? null;
+  const emailed = parseEmailedFilter(url.searchParams);
+  let extra: Prisma.Sql | null = null;
+  if (emailColumnKey && emailed.mode !== 'any') {
+    const keys = [...(await recentlyEmailedKeys(dataset.organizationId, emailed.days)).keys()];
+    extra = emailedCondition(Prisma.sql`("data"->>${emailColumnKey}::text)`, emailed.mode, keys);
+  }
+  const result = await queryGrid(dataset.id, query, extra);
+
+  let lastEmailedByRecord: Record<string, LastEmailedInfo | null> | null = null;
+  if (emailColumnKey) {
+    const addr = (r: { data: unknown }) => {
+      const v = (r.data as Record<string, unknown> | null)?.[emailColumnKey];
+      return typeof v === 'string' ? v.trim() : '';
+    };
+    const last = await lastEmailed(dataset.organizationId, result.records.map(addr).filter(Boolean));
+    lastEmailedByRecord = Object.fromEntries(result.records.map((r) => [r.id, addr(r) ? toLastEmailedInfo(last.get(emailKey(addr(r)))) : null]));
+  }
 
   return NextResponse.json({
     dataset,
@@ -64,6 +89,8 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
     query,
     viewId: view?.id ?? null,
     truncated: result.truncated,
+    emailColumnKey,
+    lastEmailed: lastEmailedByRecord,
   });
 });
 

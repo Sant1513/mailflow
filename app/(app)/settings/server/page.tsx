@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 
 type ServerName = 'cloud' | 'laptop';
 interface ServerStatus {
@@ -72,7 +73,7 @@ export default function ServerPage() {
   }
 
   if (error) return <div className="p-6 text-sm text-red-600">{error}</div>;
-  if (!status) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!status) return <LoadingScreen />;
 
   const other: ServerName = status.activeServer === 'cloud' ? 'laptop' : 'cloud';
   const canSwitch = !status.switchTo && (other === 'cloud' || status.laptopOnline);

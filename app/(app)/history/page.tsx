@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
 import { ExplainButton } from '@/components/ai/ExplainButton';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
+import { contextLine } from '@/lib/loading/pick';
 
 interface SentItem {
   id: string;
@@ -59,6 +61,7 @@ export default function HistoryPage() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [meta, setMeta] = useState({ total: 0, page: 1, pageCount: 1 });
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
 
   const load = useCallback(async () => {
     const seq = ++requestSeq.current;
@@ -73,6 +76,7 @@ export default function HistoryPage() {
       setItems([]);
       setItemsFor(direction);
       setLoading(false);
+      setLoadedOnce(true);
       return;
     }
     const json = await res.json();
@@ -82,6 +86,7 @@ export default function HistoryPage() {
     setCounts(json.counts ?? {});
     setMeta({ total: json.total, page: json.page, pageCount: json.pageCount });
     setLoading(false);
+    setLoadedOnce(true);
   }, [direction, q, status, page]);
 
   useEffect(() => {
@@ -141,7 +146,7 @@ export default function HistoryPage() {
 
       <div className="panel overflow-hidden">
         {loading || itemsFor !== direction ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p>
+          loadedOnce ? <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p> : <LoadingScreen context={[contextLine('Looking for “{}”…', q), status ? contextLine('Narrowing it down to {}…', status.replace(/_/g, ' ').toLowerCase()) : null]} />
         ) : items.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-muted-foreground">{direction === 'sent' ? 'Nothing has been sent yet.' : 'Nothing has been received yet — replies appear after Gmail sync.'}</p>
         ) : direction === 'sent' ? (

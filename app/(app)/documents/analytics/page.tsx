@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface AnalyticsData {
   totals: {
@@ -130,6 +131,7 @@ export default function SigningAnalyticsPage() {
     data !== null ? Math.round((data.avgTimeToSignHours / 24) * 10) / 10 : null;
 
   return (
+    <LoadGate loading={!data && !error}>
     <div className="space-y-8 p-4 sm:p-6">
       <h1 className="text-2xl font-bold text-foreground">Signing Analytics</h1>
 
@@ -137,10 +139,6 @@ export default function SigningAnalyticsPage() {
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 text-sm">
           Failed to load analytics: {error}
         </div>
-      )}
-
-      {!data && !error && (
-        <p className="text-muted-foreground">Loading...</p>
       )}
 
       {data && (
@@ -210,5 +208,6 @@ export default function SigningAnalyticsPage() {
         </>
       )}
     </div>
+    </LoadGate>
   );
 }

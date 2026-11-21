@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { DateInput } from '@/components/ui/DateInput';
 import { istYmd } from '@/lib/dates/istRange';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -219,6 +220,7 @@ export default function ReportsPage() {
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [settled, setSettled] = useState(false);
 
   const fetchData = useCallback(async (fromDate: string, toDate: string) => {
     setLoading(true);
@@ -234,6 +236,7 @@ export default function ReportsPage() {
       setError(e instanceof Error ? e.message : 'Unknown error');
     } finally {
       setLoading(false);
+      setSettled(true);
     }
   }, []);
 
@@ -250,6 +253,7 @@ export default function ReportsPage() {
   const exportUrl = `/api/reports/export?from=${from}&to=${to}`;
 
   return (
+    <LoadGate loading={!settled} context={[`Looking at ${from} to ${to}…`]}>
     <div className="p-6">
       {/* Header */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
@@ -377,5 +381,6 @@ export default function ReportsPage() {
         </div>
       </div>
     </div>
+    </LoadGate>
   );
 }

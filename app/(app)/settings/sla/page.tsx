@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { toast } from 'sonner';
 import Link from 'next/link';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface SlaRule {
   id: string;
@@ -147,6 +148,7 @@ export default function SlaPage() {
   }
 
   return (
+    <LoadGate loading={loading}>
     <div className="p-4 sm:p-6">
       <Link href="/settings" className="mb-3 inline-flex text-xs font-medium text-muted-foreground hover:text-foreground">← Settings</Link>
       <PageHeader eyebrow="Workspace" title="SLA rules" description="Response-time targets. Conversations that breach a rule get a red SLA badge in the inbox." />
@@ -332,5 +334,6 @@ export default function SlaPage() {
       </section>
       </div>
     </div>
+    </LoadGate>
   );
 }

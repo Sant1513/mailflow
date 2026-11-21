@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { signIn } from 'next-auth/react';
+import { SigningIn } from '@/components/loading/SigningIn';
 
 /**
  * Starts "Continue with Google" by itself. Used when someone arrives from the old address
@@ -11,6 +12,8 @@ import { signIn } from 'next-auth/react';
  * back from Google's page (cancelled, or an error) never loops.
  */
 export function AutoSignIn() {
+  // Only shown when sign-in really starts, so coming back from Google (cancelled, or an error) never leaves a loading screen behind.
+  const [started, setStarted] = useState(false);
   useEffect(() => {
     try {
       if (sessionStorage.getItem('mailflow.autoSignIn')) return;
@@ -18,11 +21,8 @@ export function AutoSignIn() {
     } catch {
       return; // no storage: don't risk a loop
     }
+    setStarted(true);
     void signIn('google', { callbackUrl: '/' });
   }, []);
-  return (
-    <div role="status" aria-live="polite" className="fixed inset-x-0 top-0 z-[60] bg-primary px-4 py-2 text-center text-sm font-medium text-white">
-      MailFlow has a new address, taking you to Google to sign in…
-    </div>
-  );
+  return started ? <SigningIn text="MailFlow has a new address, taking you to Google…" /> : null;
 }

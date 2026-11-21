@@ -10,6 +10,11 @@ export async function getOrgSettings(organizationId: string): Promise<OrgSetting
   return parseOrgSettings(row?.settings);
 }
 
+/** The organisation's default repeat window (days) for new recruiter sends. */
+export async function getRecruiterRepeatDays(organizationId: string): Promise<number> {
+  return (await getOrgSettings(organizationId)).recruiter.repeatWindowDays;
+}
+
 /** Deep-merges a partial update into the stored settings and returns the result. */
 export async function updateOrgSettings(
   organizationId: string,

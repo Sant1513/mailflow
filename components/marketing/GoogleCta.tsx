@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
+import { SigningIn } from '@/components/loading/SigningIn';
 
 function GoogleMark() {
   return (
@@ -22,6 +23,8 @@ function GoogleMark() {
 export function GoogleCta({ label = 'Sign in with Google', small = false, className = '', cta = false }: { label?: string; small?: boolean; className?: string; cta?: boolean }) {
   const [busy, setBusy] = useState(false);
   return (
+    <>
+    {busy && <SigningIn />}
     <button
       type="button"
       data-cta={cta ? '' : undefined}
@@ -35,5 +38,6 @@ export function GoogleCta({ label = 'Sign in with Google', small = false, classN
       <GoogleMark />
       {busy ? 'Connecting to Google…' : label}
     </button>
+    </>
   );
 }

@@ -11,6 +11,7 @@ import { RsvpEditor } from '@/components/rsvp/RsvpEditor';
 import { defaultRsvpConfig, type RsvpConfig } from '@/lib/rsvp/config';
 import { looksLikeHtml, normalizePastedList } from '@/lib/quickSend/paste';
 import { ExportMenu } from '@/components/ui/ExportMenu';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 
 type Source = 'paste' | 'file' | 'dataset' | 'segment';
 
@@ -543,7 +544,7 @@ function QuickSendCompose() {
           </section>
 
           {followUpMode && fuError && <p className="rounded-lg border border-destructive/40 bg-card p-4 text-sm text-destructive">{fuError} <Link href="/quick-send-follow-up" className="underline">Back to Quick Send Follow-up</Link></p>}
-          {followUpMode && !fu && !fuError && <p className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">Loading the send to follow up…</p>}
+          {followUpMode && !fu && !fuError && <LoadingScreen context={['Opening the send to follow up…']} />}
           {followUpMode && fu && <OriginalQuickEmail detail={fu} />}
           {followUpMode && fu?.openFollowUp && (
             <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">

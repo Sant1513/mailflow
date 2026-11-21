@@ -1,4 +1,6 @@
 import { prisma } from '@/lib/db/client';
+import { suppressedKeys } from '@/lib/email/suppressedKeys';
+import { emailKey } from '@/lib/recruiterSend/emailKey';
 import { EmailJobStatus } from '@prisma/client';
 import { fallbackOptIns } from '@/lib/campaigns/fallback';
 import { type FollowUpSegment, type OnMailboxDown } from '@/lib/recruiterSend/followUp';
@@ -101,12 +103,8 @@ export async function chainCandidates(rootCampaignId: string, workspaceId: strin
 
   // Suppression list (unsubscribed, bounced, rejected, complaint…): never included.
   const list = [...by.values()];
-  const blocked = new Set<string>();
-  for (let i = 0; i < list.length; i += 1000) {
-    const rows = await prisma.emailSuppression.findMany({ where: { workspaceId, email: { in: list.slice(i, i + 1000).map((c) => c.email), mode: 'insensitive' } }, select: { email: true } });
-    for (const r of rows) blocked.add(lower(r.email));
-  }
-  for (const c of list) c.suppressed = blocked.has(c.email);
+  const blocked = await suppressedKeys(workspaceId, list.map((c) => c.email));
+  for (const c of list) c.suppressed = blocked.has(emailKey(c.email));
   return list;
 }
 

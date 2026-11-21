@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ListPager } from '@/components/ui/ListPager';
 import { LoadError, loadErrorMessage } from '@/components/ui/LoadError';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -168,7 +169,7 @@ export default function AutomationBuilderPage() {
     load();
   }
 
-  if (!automation) return loadError ? <LoadError message={loadError} onRetry={load} backHref="/automations" backLabel="Back to automations" /> : <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!automation) return loadError ? <LoadError message={loadError} onRetry={load} backHref="/automations" backLabel="Back to automations" /> : <LoadingScreen context={['Opening this automation…']} />;
 
   const version = automation.versions[0];
 

@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { MailboxUsage } from '@/components/admin/MailboxUsage';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
 import { ListPager } from '@/components/ui/ListPager';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 
 interface Row {
   id: string;
@@ -80,7 +81,7 @@ export default function RecruiterSendList() {
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
-      {!rows && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {!rows && !error && <LoadingScreen />}
       {rows && rows.length === 0 && <p className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">No recruiter sends yet.</p>}
       {rows && rows.length > 0 && (
         <>

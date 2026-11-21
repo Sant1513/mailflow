@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { ListPager } from '@/components/ui/ListPager';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface RequestRow {
   id: string;
@@ -202,6 +203,7 @@ function ApprovalsPageInner() {
   }
 
   return (
+    <LoadGate loading={loading} context={[section === 'users' ? 'Opening the sign-up requests…' : null]}>
     <div className="p-4 sm:p-6">
       {/* Section switcher */}
       <div className="mb-5 flex items-center gap-1 rounded-lg border border-border bg-card p-1 w-fit">
@@ -446,5 +448,6 @@ function ApprovalsPageInner() {
       )}
       </>)} {/* end campaigns section */}
     </div>
+    </LoadGate>
   );
 }

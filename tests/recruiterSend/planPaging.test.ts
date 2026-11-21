@@ -17,6 +17,8 @@ vi.mock('@/lib/queue/drain', () => ({
 }));
 const problems = new Map<string, { kind: string; detail: string }>();
 vi.mock('@/lib/email/addressCheck', () => ({ checkAddresses: vi.fn(async () => problems) }));
+// The repeat guard (who was emailed lately) has its own QA (scripts/qa-recruiter-repeat-guard.ts); here nobody was.
+vi.mock('@/lib/recruiterSend/recent', async (orig) => ({ ...(await orig<typeof import('@/lib/recruiterSend/recent')>()), recentContacts: vi.fn(async () => new Map()), coolOffs: vi.fn(async () => new Map()) }));
 
 const session = { userId: 'u1', organizationId: 'o1', workspaceId: 'w1', role: 'ADMIN' };
 const loadBlast = vi.fn();

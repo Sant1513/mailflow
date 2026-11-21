@@ -15,6 +15,8 @@ import { replyToHeader, unsubscribeButtonHtml } from '@/lib/recruiterSend/core';
 import { unsubscribeMailto } from '@/lib/email/unsubscribeByEmail';
 import { repliedSince, threadHeaders } from '@/lib/quickSend/followUp';
 import crypto from 'crypto';
+import { suppressedKeys } from '@/lib/email/suppressedKeys';
+import { emailKey } from '@/lib/recruiterSend/emailKey';
 
 /**
  * Processes exactly one EmailJob. This is THE send path — the BullMQ worker
@@ -78,6 +80,15 @@ export async function processEmailJob(
       email: { equals: job.toEmail.trim(), mode: 'insensitive' },
     },
   });
+  // A follow-up also counts the same Gmail inbox written another way (dots, +tag) as suppressed.
+  const suppressedAlias = !suppressed && job.inReplyToJobId ? (await suppressedKeys(job.batch.campaign.workspaceId, [job.toEmail])).has(emailKey(job.toEmail)) : false;
+  if (suppressedAlias) {
+    await prisma.emailJob.update({
+      where: { id: job.id },
+      data: { status: EmailJobStatus.SKIPPED, skipReason: 'Suppressed: another spelling of this address is on the suppression list' },
+    });
+    return { status: 'SKIPPED', emailJobId, reason: `${job.toEmail} is on the suppression list (another spelling of the same inbox).` };
+  }
   if (suppressed) {
     await prisma.emailJob.update({
       where: { id: job.id },

@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { LastEmailedCell } from '@/components/contacts/EmailedBits';
+import type { LastEmailedInfo } from '@/lib/contacts/recentEmailed';
 
 export interface GridColumn {
   id: string;
@@ -48,6 +50,7 @@ export function DataGrid({
   selected,
   freezeFirst,
   rowOffset = 0,
+  lastEmailed,
   onCellCommit,
   onDeleteRow,
   onDuplicateRow,
@@ -65,6 +68,8 @@ export function DataGrid({
   freezeFirst?: boolean;
   /** Row number of the first record on this page (for numbering across pages). */
   rowOffset?: number;
+  /** Read-only "Last emailed" per record id; present only for a dataset with an EMAIL column. */
+  lastEmailed?: Record<string, LastEmailedInfo | null> | null;
   onCellCommit: (recordId: string, key: string, value: string) => Promise<void>;
   onDeleteRow: (recordId: string) => Promise<void>;
   onDuplicateRow?: (recordId: string) => Promise<void>;
@@ -158,7 +163,7 @@ export function DataGrid({
   const spacer = (rows: number, key: string) =>
     rows > 0 ? (
       <tr key={key} aria-hidden style={{ height: rows * rowHeight }}>
-        <td colSpan={visible.length + 4} />
+        <td colSpan={visible.length + 4 + (lastEmailed ? 1 : 0)} />
       </tr>
     ) : null;
 
@@ -215,6 +220,7 @@ export function DataGrid({
             })}
             <th className="grid-cell w-28 text-left text-xs font-medium">Email Status</th>
             <th className="grid-cell w-20 text-left text-xs font-medium">Reply</th>
+            {lastEmailed && <th className="grid-cell w-36 text-left text-xs font-medium">Last emailed</th>}
             <th className="grid-cell w-16" />
           </tr>
         </thead>
@@ -228,7 +234,7 @@ export function DataGrid({
             return [
               newGroup ? (
                 <tr key={`g-${i}`} className="bg-elevated/60">
-                  <td colSpan={visible.length + 4} className="grid-cell sticky left-0 text-xs font-semibold">
+                  <td colSpan={visible.length + 4 + (lastEmailed ? 1 : 0)} className="grid-cell sticky left-0 text-xs font-semibold">
                     <span className="eyebrow !py-0.5">{groupValue === '' ? '(empty)' : groupValue}</span>
                     <span className="ml-2 text-faint">{groupOf.filter((g) => g === groupValue).length} on this page</span>
                   </td>
@@ -277,6 +283,11 @@ export function DataGrid({
                   <StatusBadge status={record.emailStatus} />
                 </td>
                 <td className="grid-cell">{record.replyReceived ? (record.unreadReply ? '🔵 Unread' : 'Yes') : '—'}</td>
+                {lastEmailed && (
+                  <td className="grid-cell w-36 max-w-[180px]">
+                    <LastEmailedCell info={lastEmailed[record.id]} compact />
+                  </td>
+                )}
                 <td className="grid-cell whitespace-nowrap">
                   {onDuplicateRow && (
                     <button onClick={() => onDuplicateRow(record.id)} className="mr-2 text-xs text-muted-foreground hover:text-foreground" title="Duplicate row">
@@ -302,7 +313,7 @@ export function DataGrid({
           {spacer(records.length - last, 'space-bottom')}
           {records.length === 0 && (
             <tr>
-              <td colSpan={visible.length + 4} className="grid-cell py-8 text-center text-sm text-muted-foreground">
+              <td colSpan={visible.length + 4 + (lastEmailed ? 1 : 0)} className="grid-cell py-8 text-center text-sm text-muted-foreground">
                 No records match.
               </td>
             </tr>

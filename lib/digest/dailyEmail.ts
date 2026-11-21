@@ -3,6 +3,7 @@ import { masaiLogoUrl } from '@/lib/email/brand';
 import { escapeHtml } from '@/lib/templates/variables';
 import type { LedgerSource } from '@/lib/analytics/sendLedger';
 import { digestTotal, type DigestItem, type NeedsAttention } from '@/lib/digest/needsAttention';
+import { OVERMAILED_FOOTER, coolOffLine, overmailedLine, overmailedVisible, type Overmailed } from '@/lib/digest/overmailed';
 import { SOURCE_COLOR, SOURCE_LABEL, type DailyActivity } from '@/lib/digest/dailyActivity';
 
 /**
@@ -226,6 +227,22 @@ function attention(d: NeedsAttention): string {
     .join('');
 }
 
+/** "Over-mailed recruiters": only when someone meets the rule or cool-offs were skipped. Long addresses wrap. */
+function overmailedCard(o: Overmailed | null | undefined): string {
+  if (!overmailedVisible(o)) return '';
+  const rows = o.people
+    .map((p) => `<tr><td style="${TD};word-break:break-all;overflow-wrap:anywhere" title="${e(p.sample)}">${e(overmailedLine(p))}</td></tr>`)
+    .join('');
+  const more = o.total > o.people.length ? `<div style="font:400 12px/1.4 ${FONT};color:${MUTED};margin-top:6px">and ${num(o.total - o.people.length)} more</div>` : '';
+  const cool = o.coolOff ? `<div style="font:400 12px/1.4 ${FONT};color:${MUTED};margin-top:8px">${e(coolOffLine(o.coolOff))}</div>` : '';
+  return `<div style="font:600 11px/1.2 ${FONT};letter-spacing:1.4px;text-transform:uppercase;color:${RED};margin:22px 0 10px">Over-mailed recruiters</div>
+${card(
+  `${o.people.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="mf-t" style="border-collapse:collapse;table-layout:fixed">${rows}</table>${more}
+<div style="font:400 12px/1.5 ${FONT};color:${MUTED};margin-top:10px">${e(OVERMAILED_FOOTER)}</div>` : ''}${cool}`,
+  { pad: 14, delay: 320 },
+)}`;
+}
+
 /** "Monday, 9 November" for a daily report; "2 Nov – 8 Nov" for a week. */
 export function dailyLabel(a: { ymd: string; kind?: 'daily' | 'weekly'; from?: Date }): string {
   if (a.kind === 'weekly' && a.from) {
@@ -273,7 +290,7 @@ ${a.segments.map(line).join('')}</table>`,
   );
 }
 
-export function renderDailyEmail(a: DailyActivity, d: NeedsAttention): { subject: string; html: string } {
+export function renderDailyEmail(a: DailyActivity, d: NeedsAttention, overmailed?: Overmailed | null): { subject: string; html: string } {
   const base = appBaseUrl();
   const t = a.totals;
   const items = digestTotal(d);
@@ -307,7 +324,8 @@ ${byUser(a)}
 ${whoUsedWhose(a)}
 ${inbox(a)}
 <div style="font:600 11px/1.2 ${FONT};letter-spacing:1.4px;text-transform:uppercase;color:${RED};margin:22px 0 10px">Needs attention today</div>
-${attention(d)}`;
+${attention(d)}
+${overmailedCard(overmailed)}`;
 
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -353,7 +371,7 @@ const slackEscape = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;'
  * what, who used whose mailbox, each person's inbox, and what needs attention — the email in
  * brief, with a link to the live dashboard. `text` is the notification fallback.
  */
-export function renderReportSlack(a: DailyActivity, d: NeedsAttention, opts: { test?: boolean } = {}): { text: string; blocks: Block[] } {
+export function renderReportSlack(a: DailyActivity, d: NeedsAttention, opts: { test?: boolean } = {}, overmailed?: Overmailed | null): { text: string; blocks: Block[] } {
   const base = appBaseUrl();
   const t = a.totals;
   const weekly = a.kind === 'weekly';
@@ -415,6 +433,13 @@ export function renderReportSlack(a: DailyActivity, d: NeedsAttention, opts: { t
   ];
   const open = attention.filter(([, n]) => n > 0);
   blocks.push(section(open.length ? `*⚠️ Needs attention*\n${open.map(([label, n, href]) => `• *${n}* ${label} · <${href}|open>`).join('\n')}` : '✅ *Nothing needs attention*: every reply answered, nothing past its SLA, nothing waiting for approval.'));
+  if (overmailedVisible(overmailed)) {
+    const lines = overmailed.people.map((p) => `• ${slackEscape(overmailedLine(p, 80))}`);
+    if (overmailed.total > overmailed.people.length) lines.push(`and ${num(overmailed.total - overmailed.people.length)} more`);
+    if (overmailed.coolOff) lines.push(coolOffLine(overmailed.coolOff));
+    if (overmailed.people.length) lines.push(`_${OVERMAILED_FOOTER}_`);
+    blocks.push(section(`*Over-mailed recruiters*\n${lines.join('\n')}`));
+  }
   const text = `${title}: ${num(t.emails)} emails to ${num(t.people)} people${t.failed ? `, ${t.failed} failed` : ''}; ${num(a.inboxTotal.received)} replies, ${num(a.inboxTotal.pending)} waiting`;
   return { text, blocks };
 }

@@ -4,6 +4,10 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
+import { CoolOffBadge } from '@/components/contacts/EmailedBits';
+import { CoolOffEditor } from '@/components/contacts/CoolOffEditor';
+import { isCoolingOff, lastEmailedText, type LastEmailedInfo } from '@/lib/contacts/recentEmailed';
 
 const TYPE_LABEL: Record<string, { label: string; tone: string }> = {
   EMAIL_SENT: { label: 'Campaign email', tone: 'text-primary' },
@@ -19,6 +23,7 @@ const TYPE_LABEL: Record<string, { label: string; tone: string }> = {
 export default function ContactProfilePage() {
   const params = useParams<{ id: string }>();
   const [contact, setContact] = useState<any>(null);
+  const [last, setLast] = useState<LastEmailedInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,12 +32,13 @@ export default function ContactProfilePage() {
         const json = await r.json();
         if (!r.ok) throw new Error(json.error ?? 'Failed to load');
         setContact(json.contact);
+        setLast(json.lastEmailed ?? null);
       })
       .catch((e) => setError(e.message));
   }, [params.id]);
 
   if (error) return <div className="p-6 text-sm text-primary">{error}</div>;
-  if (!contact) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!contact) return <LoadingScreen context={['Opening this contact…']} />;
 
   const openFollowUps = contact.conversations.flatMap((c: any) => c.followUps.filter((f: any) => !f.completed));
   const unread = contact.conversations.filter((c: any) => c.unread).length;
@@ -55,7 +61,22 @@ export default function ContactProfilePage() {
         {openFollowUps.length > 0 && (
           <span className="rounded bg-warning/15 px-2 py-1 text-warning">{openFollowUps.length} follow-up pending</span>
         )}
+        {contact.doNotContactUntil && isCoolingOff(contact.doNotContactUntil) && (
+          <span title={contact.coolOffNote ?? undefined}><CoolOffBadge until={contact.doNotContactUntil} /></span>
+        )}
+        <span className={`rounded bg-muted px-2 py-1 ${last ? '' : 'text-muted-foreground'}`} title={lastEmailedText(last).title}>
+          {last ? `Last emailed ${lastEmailedText(last).label}` : 'Never emailed from MailFlow'}
+        </span>
       </div>
+      {contact.coolOffNote && isCoolingOff(contact.doNotContactUntil) && <p className="mt-2 text-xs text-muted-foreground">Cool-off note: {contact.coolOffNote}</p>}
+
+      <CoolOffEditor
+        key={`${contact.doNotContactUntil ?? ''}|${contact.coolOffNote ?? ''}`}
+        contactId={contact.id}
+        until={contact.doNotContactUntil}
+        note={contact.coolOffNote}
+        onSaved={(v) => setContact((c: any) => ({ ...c, ...v }))}
+      />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         {/* Datasets + business data */}

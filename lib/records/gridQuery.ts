@@ -12,6 +12,9 @@ import type { ConditionGroup } from '@/lib/automation/conditions';
  *     only the requested page is loaded in full;
  *   - search: the database narrows to rows containing the text, then the exact search runs
  *     on those.
+ * An optional extra SQL condition (the "recently emailed" filter, on mailflow_email_key of the email
+ * column) is applied inside the database in every path, so it never loads rows it will drop and
+ * paging stays exact.
  */
 export const GRID_ROW_LIMIT = 100_000;
 
@@ -40,23 +43,23 @@ type LightRow = QueryableRecord & { id: string };
 
 const SYSTEM_COLUMNS = Prisma.sql`"id", "createdAt", "emailStatus", "replyReceived", "unreadReply", "followUpRequired", "lastEmailSentAt", "lastReplyAt"`;
 
-async function lightRows(datasetId: string, keys: string[]): Promise<LightRow[]> {
+async function lightRows(datasetId: string, keys: string[], extra?: Prisma.Sql | null): Promise<LightRow[]> {
   const data = keys.length
     ? Prisma.sql`jsonb_build_object(${Prisma.join(keys.map((k) => Prisma.sql`${k}::text, "data"->${k}`))})`
     : Prisma.sql`'{}'::jsonb`;
   return prisma.$queryRaw<LightRow[]>`
     SELECT ${SYSTEM_COLUMNS}, ${data} AS "data"
-    FROM "Record" WHERE "datasetId" = ${datasetId}
+    FROM "Record" WHERE "datasetId" = ${datasetId} ${extra ? Prisma.sql`AND ${extra}` : Prisma.empty}
     ORDER BY "createdAt" ASC, "id" ASC
     LIMIT ${GRID_ROW_LIMIT}`;
 }
 
-async function searchCandidates(datasetId: string, search: string): Promise<LightRow[]> {
+async function searchCandidates(datasetId: string, search: string, extra?: Prisma.Sql | null): Promise<LightRow[]> {
   const like = `%${search.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   return prisma.$queryRaw<LightRow[]>`
     SELECT ${SYSTEM_COLUMNS}, "data"
     FROM "Record"
-    WHERE "datasetId" = ${datasetId} AND ("data"::text ILIKE ${like} OR "emailStatus" ILIKE ${like})
+    WHERE "datasetId" = ${datasetId} AND ("data"::text ILIKE ${like} OR "emailStatus" ILIKE ${like}) ${extra ? Prisma.sql`AND ${extra}` : Prisma.empty}
     ORDER BY "createdAt" ASC, "id" ASC
     LIMIT ${GRID_ROW_LIMIT}`;
 }
@@ -64,8 +67,24 @@ async function searchCandidates(datasetId: string, search: string): Promise<Ligh
 export async function queryGrid(
   datasetId: string,
   query: ViewQuery,
+  extra?: Prisma.Sql | null,
 ): Promise<Omit<ViewResult<LightRow>, 'records'> & { records: DataRecord[]; total: number; truncated: boolean }> {
   const total = await prisma.record.count({ where: { datasetId } });
+
+  if (!needsRuleEngine(query) && extra) {
+    const counted = await prisma.$queryRaw<{ n: bigint | number }[]>`SELECT count(*) AS n FROM "Record" WHERE "datasetId" = ${datasetId} AND ${extra}`;
+    const matched = Number(counted[0]?.n ?? 0);
+    const pageSize = query.pageSize;
+    const pageCount = Math.max(1, Math.ceil(matched / pageSize));
+    const page = Math.min(query.page, pageCount);
+    const picked = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "Record" WHERE "datasetId" = ${datasetId} AND ${extra}
+      ORDER BY "createdAt" ASC, "id" ASC OFFSET ${(page - 1) * pageSize} LIMIT ${pageSize}`;
+    const full = picked.length ? await prisma.record.findMany({ where: { id: { in: picked.map((r) => r.id) } } }) : [];
+    const byId = new Map(full.map((r) => [r.id, r]));
+    const records = picked.map((r) => byId.get(r.id)).filter((r): r is DataRecord => !!r);
+    return { records, matched, page, pageSize, pageCount, groups: null, groupOf: null, total, truncated: false };
+  }
 
   if (!needsRuleEngine(query)) {
     const pageSize = query.pageSize;
@@ -80,7 +99,7 @@ export async function queryGrid(
     return { records, matched: total, page, pageSize, pageCount, groups: null, groupOf: null, total, truncated: false };
   }
 
-  const rows = query.search?.trim() ? await searchCandidates(datasetId, query.search) : await lightRows(datasetId, referencedKeys(query));
+  const rows = query.search?.trim() ? await searchCandidates(datasetId, query.search, extra) : await lightRows(datasetId, referencedKeys(query), extra);
   const result = applyView(rows, query);
 
   // Load the page in full, in the order the rules decided.

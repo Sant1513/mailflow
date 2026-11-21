@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
+import { contextLine } from '@/lib/loading/pick';
 
 interface BatchRow {
   id: string;
@@ -130,7 +132,7 @@ export default function BatchesPage() {
 
       <div className="panel overflow-hidden">
         {loading ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p>
+          <LoadingScreen context={[contextLine('Looking for “{}”…', q), tab === 'all' ? null : contextLine('Narrowing it down to {}…', tab === 'active' ? 'active batches' : 'finished batches')]} />
         ) : rows.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-muted-foreground">
             No batches yet. Sending a campaign creates one — see <Link href="/campaigns" className="text-primary hover:underline">Campaigns</Link>.

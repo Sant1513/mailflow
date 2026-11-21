@@ -71,7 +71,11 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   if (attachBytes > MAX_ATTACH_BYTES) problems.push(`Attachments add up to ${(attachBytes / 1048576).toFixed(1)} MB; keep them under ${MAX_ATTACH_BYTES / 1048576} MB (share a big video as a link).`);
 
   const plan = await planBlast(blast);
-  if (!plan.eligibleIds.length) problems.push('Nobody to send to: add recruiters, or check why they were skipped.');
+  if (!plan.eligibleIds.length) {
+    problems.push(plan.recent.flagged
+      ? `Nobody to send to: all ${plan.recent.flagged.toLocaleString()} recruiter(s) were emailed in the last ${plan.recent.windowDays} days. Open “Recruiters” and press “Review and choose” to send to some of them again, or shorten the number of days.`
+      : 'Nobody to send to: add recruiters, or check why they were skipped.');
+  }
   if (video?.mode === 'attach' && mode === 'INDIVIDUAL' && plan.eligibleIds.length > VIDEO_INDIVIDUAL_MAX) {
     problems.push(`An attached video can go to at most ${VIDEO_INDIVIDUAL_MAX} recruiters as individual copies (each copy downloads it again). Use BCC groups, or share the video as a link.`);
   }
@@ -93,8 +97,15 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   await prisma.$transaction(
     async (tx) => {
       // Skipped recruiters keep their reason.
-      for (const [id, reason] of plan.skippedReasons) {
-        await tx.recruiterBlastRecipient.update({ where: { id }, data: { status: 'SKIPPED', skipReason: reason.slice(0, 300) } });
+      // One statement per 2,000 skipped recruiters, not one per recruiter: with a remote database each call costs a round trip, and a big
+      // send (hundreds skipped) used to spend most of Vercel's 60 seconds on them, then time out without an answer.
+      const skippedIds = [...plan.skippedReasons.keys()];
+      for (let i = 0; i < skippedIds.length; i += 2000) {
+        const ids = skippedIds.slice(i, i + 2000);
+        await tx.$executeRaw`
+          UPDATE "RecruiterBlastRecipient" AS r SET "status" = 'SKIPPED', "skipReason" = v.reason, "skipKind" = NULLIF(v.kind, '')
+          FROM unnest(${ids}::text[], ${ids.map((id) => plan.skippedReasons.get(id)!.slice(0, 300))}::text[], ${ids.map((id) => plan.skippedKinds.get(id) ?? '')}::text[]) AS v(id, reason, kind)
+          WHERE r."id" = v.id`;
       }
       const created = await tx.recruiterBlastGroup.createManyAndReturn({
         // Each batch keeps the mailbox the check showed (PARALLEL: round robin across mailboxes).
@@ -122,7 +133,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   await audit(session, 'RECRUITER_SEND_START', {
     targetType: 'RecruiterBlast',
     targetId: blast.id,
-    metadata: { mode, sendOrder: plan.sendOrder, rounds: plan.rounds, recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, messages: groups.length, accounts: blast.accountIds, scheduledAt: when?.toISOString() ?? null, runOn, alreadyOnLaptop, ...(isFollowUp ? { followUpRound: blast.round, parentBlastId: blast.parentBlastId, onMailboxDown: blast.onMailboxDown } : {}) },
+    metadata: { mode, sendOrder: plan.sendOrder, rounds: plan.rounds, recipients: plan.eligibleIds.length, skipped: plan.skippedReasons.size, repeatGuard: { windowDays: plan.recent.windowDays, skippedAsRecent: plan.recent.flagged, sendAgain: plan.recent.included, coolOff: plan.recent.coolOff }, messages: groups.length, accounts: blast.accountIds, scheduledAt: when?.toISOString() ?? null, runOn, alreadyOnLaptop, ...(isFollowUp ? { followUpRound: blast.round, parentBlastId: blast.parentBlastId, onMailboxDown: blast.onMailboxDown } : {}) },
   });
   // A laptop send is picked up by the laptop's runner within about 20 seconds: no Vercel run.
   if (!when && runOn === 'cloud') kickRecruiterWorker('start');

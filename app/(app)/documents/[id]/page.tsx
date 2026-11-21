@@ -5,6 +5,7 @@ import { LoadError, loadErrorMessage } from '@/components/ui/LoadError';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 import { PdfPages } from '@/components/documents/PdfPages';
 import { useDocumentPreview } from '@/components/documents/PdfPreviewDialog';
 import { PaneDivider, usePaneWidths } from '@/components/email-editor/PaneDivider';
@@ -429,7 +430,7 @@ export default function DocumentEditorPage() {
     if (json?.issues) setIssues(json.issues as DocumentIssue[]);
   }
 
-  if (!data) return loadError ? <LoadError message={loadError} onRetry={() => setReloadKey((n) => n + 1)} backHref="/documents/library" backLabel="Back to the library" /> : <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+  if (!data) return loadError ? <LoadError message={loadError} onRetry={() => setReloadKey((n) => n + 1)} backHref="/documents/library" backLabel="Back to the library" /> : <LoadingScreen context={['Opening this document…']} />;
 
   const { inspection, document: doc } = data;
   const fillable = inspection.formFields.filter((f) => !UNFILLABLE.has(f.type));

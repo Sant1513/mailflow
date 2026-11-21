@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { signIn } from 'next-auth/react';
+import { SigningIn } from '@/components/loading/SigningIn';
 import { Menu, X } from 'lucide-react';
 import { MasaiLogo } from '@/components/brand/MasaiLogo';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
@@ -17,6 +18,8 @@ const LINKS = [
 function SignInButton({ className = '' }: { className?: string }) {
   const [busy, setBusy] = useState(false);
   return (
+    <>
+    {busy && <SigningIn />}
     <button
       type="button"
       onClick={() => {
@@ -28,6 +31,7 @@ function SignInButton({ className = '' }: { className?: string }) {
     >
       {busy ? 'Connecting…' : 'Sign in'}
     </button>
+    </>
   );
 }
 

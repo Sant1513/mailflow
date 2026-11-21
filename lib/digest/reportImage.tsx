@@ -2,6 +2,7 @@ import React from 'react';
 import { ImageResponse } from 'next/og';
 import type { DailyActivity } from '@/lib/digest/dailyActivity';
 import type { NeedsAttention } from '@/lib/digest/needsAttention';
+import { OVERMAILED_FOOTER, coolOffLine, overmailedLine, overmailedVisible, type Overmailed } from '@/lib/digest/overmailed';
 import { dailyLabel, duration, windowLabel } from '@/lib/digest/dailyEmail';
 
 /**
@@ -54,7 +55,7 @@ function Row({ cells, bold, widths }: { cells: (string | { text: string; color?:
 
 export interface ReportImage { bytes: Uint8Array; width: number; height: number }
 
-export async function renderReportImage(a: DailyActivity, d: NeedsAttention, opts: { test?: boolean; unansweredAfterHours?: number } = {}): Promise<ReportImage> {
+export async function renderReportImage(a: DailyActivity, d: NeedsAttention, opts: { test?: boolean; unansweredAfterHours?: number; overmailed?: Overmailed | null } = {}): Promise<ReportImage> {
   const t = a.totals;
   const weekly = a.kind === 'weekly';
   const users = a.users.filter((u) => u.emails > 0 || u.failed > 0).slice(0, 10);
@@ -93,6 +94,10 @@ export async function renderReportImage(a: DailyActivity, d: NeedsAttention, opt
   if (launchers.length) height += panel(launchers.length);
   if (inbox.length) height += panel(inbox.length + 1);
   height += 18 * 2 + 15 + 8 + Math.max(1, open.length) * 30 + 16 + 6;
+  const over = overmailedVisible(opts.overmailed) ? opts.overmailed : null;
+  const overRows = over ? over.people.length + (over.total > over.people.length ? 1 : 0) : 0;
+  // Panel chrome + one 30px line per person, the "more" line, the cool-off line and the footer.
+  if (over) height += 18 * 2 + 15 + 8 + 16 + 6 + (overRows + (over.coolOff ? 1 : 0) + (over.people.length ? 1 : 0)) * 30;
   height = Math.max(520, height + 20);
 
   const pct = (n: number, b: number) => (b ? `${n >= b ? 'up' : 'down'} ${Math.abs(Math.round(((n - b) / b) * 100))}%` : n ? 'new' : 'no change');
@@ -163,6 +168,17 @@ export async function renderReportImage(a: DailyActivity, d: NeedsAttention, opt
               <Row key={r.name} widths={iW} cells={[r.name, num(r.received), r.pending ? { text: num(r.pending), color: RED } : '0', num(r.closed), duration(r.frtDay), duration(r.artDay)]} />
             ))}
             <Row widths={iW} bold cells={['Total', num(a.inboxTotal.received), num(a.inboxTotal.pending), num(a.inboxTotal.closed), duration(a.inboxTotal.frtDay), duration(a.inboxTotal.artDay)]} />
+          </Panel>
+        ) : null}
+
+        {over ? (
+          <Panel title="Over-mailed recruiters">
+            {over.people.map((p) => (
+              <div key={p.email} style={{ display: 'flex', fontSize: 18, height: 30, alignItems: 'center', color: INK, fontWeight: 500, overflow: 'hidden', whiteSpace: 'nowrap' }}>{overmailedLine(p, 46)}</div>
+            ))}
+            {over.total > over.people.length ? <div style={{ display: 'flex', fontSize: 17, height: 30, alignItems: 'center', color: MUTED }}>{`and ${num(over.total - over.people.length)} more`}</div> : null}
+            {over.coolOff ? <div style={{ display: 'flex', fontSize: 17, height: 30, alignItems: 'center', color: MUTED }}>{coolOffLine(over.coolOff)}</div> : null}
+            {over.people.length ? <div style={{ display: 'flex', fontSize: 16, height: 30, alignItems: 'center', color: MUTED }}>{OVERMAILED_FOOTER}</div> : null}
           </Panel>
         ) : null}
 

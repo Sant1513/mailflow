@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
 import { EditSigningRequestModal } from '@/components/documents/EditSigningRequestModal';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 const PAGE_SIZE = 20;
 
@@ -147,6 +148,7 @@ export default function ESignDocumentsPage() {
   const [requests, setRequests] = useState<SigningRequest[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [page, setPage] = useState(1);
 
   // Filters
@@ -167,6 +169,7 @@ export default function ESignDocumentsPage() {
       if (to) p.set('to', to);
       const res = await fetch(`/api/e-sign?${p}`);
       setLoading(false);
+      setLoadedOnce(true);
       if (!res.ok) return;
       const json = (await res.json()) as { requests: SigningRequest[]; total: number; page: number };
       setRequests(json.requests ?? []);
@@ -316,6 +319,7 @@ export default function ESignDocumentsPage() {
     d ? new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
 
   return (
+    <LoadGate loading={!loadedOnce}>
     <div className="p-6">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -580,5 +584,6 @@ export default function ESignDocumentsPage() {
         />
       )}
     </div>
+    </LoadGate>
   );
 }

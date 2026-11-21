@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { DateInput } from '@/components/ui/DateInput';
 import { istYmd } from '@/lib/dates/istRange';
 import Link from 'next/link';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface Kpis {
   total: number;
@@ -92,6 +93,7 @@ export default function PerformancePage() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(false);
+  const [settled, setSettled] = useState(false);
 
   const [members, setMembers] = useState<Member[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -114,6 +116,7 @@ export default function PerformancePage() {
     if (tag) params.set('tag', tag);
     const res = await fetch(`/api/performance?${params}`);
     setLoading(false);
+    setSettled(true);
     if (!res.ok) return;
     const j = await res.json();
     setKpis(j.kpis);
@@ -129,6 +132,7 @@ export default function PerformancePage() {
   }
 
   return (
+    <LoadGate loading={!settled} context={[`Looking at ${from} to ${to}…`]}>
     <div className="p-6">
       <div className="mb-4 flex items-start justify-between">
         <div>
@@ -265,5 +269,6 @@ export default function PerformancePage() {
         </div>
       )}
     </div>
+    </LoadGate>
   );
 }

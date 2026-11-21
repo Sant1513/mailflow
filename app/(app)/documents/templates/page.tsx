@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface FieldDef {
   key: string;
@@ -22,6 +23,7 @@ interface SigningTemplate {
 export default function DocumentTemplatesPage() {
   const [templates, setTemplates] = useState<SigningTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [archiving, setArchiving] = useState<string | null>(null);
 
   async function load() {
@@ -32,6 +34,7 @@ export default function DocumentTemplatesPage() {
       setTemplates(data.templates);
     }
     setLoading(false);
+    setLoadedOnce(true);
   }
 
   useEffect(() => {
@@ -55,6 +58,7 @@ export default function DocumentTemplatesPage() {
   }
 
   return (
+    <LoadGate loading={!loadedOnce}>
     <div className="mx-auto max-w-5xl p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
@@ -126,5 +130,6 @@ export default function DocumentTemplatesPage() {
         </div>
       )}
     </div>
+    </LoadGate>
   );
 }

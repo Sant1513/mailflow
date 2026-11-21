@@ -15,6 +15,9 @@ import { markRecruiterBounced, suppressRejectedRecruiter } from '@/lib/recruiter
 import { LAPTOP_SILENT_MS, readState } from '@/lib/system/serverState';
 import { audit } from '@/lib/audit/log';
 import { threadFor } from '@/lib/recruiterSend/followUp';
+import { emailKey } from '@/lib/recruiterSend/emailKey';
+import { suppressedKeys } from '@/lib/email/suppressedKeys';
+import { coolOffReason, coolOffs, recentContacts, repeatReason, repeatWindow, type RecentContact } from '@/lib/recruiterSend/recent';
 
 /**
  * Sends Recruiter Bulk Send messages (a BCC group or one individual copy each).
@@ -233,12 +236,40 @@ export const MAX_PARALLEL = 10;
 /** Time kept at the end of a Vercel run (60 s limit) to send safely and hand over. */
 export const SEND_RESERVE_MS = 18_000;
 
+/** The send-time repeat and cool-off check for one message's recruiters; skipped ones are marked with why. */
+export async function dropRecentlyEmailed<T extends { id: string; email: string; repeatOk: boolean }>(blast: BlastRow, recipients: T[]): Promise<T[]> {
+  try {
+    const now = new Date();
+    const emails = recipients.map((r) => r.email);
+    const days = blast.parentBlastId ? 0 : repeatWindow(blast.repeatWindowDays);
+    const [cool, recent] = await Promise.all([
+      coolOffs(blast.organizationId, emails, now),
+      days > 0 ? recentContacts({ organizationId: blast.organizationId, emails, days, excludeBlastId: blast.id, mode: 'send', now }) : Promise.resolve(new Map<string, RecentContact>()),
+    ]);
+    const drop = new Map<string, { kind: string; reason: string }>();
+    for (const r of recipients) {
+      const key = emailKey(r.email);
+      const co = cool.get(key);
+      if (co) { drop.set(r.id, { kind: 'COOL_OFF', reason: coolOffReason(co) }); continue; }
+      const c = recent.get(key);
+      if (c && !r.repeatOk) drop.set(r.id, { kind: 'RECENTLY_EMAILED', reason: `${repeatReason(c, now)} (found just before sending)`.slice(0, 300) });
+    }
+    if (!drop.size) return recipients;
+    for (const [id, v] of drop) await prisma.recruiterBlastRecipient.update({ where: { id }, data: { status: 'SKIPPED', skipReason: v.reason.slice(0, 300), skipKind: v.kind } });
+    return recipients.filter((r) => !drop.has(r.id));
+  } catch (err) {
+    // A failed look-up must not stop the send (the check at Start already ran); it is logged and the message goes on.
+    console.error('[recruiter-send] send-time repeat check failed, sending anyway', err instanceof Error ? err.message : err);
+    return recipients;
+  }
+}
+
 /**
  * Who in this message still gets it: anyone unsubscribed or bounced since the send started
  * (a long send runs for days) is dropped. A message left with nobody is closed.
  */
 async function liveRecipients(blast: BlastRow, groupId: string): Promise<Person[]> {
-  let recipients = await prisma.recruiterBlastRecipient.findMany({ where: { groupId, status: { in: ['PENDING', 'QUEUED'] } }, select: { id: true, email: true, name: true, data: true, repliedAt: true } });
+  let recipients = await prisma.recruiterBlastRecipient.findMany({ where: { groupId, status: { in: ['PENDING', 'QUEUED'] } }, select: { id: true, email: true, name: true, data: true, repliedAt: true, repeatOk: true } });
   // A follow-up is for people who have not answered: one who replied since it was prepared is dropped.
   if (blast.parentBlastId) {
     const replied = recipients.filter((r) => r.repliedAt);
@@ -248,14 +279,20 @@ async function liveRecipients(blast: BlastRow, groupId: string): Promise<Person[
     }
   }
   if (recipients.length) {
-    const suppressed = await prisma.emailSuppression.findMany({ where: { workspaceId: blast.workspaceId, email: { in: recipients.map((r) => r.email) } }, select: { email: true } });
-    if (suppressed.length) {
-      const gone = new Set(suppressed.map((s) => s.email.toLowerCase()));
-      const drop = recipients.filter((r) => gone.has(r.email.toLowerCase()));
-      await prisma.recruiterBlastRecipient.updateMany({ where: { id: { in: drop.map((r) => r.id) } }, data: { status: 'SKIPPED', skipReason: 'Unsubscribed or bounced after the send started' } });
-      recipients = recipients.filter((r) => !gone.has(r.email.toLowerCase()));
+    const gone = await suppressedKeys(blast.workspaceId, recipients.map((r) => r.email));
+    if (gone.size) {
+      const drop = recipients.filter((r) => gone.has(emailKey(r.email)));
+      if (drop.length) {
+        await prisma.recruiterBlastRecipient.updateMany({ where: { id: { in: drop.map((r) => r.id) } }, data: { status: 'SKIPPED', skipReason: 'On the suppression list (unsubscribed, bounced or blocked)' } });
+        recipients = recipients.filter((r) => !gone.has(emailKey(r.email)));
+      }
     }
   }
+  // Re-checked now, not only when the send started: a send scheduled for later (or a long one) can overlap another send that went out first,
+  // or the person may have been emailed or answered in the Inbox, or put on a cool-off, since. Only what really went out counts here
+  // (queued emails do not), so of two overlapping sends the first to send wins and the other skips. Follow-ups skip the repeat check
+  // (re-emailing is their point) but never a cool-off.
+  if (recipients.length) recipients = await dropRecentlyEmailed(blast, recipients);
   if (!recipients.length) await prisma.recruiterBlastGroup.updateMany({ where: { id: groupId, status: 'PENDING' }, data: { status: 'SENT', recipientCount: 0 } });
   return recipients;
 }

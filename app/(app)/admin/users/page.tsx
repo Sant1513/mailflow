@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import { toast } from 'sonner';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 const ROLES = ['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'VIEWER'];
 const DAY_PRESETS = [7, 30, 90];
@@ -48,6 +49,7 @@ export default function AdminUsersPage() {
   const [rtDays, setRtDays] = useState(30);
 
   const [error, setError] = useState<string | null>(null);
+  const [settled, setSettled] = useState(false);
   const [rtError, setRtError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -63,6 +65,7 @@ export default function AdminUsersPage() {
       setError(err instanceof Error && err.message !== 'Failed to fetch' ? err.message : 'Users could not be loaded. Check your connection and try again.');
     } finally {
       setLoading(false);
+      setSettled(true);
     }
   }
 
@@ -137,6 +140,7 @@ export default function AdminUsersPage() {
   }
 
   return (
+    <LoadGate loading={!settled} context={[`Looking at the last ${rtDays} days of response times…`]}>
     <div className="p-6 space-y-8">
       {/* User management table */}
       <div>
@@ -290,5 +294,6 @@ export default function AdminUsersPage() {
         )}
       </div>
     </div>
+    </LoadGate>
   );
 }

@@ -45,7 +45,7 @@ const fmt = (d: Date | null | undefined) =>
  * The automatic safety moves, as a pure function of the state and the time. Returns the
  * fields to change, or null when nothing needs to happen.
  */
-export function autoTransition(s: StateFields, now: Date): Partial<SystemState> | null {
+export function autoTransition(s: StateFields, now: Date): Partial<Omit<SystemState, 'loadingLines' | 'loadingLinesTriedAt'>> | null {
   const t = now.getTime();
   const silentFor = s.lastLaptopSeenAt ? t - s.lastLaptopSeenAt.getTime() : Infinity;
   const switchAge = s.switchStartedAt ? t - s.switchStartedAt.getTime() : 0;

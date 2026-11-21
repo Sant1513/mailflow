@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { LoadGate } from '@/components/loading/LoadingScreen';
 
 interface LibraryDoc {
   id: string;
@@ -29,6 +30,7 @@ function fmtSize(bytes: number) {
 export default function DocumentLibraryPage() {
   const [docs, setDocs] = useState<LibraryDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -37,6 +39,7 @@ export default function DocumentLibraryPage() {
     setLoading(true);
     const res = await fetch(`/api/documents?includeArchived=${archived}`);
     setLoading(false);
+    setLoadedOnce(true);
     if (!res.ok) return;
     const json = (await res.json()) as { documents: LibraryDoc[] };
     setDocs(json.documents ?? []);
@@ -87,6 +90,7 @@ export default function DocumentLibraryPage() {
   const paged = useClientPaging(visible, 25);
 
   return (
+    <LoadGate loading={!loadedOnce}>
     <div className="p-6">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -190,5 +194,6 @@ export default function DocumentLibraryPage() {
         <Link href="/documents" className="text-primary hover:underline">View signing requests →</Link>
       </p>
     </div>
+    </LoadGate>
   );
 }

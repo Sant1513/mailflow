@@ -7,8 +7,11 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { Download, Plus, X } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { BounceScanStatus } from '@/components/suppressions/BounceScanStatus';
 import { LoadError, loadErrorMessage } from '@/components/ui/LoadError';
 import { ListPager } from '@/components/ui/ListPager';
+import { LoadGate, LoadingScreen } from '@/components/loading/LoadingScreen';
+import { contextLine } from '@/lib/loading/pick';
 import { BOUNCE_CATEGORIES, CATEGORY_LABEL, isBounceCategory, type BounceCategory } from '@/lib/email/dsn';
 import { SUPPRESSION_SORTS, SUPPRESSION_TYPES } from '@/lib/suppressions/filters';
 
@@ -79,6 +82,7 @@ function SuppressionsView() {
   const [total, setTotal] = useState(0);
   const [sends, setSends] = useState<SendOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState(get('q'));
 
@@ -124,6 +128,7 @@ function SuppressionsView() {
     if (!res || !res.ok) {
       setError(await loadErrorMessage(res, 'suppression list'));
       setLoading(false);
+      setLoadedOnce(true);
       return;
     }
     const json = await res.json();
@@ -131,6 +136,7 @@ function SuppressionsView() {
     setTotal(json.total ?? 0);
     setSends(json.sends ?? []);
     setLoading(false);
+    setLoadedOnce(true);
   }, [filterQuery, page, pageSize]);
 
   useEffect(() => {
@@ -214,6 +220,7 @@ function SuppressionsView() {
   if (error && !rows.length) return <LoadError message={error} onRetry={load} />;
 
   return (
+    <LoadGate loading={!loadedOnce} context={[contextLine('Looking for “{}”…', get('q')), contextLine('Narrowing it down to {}…', get('type'))]}>
     <div className="p-6">
       <PageHeader
         title="Suppression List"
@@ -229,6 +236,8 @@ function SuppressionsView() {
           </>
         }
       />
+
+      <BounceScanStatus />
 
       {showAdd && (
         <form onSubmit={handleAdd} className="panel mb-5 flex flex-wrap items-end gap-3 p-4">
@@ -430,12 +439,13 @@ function SuppressionsView() {
         />
       </div>
     </div>
+    </LoadGate>
   );
 }
 
 export default function SuppressionsPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading…</div>}>
+    <Suspense fallback={<LoadingScreen />}>
       <SuppressionsView />
     </Suspense>
   );

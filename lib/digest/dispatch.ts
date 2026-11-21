@@ -5,6 +5,7 @@ import { emailsForRoles, postReportImage, postSystemSlack, sendSystemEmail, type
 import { collectNeedsAttention, digestTotal, type NeedsAttention } from '@/lib/digest/needsAttention';
 import { collectDailyActivity, type DailyActivity, dueReportDay, latestReportDay, reportWindow, weekWindow } from '@/lib/digest/dailyActivity';
 import { dailyLabel, renderDailyEmail, renderReportSlack } from '@/lib/digest/dailyEmail';
+import { collectOvermailedSafe, type Overmailed } from '@/lib/digest/overmailed';
 import { renderReportImage } from '@/lib/digest/reportImage';
 import { appBaseUrl } from '@/lib/app-url';
 
@@ -13,12 +14,12 @@ import { appBaseUrl } from '@/lib/app-url';
  * If Slack won't take the picture (missing files:write permission) or it can't be drawn, the
  * old text report goes out instead, so a report is never lost.
  */
-async function postReport(organizationId: string, kind: 'daily' | 'weekly', a: DailyActivity, d: NeedsAttention, channel: string | undefined, test = false): Promise<ChannelOutcome> {
-  const msg = renderReportSlack(a, d, { test });
+async function postReport(organizationId: string, kind: 'daily' | 'weekly', a: DailyActivity, d: NeedsAttention, channel: string | undefined, test = false, overmailed: Overmailed | null = null): Promise<ChannelOutcome> {
+  const msg = renderReportSlack(a, d, { test }, overmailed);
   const fallback = () => postSystemSlack(organizationId, msg.text, { channel, blocks: msg.blocks, ...SLACK_AS[kind] });
   try {
     const unansweredAfterHours = (await getOrgSettings(organizationId).catch(() => null))?.digest.unansweredAfterHours;
-    const img = await renderReportImage(a, d, { test, unansweredAfterHours });
+    const img = await renderReportImage(a, d, { test, unansweredAfterHours, overmailed });
     const t = a.totals;
     const fromYmd = new Date(a.from.getTime() + 330 * 60_000).toISOString().slice(0, 10);
     const link = `${appBaseUrl()}/admin/organization?lfrom=${fromYmd}&lto=${a.ymd}`;
@@ -71,9 +72,9 @@ export async function dispatchDailyReport(organizationId: string, opts: { testTo
 
   try {
     const window = reportWindow(day);
-    const [needs, activity] = await Promise.all([collectNeedsAttention(organizationId, settings.digest, now), collectDailyActivity(organizationId, window)]);
+    const [needs, activity, overmailed] = await Promise.all([collectNeedsAttention(organizationId, settings.digest, now), collectDailyActivity(organizationId, window), collectOvermailedSafe(organizationId, now)]);
     const items = digestTotal(needs);
-    const { subject, html } = renderDailyEmail(activity, needs);
+    const { subject, html } = renderDailyEmail(activity, needs, overmailed);
     const visible = settings.digest.to.length > 0;
     const to = opts.testTo
       ? [opts.testTo]
@@ -89,7 +90,7 @@ export async function dispatchDailyReport(organizationId: string, opts: { testTo
       subject: opts.testTo ? `[Test] ${subject}` : subject,
       html,
     });
-    const slack = !opts.testTo && settings.digest.slack ? await postReport(organizationId, 'daily', activity, needs, settings.digest.slackChannel) : undefined;
+    const slack = !opts.testTo && settings.digest.slack ? await postReport(organizationId, 'daily', activity, needs, settings.digest.slackChannel, false, overmailed) : undefined;
     // Nothing went out: release the day so the next run tries again.
     if (!opts.testTo && !email.startsWith('SENT') && !slack?.startsWith('SENT')) await releaseReportDay(organizationId, day, settings.lastDailyReportOn);
     return { organizationId, sent: email.startsWith('SENT') || !!slack?.startsWith('SENT'), items, email, slack, reason: `report for ${day}` };
@@ -143,13 +144,13 @@ export async function dispatchWeeklyReport(organizationId: string, opts: { testT
   }
 
   try {
-    const [needs, activity] = await Promise.all([collectNeedsAttention(organizationId, settings.digest, now), collectDailyActivity(organizationId, weekWindow(now))]);
-    const { subject, html } = renderDailyEmail(activity, needs);
+    const [needs, activity, overmailed] = await Promise.all([collectNeedsAttention(organizationId, settings.digest, now), collectDailyActivity(organizationId, weekWindow(now)), collectOvermailedSafe(organizationId, now)]);
+    const { subject, html } = renderDailyEmail(activity, needs, overmailed);
     const to = opts.testTo
       ? [opts.testTo]
       : [...(settings.weeklyReport.emailSuperAdmins ? await emailsForRoles(organizationId, [Role.SUPER_ADMIN]) : []), ...settings.weeklyReport.extraEmails];
     const email = await sendSystemEmail({ organizationId, senderAccountId: settings.senderAccountId, to, visible: !!opts.testTo, subject: opts.testTo ? `[Test] ${subject}` : subject, html });
-    const slack = !opts.testTo && settings.weeklyReport.slack ? await postReport(organizationId, 'weekly', activity, needs, settings.weeklyReport.slackChannel) : undefined;
+    const slack = !opts.testTo && settings.weeklyReport.slack ? await postReport(organizationId, 'weekly', activity, needs, settings.weeklyReport.slackChannel, false, overmailed) : undefined;
 
     const sent = email.startsWith('SENT') || !!slack?.startsWith('SENT');
     // Nothing went out: release the day so the next run tries again.
@@ -165,6 +166,6 @@ export async function dispatchWeeklyReport(organizationId: string, opts: { testT
 export async function testReportSlack(organizationId: string, kind: 'daily' | 'weekly', now: Date = new Date()): Promise<ChannelOutcome> {
   const settings = await getOrgSettings(organizationId);
   const window = kind === 'weekly' ? weekWindow(now) : reportWindow(latestReportDay(now));
-  const [needs, activity] = await Promise.all([collectNeedsAttention(organizationId, settings.digest, now), collectDailyActivity(organizationId, window)]);
-  return postReport(organizationId, kind, activity, needs, kind === 'weekly' ? settings.weeklyReport.slackChannel : settings.digest.slackChannel, true);
+  const [needs, activity, overmailed] = await Promise.all([collectNeedsAttention(organizationId, settings.digest, now), collectDailyActivity(organizationId, window), collectOvermailedSafe(organizationId, now)]);
+  return postReport(organizationId, kind, activity, needs, kind === 'weekly' ? settings.weeklyReport.slackChannel : settings.digest.slackChannel, true, overmailed);
 }

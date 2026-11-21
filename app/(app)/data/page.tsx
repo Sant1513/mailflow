@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { ImportDialog } from '@/components/data-grid/ImportDialog';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 
 interface DatasetRow {
   id: string;
@@ -21,6 +22,7 @@ export default function DataPage() {
   const [datasets, setDatasets] = useState<DatasetRow[]>([]);
   const paged = useClientPaging(datasets, 25);
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
   async function load() {
@@ -30,6 +32,7 @@ export default function DataPage() {
     const json = await res.json();
     setDatasets(json.datasets ?? []);
     setLoading(false);
+    setLoadedOnce(true);
   }
 
   useEffect(() => {
@@ -74,7 +77,7 @@ export default function DataPage() {
       </div>
 
       {loading ? (
-        <div className="text-sm text-muted-foreground">Loading…</div>
+        loadedOnce ? <div className="text-sm text-muted-foreground">Loading…</div> : <LoadingScreen context={['Opening your datasets…']} />
       ) : datasets.length === 0 ? (
         <div className="mt-16 text-center text-sm text-muted-foreground">
           Import your first dataset to get started.

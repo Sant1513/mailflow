@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { LoadingScreen } from '@/components/loading/LoadingScreen';
 import { DocImportButton } from '@/components/documents/DocImportButton';
 import { TemplateSignaturePositions } from '@/components/documents/TemplateSignaturePositions';
 import { renderSignatureTokensHtml } from '@/lib/signing/signature-tokens';
@@ -133,11 +134,7 @@ export default function EditTemplatePage() {
   }
 
   if (loading) {
-    return (
-      <div className="mx-auto max-w-3xl p-6">
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      </div>
-    );
+    return <LoadingScreen context={['Opening this template…']} />;
   }
 
   if (notFound) {

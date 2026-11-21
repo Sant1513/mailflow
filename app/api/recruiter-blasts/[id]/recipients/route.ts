@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { loadBlast, requireBlastAdmin, requireBlastReader } from '@/lib/recruiterSend/access';
 import { parseRecipientFile, parseRecipientPaste, type RecipientList } from '@/lib/recruiterSend/core';
+import { emailKey } from '@/lib/recruiterSend/emailKey';
 
 /**
  * GET: one page of the recruiter list with every uploaded column, for the "Preview list" table
@@ -96,11 +97,11 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     for (const r of rows) {
       const raw = (r.data ?? {}) as Record<string, unknown>;
       const email = String(raw[emailCol.key] ?? '').trim().toLowerCase();
-      if (!email || seen.has(email)) continue;
+      if (!email || seen.has(emailKey(email))) continue;
       // Kept by the column's label, the name people see and type as {{Label}}.
       const data: Record<string, string> = {};
       for (const c of dataset.columns) data[c.label] = raw[c.key] == null ? '' : String(raw[c.key]).trim().slice(0, 2000);
-      seen.set(email, { email, name: nameCol ? data[nameCol.label] || null : null, data });
+      seen.set(emailKey(email), { email, name: nameCol ? data[nameCol.label] || null : null, data });
     }
     list = { recipients: [...seen.values()], columns: dataset.columns.map((c) => c.label), emailColumn: emailCol.label, unreadable: [] };
     source = `data "${dataset.name}"`;
