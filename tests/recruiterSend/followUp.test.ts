@@ -163,7 +163,7 @@ describe('the chain', () => {
     db.emailSuppression.findMany.mockResolvedValueOnce([{ email: 'B@C.com' }]);
     const list = await fu.chainCandidates('root', 'w1');
     expect(list.map((c) => [c.email, c.suppressed])).toEqual([['a@c.com', false], ['b@c.com', true]]);
-    expect(db.emailSuppression.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: 'w1', email: { in: ['a@c.com', 'b@c.com'], mode: 'insensitive' } } }));
+    expect(db.emailSuppression.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: 'w1', email: { in: ['a@c.com', 'b@c.com'] } } }));
     db.emailSuppression.findMany.mockClear();
     db.recruiterBlastRecipient.findMany.mockResolvedValueOnce([row('a@c.com')]);
     expect((await fu.chainCandidates('root'))[0]!.suppressed).toBe(false);

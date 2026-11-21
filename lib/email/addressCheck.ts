@@ -1,5 +1,6 @@
 import { promises as dns } from 'node:dns';
 import { prisma } from '@/lib/db/client';
+import { suppressionRows } from '@/lib/email/suppressedKeys';
 
 /**
  * Pre-send address check (campaign review, simulation, the real send, Quick Send). Catches the
@@ -105,15 +106,9 @@ export async function checkAddresses(
   const problems = new Map<string, AddressProblem>();
 
   if (workspaceId && unique.length) {
-    for (let i = 0; i < unique.length; i += 1000) {
-      const rows = await prisma.emailSuppression.findMany({
-        where: { workspaceId, email: { in: unique.slice(i, i + 1000), mode: 'insensitive' } },
-        select: { email: true, reason: true, detail: true },
-      });
-      for (const r of rows) {
-        const why = r.reason === 'BOUNCED' ? 'bounced before' : r.reason === 'COMPLAINT' ? 'reported a previous email as spam' : 'unsubscribed';
-        problems.set(r.email.toLowerCase(), { kind: 'SUPPRESSED', detail: `This address ${why}${r.detail && r.reason === 'BOUNCED' ? ` (${r.detail.slice(0, 120)})` : ''}.` });
-      }
+    for (const r of await suppressionRows(workspaceId, unique)) {
+      const why = r.reason === 'BOUNCED' ? 'bounced before' : r.reason === 'COMPLAINT' ? 'reported a previous email as spam' : 'unsubscribed';
+      problems.set(r.email.toLowerCase(), { kind: 'SUPPRESSED', detail: `This address ${why}${r.detail && r.reason === 'BOUNCED' ? ` (${r.detail.slice(0, 120)})` : ''}.` });
     }
   }
 
