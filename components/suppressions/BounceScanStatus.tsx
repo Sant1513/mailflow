@@ -193,13 +193,13 @@ export function BounceScanStatus({ onSynced }: { onSynced?: () => void }) {
                       {detail === m.email && (
                         <tr>
                           <td colSpan={7} className="pb-2 pl-2 text-foreground">
-                            <b>{m.user}'s report</b> · {m.suppressions.total.toLocaleString()} on the list: {m.suppressions.bounced.toLocaleString()} bounced, {m.suppressions.complaints.toLocaleString()} spam complaints, {m.suppressions.unsubscribed.toLocaleString()} unsubscribed.
+                            <b>{m.user}&apos;s report</b> · {m.suppressions.total.toLocaleString()} on the list: {m.suppressions.bounced.toLocaleString()} bounced, {m.suppressions.complaints.toLocaleString()} spam complaints, {m.suppressions.unsubscribed.toLocaleString()} unsubscribed.
                             {Object.keys(m.suppressions.byCategory).length > 0 && (
                               <div className="mt-0.5 text-muted-foreground">
                                 {Object.entries(m.suppressions.byCategory).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${isBounceCategory(c) ? CATEGORY_LABEL[c] : c}: ${n.toLocaleString()}`).join(' · ')}
                               </div>
                             )}
-                            <a className="mt-0.5 inline-block underline" href={`/api/suppressions?format=csv&user=${encodeURIComponent(userIdOf(m))}`} download>Download {m.user}'s list (CSV)</a>
+                            <a className="mt-0.5 inline-block underline" href={`/api/suppressions?format=csv&user=${encodeURIComponent(userIdOf(m))}`} download>Download {m.user}&apos;s list (CSV)</a>
                           </td>
                         </tr>
                       )}
