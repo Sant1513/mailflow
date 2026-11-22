@@ -42,6 +42,8 @@ export interface SuppressionFilters {
   to: string | null;
   /** campaign:<id> or blast:<id>. */
   send: string | null;
+  /** The user whose workspace saved the entry (the mailbox the bounce came back to). */
+  user: string | null;
   sort: SuppressionSort;
 }
 
@@ -54,6 +56,7 @@ function pick<T extends string>(v: string | null, allowed: readonly T[]): T | nu
 export function parseSuppressionFilters(params: URLSearchParams): SuppressionFilters {
   const category = params.get('category');
   const send = params.get('send');
+  const user = params.get('user');
   return {
     q: params.get('q')?.trim().slice(0, 200) || null,
     type: pick(params.get('type'), Object.keys(SUPPRESSION_TYPES) as SuppressionType[]),
@@ -64,6 +67,7 @@ export function parseSuppressionFilters(params: URLSearchParams): SuppressionFil
     from: DATE.test(params.get('from') ?? '') ? params.get('from') : null,
     to: DATE.test(params.get('to') ?? '') ? params.get('to') : null,
     send: send && /^(campaign|blast):[A-Za-z0-9_-]{1,64}$/.test(send) ? send : null,
+    user: user && /^[A-Za-z0-9_-]{1,64}$/.test(user) ? user : null,
     sort: pick(params.get('sort'), Object.keys(SUPPRESSION_SORTS) as SuppressionSort[]) ?? 'newest',
   };
 }
@@ -121,6 +125,7 @@ export function suppressionWhere(workspaceId: string, f: SuppressionFilters, vis
   if (f.scope === 'org') and.push({ OR: [orgCopy.OR ? { OR: orgCopy.OR } : orgCopy, { NOT: { workspaceId } }] });
   if (f.scope === 'own') and.push({ NOT: orgCopy }, { workspaceId });
   if (f.from || f.to) and.push({ createdAt: { ...(f.from ? { gte: istDayStart(f.from) } : {}), ...(f.to ? { lte: istDayEnd(f.to) } : {}) } });
+  if (f.user) and.push({ workspace: { ownerId: f.user } });
   if (f.send) {
     const [kind, id] = f.send.split(':') as [string, string];
     and.push(kind === 'campaign' ? { campaignId: id } : { recruiterBlastId: id });

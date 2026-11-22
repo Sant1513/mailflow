@@ -177,12 +177,30 @@ export interface ScanStatus {
   /** Mailboxes MailFlow cannot read (disconnected, expired, or no stored access): their bounces are NOT being captured. */
   unreadable: { email: string; status: string }[];
   notices: number;
+  /** One line per mailbox (only when asked for: the super-admin panel). */
+  mailboxes?: MailboxStatus[];
 }
 
-export async function scanStatus(organizationId: string, now = Date.now()): Promise<ScanStatus> {
+export interface MailboxStatus {
+  email: string;
+  /** Who owns the mailbox. */
+  user: string;
+  userId: string;
+  /** CONNECTED, or why it cannot be read. */
+  state: string;
+  readable: boolean;
+  /** Last time the scan finished reading this mailbox up to now (null = never). */
+  lastSyncedAt: string | null;
+  notices: number;
+  error: string | null;
+  /** What this user's workspace has on the suppression list (the report). */
+  suppressions: { total: number; bounced: number; complaints: number; unsubscribed: number; byCategory: Record<string, number> };
+}
+
+export async function scanStatus(organizationId: string, now = Date.now(), opts: { mailboxes?: boolean } = {}): Promise<ScanStatus> {
   const all = await prisma.emailProviderAccount.findMany({
     where: { organizationId },
-    select: { emailAddress: true, status: true, refreshTokenEnc: true, bounceScanAt: true, bounceScanError: true, bounceScanNotices: true },
+    select: { emailAddress: true, userId: true, status: true, refreshTokenEnc: true, bounceScanAt: true, bounceScanError: true, bounceScanNotices: true },
     orderBy: { emailAddress: 'asc' },
   });
   const readable = all.filter((a) => a.status === 'CONNECTED' && a.refreshTokenEnc);
@@ -196,5 +214,41 @@ export async function scanStatus(organizationId: string, now = Date.now()): Prom
     failing: readable.filter((a) => a.bounceScanError).map((a) => ({ email: a.emailAddress, error: a.bounceScanError! })),
     unreadable: all.filter((a) => !(a.status === 'CONNECTED' && a.refreshTokenEnc)).map((a) => ({ email: a.emailAddress, status: a.status === 'CONNECTED' ? 'NO ACCESS SAVED' : a.status })),
     notices: all.reduce((n, a) => n + a.bounceScanNotices, 0),
+    ...(opts.mailboxes ? { mailboxes: await mailboxLines(organizationId, all) } : {}),
   };
+}
+
+async function mailboxLines(organizationId: string, all: { emailAddress: string; userId: string; status: string; refreshTokenEnc: string | null; bounceScanAt: Date | null; bounceScanError: string | null; bounceScanNotices: number }[]): Promise<MailboxStatus[]> {
+  const users = await prisma.user.findMany({ where: { id: { in: [...new Set(all.map((a) => a.userId))] } }, select: { id: true, name: true } });
+  const nameOf = new Map(users.map((u) => [u.id, u.name]));
+  // Entries saved in each user's workspace (a bounce is saved once, where it happened: lib/suppressions/scope.ts).
+  const workspaces = await prisma.workspace.findMany({ where: { organizationId }, select: { id: true, ownerId: true } });
+  const ownerOf = new Map(workspaces.map((w) => [w.id, w.ownerId]));
+  const groups = await prisma.emailSuppression.groupBy({ by: ['workspaceId', 'reason', 'category'], where: { workspaceId: { in: workspaces.map((w) => w.id) } }, _count: { _all: true } });
+  const report = new Map<string, MailboxStatus['suppressions']>();
+  const blank = (): MailboxStatus['suppressions'] => ({ total: 0, bounced: 0, complaints: 0, unsubscribed: 0, byCategory: {} });
+  for (const g of groups) {
+    const owner = ownerOf.get(g.workspaceId);
+    if (!owner) continue;
+    const r = report.get(owner) ?? blank();
+    const n = g._count._all;
+    r.total += n;
+    if (g.reason === 'BOUNCED') r.bounced += n; else if (g.reason === 'COMPLAINT') r.complaints += n; else r.unsubscribed += n;
+    if (g.category) r.byCategory[g.category] = (r.byCategory[g.category] ?? 0) + n;
+    report.set(owner, r);
+  }
+  return all.map((a) => {
+    const readable = a.status === 'CONNECTED' && !!a.refreshTokenEnc;
+    return {
+      email: a.emailAddress,
+      userId: a.userId,
+      user: nameOf.get(a.userId) || a.emailAddress.split('@')[0]!,
+      state: readable ? 'CONNECTED' : a.status === 'CONNECTED' ? 'NO ACCESS SAVED' : a.status,
+      readable,
+      lastSyncedAt: a.bounceScanAt ? a.bounceScanAt.toISOString() : null,
+      notices: a.bounceScanNotices,
+      error: a.bounceScanError,
+      suppressions: report.get(a.userId) ?? blank(),
+    };
+  });
 }

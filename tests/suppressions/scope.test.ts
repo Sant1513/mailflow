@@ -66,3 +66,15 @@ describe('checks use the shared list', () => {
     expect(keys.has('abc@gmail.com')).toBe(true);
   });
 });
+
+describe('user filter', async () => {
+  const { parseSuppressionFilters, suppressionWhere } = await import('@/lib/suppressions/filters');
+  it('filters to the entries saved in one user’s workspace', () => {
+    const f = parseSuppressionFilters(new URLSearchParams({ user: 'u_123' }));
+    expect(f.user).toBe('u_123');
+    expect(JSON.stringify(suppressionWhere('w1', f))).toContain('"workspace":{"ownerId":"u_123"}');
+  });
+  it('ignores a malformed user id', () => {
+    expect(parseSuppressionFilters(new URLSearchParams({ user: "x'; drop" })).user).toBeNull();
+  });
+});

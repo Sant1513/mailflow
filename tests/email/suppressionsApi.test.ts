@@ -20,17 +20,19 @@ const rows = [
     createdAt: new Date('2026-11-09T11:12:44Z'),
     addedBy: null,
     campaign: null,
+    workspace: { owner: { id: 'u9', name: 'Asha Rao' } },
   },
 ];
 const db = {
   emailSuppression: {
     findMany: vi.fn(async (_q: any) => rows),
     count: vi.fn(async (_q: any) => 1),
-    groupBy: vi.fn(async ({ by }: any) => (by[0] === 'recruiterBlastId' ? [{ recruiterBlastId: 'blast-1', _count: { _all: 1 } }] : [])),
+    groupBy: vi.fn(async ({ by }: any) => (by[0] === 'recruiterBlastId' ? [{ recruiterBlastId: 'blast-1', _count: { _all: 1 } }] : by[0] === 'workspaceId' ? [{ workspaceId: 'w1', _count: { _all: 1 } }] : [])),
     upsert: vi.fn(),
     deleteMany: vi.fn(),
   },
   campaign: { findMany: vi.fn(async () => []) },
+  workspace: { findMany: vi.fn(async () => [{ id: 'w1', owner: { id: 'u9', name: 'Asha Rao', email: 'asha@x.com' } }]) },
   recruiterBlast: { findMany: vi.fn(async () => [{ id: 'blast-1', name: 'Recruiter send For Drive · 5 Nov 2026 Set 2' }]) },
 };
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
@@ -47,6 +49,13 @@ beforeEach(() => {
 });
 
 describe('GET /api/suppressions filters', () => {
+  it('offers a User filter (whose workspace saved each entry) and applies it', async () => {
+    const json = await (await call('user=u9')).json();
+    expect(json.users).toEqual([{ value: 'u9', label: 'Asha Rao', count: 1 }]);
+    expect(json.suppressions[0].savedBy).toBe('Asha Rao');
+    expect(JSON.stringify(whereOf())).toContain('"workspace":{"ownerId":"u9"}');
+  });
+
   it('lists with paging, the total, and the sends on the list', async () => {
     const res = await call('page=2&pageSize=25');
     const json = await res.json();

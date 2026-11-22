@@ -26,6 +26,7 @@ interface Suppression {
   remark: string | null;
   createdAt: string;
   orgCopy: boolean;
+  savedBy?: string | null;
   addedBy: { name: string | null; email: string } | null;
   campaign: { id: string; name: string } | null;
   recruiterBlast: { id: string; name: string | null } | null;
@@ -56,7 +57,7 @@ const CATEGORY_BADGE: Record<BounceCategory, string> = {
 };
 
 /** Filters kept in the URL (shareable, survive a reload). */
-const FILTER_KEYS = ['q', 'type', 'category', 'source', 'scope', 'from', 'to', 'send', 'sort'] as const;
+const FILTER_KEYS = ['q', 'type', 'category', 'source', 'scope', 'from', 'to', 'send', 'user', 'sort'] as const;
 type FilterKey = (typeof FILTER_KEYS)[number];
 
 const IST_DATE = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
@@ -81,6 +82,7 @@ function SuppressionsView() {
   const [rows, setRows] = useState<Suppression[]>([]);
   const [total, setTotal] = useState(0);
   const [sends, setSends] = useState<SendOption[]>([]);
+  const [users, setUsers] = useState<SendOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,6 +137,7 @@ function SuppressionsView() {
     setRows(json.suppressions ?? []);
     setTotal(json.total ?? 0);
     setSends(json.sends ?? []);
+    setUsers(json.users ?? []);
     setLoading(false);
     setLoadedOnce(true);
   }, [filterQuery, page, pageSize]);
@@ -200,6 +203,7 @@ function SuppressionsView() {
     load();
   }
 
+  const userLabel = (v: string) => users.find((u) => u.value === v)?.label ?? v;
   const sendLabel = (v: string) => sends.find((s) => s.value === v)?.label ?? v;
   const chips: { key: FilterKey; label: string }[] = [];
   if (get('q')) chips.push({ key: 'q', label: `Search: “${get('q')}”` });
@@ -209,6 +213,7 @@ function SuppressionsView() {
   if (get('scope')) chips.push({ key: 'scope', label: `Scope: ${SCOPE_LABEL[get('scope')] ?? get('scope')}` });
   if (get('from')) chips.push({ key: 'from', label: `From ${get('from')}` });
   if (get('to')) chips.push({ key: 'to', label: `To ${get('to')}` });
+  if (get('user')) chips.push({ key: 'user', label: `User: ${userLabel(get('user'))}` });
   if (get('send')) chips.push({ key: 'send', label: sendLabel(get('send')) });
   if (get('sort') && get('sort') !== 'newest') chips.push({ key: 'sort', label: `Sort: ${SUPPRESSION_SORTS[get('sort') as keyof typeof SUPPRESSION_SORTS] ?? get('sort')}` });
   const filtered = chips.some((c) => c.key !== 'sort');
@@ -237,7 +242,7 @@ function SuppressionsView() {
         }
       />
 
-      <BounceScanStatus />
+      <BounceScanStatus onSynced={() => void load()} />
 
       {showAdd && (
         <form onSubmit={handleAdd} className="panel mb-5 flex flex-wrap items-end gap-3 p-4">
@@ -290,6 +295,14 @@ function SuppressionsView() {
             <select id="sup-source" className={select} value={get('source')} onChange={(e) => setParams({ source: e.target.value || null })}>
               <option value="">All sources</option>
               {Object.entries(SOURCE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={label} htmlFor="sup-user">User</label>
+            <select id="sup-user" className={select} value={get('user')} onChange={(e) => setParams({ user: e.target.value || null })}>
+              <option value="">All users</option>
+              {users.map((u) => <option key={u.value} value={u.value}>{u.label} ({u.count.toLocaleString('en-IN')})</option>)}
+              {get('user') && !users.some((u) => u.value === get('user')) && <option value={get('user')}>{get('user')}</option>}
             </select>
           </div>
           <div>
@@ -409,7 +422,7 @@ function SuppressionsView() {
                     ) : row.source === 'UNSUBSCRIBE' ? (
                       <span className="italic">The recipient (unsubscribe)</span>
                     ) : row.source === 'BOUNCE' || row.source === 'COMPLAINT' ? (
-                      <span className="italic">{row.reason === 'COMPLAINT' ? 'System (spam report)' : row.orgCopy ? 'System (teammate’s bounce)' : 'System (bounce)'}</span>
+                      <span className="italic">{row.reason === 'COMPLAINT' ? 'System (spam report)' : row.orgCopy ? 'System (teammate’s bounce)' : 'System (bounce)'}{row.savedBy ? ` · ${row.savedBy}` : ''}</span>
                     ) : (
                       <span className="text-faint">—</span>
                     )}

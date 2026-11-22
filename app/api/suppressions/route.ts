@@ -29,6 +29,7 @@ const SELECT = {
   createdAt: true,
   addedBy: { select: { name: true, email: true } },
   campaign: { select: { id: true, name: true } },
+  workspace: { select: { owner: { select: { id: true, name: true } } } },
 } as const;
 
 const REASON_LABEL: Record<string, string> = { BOUNCED: 'Bounced', UNSUBSCRIBED: 'Unsubscribed', COMPLAINT: 'Marked as spam' };
@@ -54,7 +55,7 @@ export const GET = withErrorHandling(async (req) => {
     const rows = await prisma.emailSuppression.findMany({ where, orderBy, take: CSV_MAX, select: SELECT });
     const blasts = await blastNames(rows.map((r) => r.recruiterBlastId));
     const csv = toCsv(
-      ['Email', 'Reason', 'Category', 'Remark', 'Status code', 'Server message / detail', 'Source', 'Org-wide copy', 'Campaign', 'Recruiter Bulk Send', 'Added by', 'Added (IST)'],
+      ['Email', 'Reason', 'Category', 'Remark', 'Status code', 'Server message / detail', 'Source', 'Org-wide copy', 'Campaign', 'Recruiter Bulk Send', 'Added by', 'Saved in workspace of', 'Added (IST)'],
       rows.map((r): CsvValue[] => [
         r.email,
         REASON_LABEL[r.reason] ?? r.reason,
@@ -67,6 +68,7 @@ export const GET = withErrorHandling(async (req) => {
         r.campaign?.name ?? '',
         r.recruiterBlastId ? (blasts.get(r.recruiterBlastId) ?? r.recruiterBlastId) : '',
         r.addedBy ? `${r.addedBy.name ?? ''} <${r.addedBy.email}>` : '',
+        r.workspace.owner.name,
         r.createdAt,
       ]),
     );
@@ -75,12 +77,24 @@ export const GET = withErrorHandling(async (req) => {
   }
 
   const paging = parsePaging(url.searchParams, { pageSize: 50 });
-  const [suppressions, total, campaignIds, blastIds] = await Promise.all([
+  const [suppressions, total, campaignIds, blastIds, perWorkspace] = await Promise.all([
     prisma.emailSuppression.findMany({ where, orderBy, skip: paging.skip, take: paging.take, select: SELECT }),
     prisma.emailSuppression.count({ where }),
     prisma.emailSuppression.groupBy({ by: ['campaignId'], where: { AND: [visible, { campaignId: { not: null } }] }, _count: { _all: true } }),
     prisma.emailSuppression.groupBy({ by: ['recruiterBlastId'], where: { AND: [visible, { recruiterBlastId: { not: null } }] }, _count: { _all: true } }),
+    prisma.emailSuppression.groupBy({ by: ['workspaceId'], where: visible, _count: { _all: true } }),
   ]);
+  // The "user" filter: whose workspace saved each entry (owner of the workspace), with how many.
+  const ownerRows = perWorkspace.length
+    ? await prisma.workspace.findMany({ where: { id: { in: perWorkspace.map((p) => p.workspaceId) } }, select: { id: true, owner: { select: { id: true, name: true, email: true } } } })
+    : [];
+  const byOwner = new Map<string, { value: string; label: string; count: number }>();
+  for (const w of ownerRows) {
+    const n = perWorkspace.find((p) => p.workspaceId === w.id)?._count._all ?? 0;
+    const cur = byOwner.get(w.owner.id);
+    if (cur) cur.count += n; else byOwner.set(w.owner.id, { value: w.owner.id, label: w.owner.name || w.owner.email, count: n });
+  }
+  const users = [...byOwner.values()].sort((a, b) => a.label.localeCompare(b.label));
   const [campaigns, blasts] = await Promise.all([
     campaignIds.length
       ? prisma.campaign.findMany({ where: { id: { in: campaignIds.map((c) => c.campaignId!).filter(Boolean) } }, select: { id: true, name: true } })
@@ -93,11 +107,12 @@ export const GET = withErrorHandling(async (req) => {
   ].sort((a, b) => a.label.localeCompare(b.label));
 
   return NextResponse.json({
-    suppressions: suppressions.map((s) => ({ ...s, recruiterBlast: s.recruiterBlastId ? { id: s.recruiterBlastId, name: blasts.get(s.recruiterBlastId) ?? null } : null, orgCopy: isOrgCopy(s.detail) || s.workspaceId !== workspaceId })),
+    suppressions: suppressions.map((s) => ({ ...s, recruiterBlast: s.recruiterBlastId ? { id: s.recruiterBlastId, name: blasts.get(s.recruiterBlastId) ?? null } : null, orgCopy: isOrgCopy(s.detail) || s.workspaceId !== workspaceId, savedBy: s.workspace.owner.name || null, workspace: undefined })),
     ...pageInfo(total, paging),
     // Kept for older clients.
     pageCount: Math.max(1, Math.ceil(total / paging.pageSize)),
     sends,
+    users,
   });
 });
 
