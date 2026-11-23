@@ -162,10 +162,11 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     fetch('/api/documents').then((r) => r.json()).then((j) => setLibrary((j.documents ?? []).filter((d: { archived?: boolean }) => !d.archived))).catch(() => undefined);
   }, []);
 
-  // Whether the laptop can take a send (drafts only): on open, then every minute while visible.
+  // Whether the laptop can take a send (drafts, and sends still to go out): on open, then every minute while visible.
   const isDraft = detail?.blast.status === 'DRAFT';
+  const canMove = !!detail && ['SENDING', 'SCHEDULED', 'PAUSED'].includes(detail.blast.status);
   useEffect(() => {
-    if (!isDraft) return;
+    if (!isDraft && !canMove) return;
     let stopped = false;
     const look = async () => {
       if (stopped || document.hidden) return;
@@ -174,7 +175,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       if (stopped || !j) return;
       setLaptop({ laptopOnline: !!j.laptopOnline, activeServer: j.activeServer === 'laptop' ? 'laptop' : 'cloud' });
       // The laptop went offline (or MailFlow already runs there): back to the default.
-      if (!j.laptopOnline || j.activeServer === 'laptop') setRunOn('cloud');
+      if (isDraft && (!j.laptopOnline || j.activeServer === 'laptop')) setRunOn('cloud');
     };
     look();
     const t = setInterval(look, 60_000);
@@ -182,7 +183,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
       stopped = true;
       clearInterval(t);
     };
-  }, [isDraft]);
+  }, [isDraft, canMove]);
 
   // Live progress while sending: the small /progress response every 15 s (paused while the tab is
   // hidden, refreshed when it is shown); the full send is loaded again only when its status changes.
@@ -357,9 +358,15 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     if (res?.ok) { setVideoLink({ url: '', title: 'Watch the video' }); load(); }
   }
 
-  async function control(action: 'pause' | 'resume' | 'cancel') {
+  async function control(action: 'pause' | 'resume' | 'cancel' | 'to_laptop' | 'to_cloud') {
     if (action === 'cancel' && !confirm('Cancel this send? Emails already sent stay sent; the rest are not sent.')) return;
-    if (await post('/control', { action }, action)) load();
+    if (action === 'to_cloud' && !confirm('Move this send to the cloud? It carries on from where it is; nothing is sent twice. (The cloud uses Vercel’s monthly free CPU.)')) return;
+    const j = await post('/control', { action }, action);
+    if (j) {
+      if (action === 'to_laptop') toast.success('Moved to the laptop. It carries on from where it was.');
+      if (action === 'to_cloud') toast.success('Moved to the cloud. It carries on from where it was.');
+      load();
+    }
   }
 
   async function copy() {
@@ -483,6 +490,8 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {canMove && b.runOn !== 'laptop' && laptop?.laptopOnline && laptop.activeServer !== 'laptop' && <button type="button" onClick={() => control('to_laptop')} disabled={busy !== null} title="Send the rest from the laptop (saves Vercel CPU). Nothing is sent twice." className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'to_laptop' ? 'Moving…' : 'Move to laptop'}</button>}
+          {canMove && b.runOn === 'laptop' && <button type="button" onClick={() => control('to_cloud')} disabled={busy !== null} title="Send the rest from the cloud. Nothing is sent twice." className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'to_cloud' ? 'Moving…' : 'Move to cloud'}</button>}
           {['SENDING', 'SCHEDULED'].includes(b.status) && <button type="button" onClick={() => control('pause')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'pause' ? 'Pausing…' : 'Pause'}</button>}
           {b.status === 'PAUSED' && <button type="button" onClick={() => control('resume')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm hover:bg-elevated disabled:opacity-50">{busy === 'resume' ? 'Resuming…' : 'Resume'}</button>}
           {['SENDING', 'SCHEDULED', 'PAUSED'].includes(b.status) && <button type="button" onClick={() => control('cancel')} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm text-red-700 hover:bg-elevated disabled:opacity-50">{busy === 'cancel' ? 'Cancelling…' : 'Cancel'}</button>}
