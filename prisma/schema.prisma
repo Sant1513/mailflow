@@ -529,6 +529,8 @@ model Campaign {
   round                    Int            @default(1)
   followUpAudience         String?
   onMailboxDown            String         @default("WAIT")
+  /// THREAD: reply in the original Gmail thread, same subject | NEW: an individual new email with its own subject.
+  followUpMode             String         @default("THREAD")
   createdAt                DateTime       @default(now())
   updatedAt                DateTime       @updatedAt
 
@@ -1574,6 +1576,8 @@ model RecruiterBlast {
   round           Int       @default(1)
   followUpAudience String?
   onMailboxDown   String    @default("WAIT")
+  /// THREAD: reply in the original Gmail thread, same subject | NEW: an individual new email with its own subject.
+  followUpMode    String    @default("THREAD")
   /// Repeat guard: a recruiter who was emailed from MailFlow (any recruiter send, campaign or Quick
   /// Send) in the last N days is skipped unless the admin ticks "send again". 0 = no check.
   /// Follow-ups are exempt: re-emailing the same recruiters is their point.

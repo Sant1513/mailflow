@@ -6,6 +6,7 @@ import { audit } from '@/lib/audit/log';
 import { loadBlast, requireBlastAdmin, sendableMailboxes, requireBlastReader } from '@/lib/recruiterSend/access';
 import { buildBody, MAX_GROUP_SIZE, MIN_GAP, previewHtml, type BlastMode } from '@/lib/recruiterSend/core';
 import { personalisedPreview } from '@/lib/recruiterSend/plan';
+import { followUpSubject } from '@/lib/recruiterSend/followUp';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 import { usageLast24h, dailyLimit } from '@/lib/queue/drain';
 import { isValidEmail } from '@/lib/quickSend/prepare';
@@ -105,6 +106,8 @@ const patchSchema = z.object({
   sendOrder: z.enum(['PARALLEL', 'SEQUENTIAL']).optional(),
   /** Follow-ups: what to do when the mailbox that sent the original is unavailable. */
   onMailboxDown: z.enum(['WAIT', 'FALLBACK']).optional(),
+  /** Follow-ups: THREAD = reply in the original Gmail thread (same subject) | NEW = an individual new email with its own subject. */
+  followUpMode: z.enum(['THREAD', 'NEW']).optional(),
   toAddress: z.string().trim().max(320).nullable().optional(),
   ccAddresses: z.array(z.string().trim().max(320)).max(10).optional(),
   subject: z.string().max(300).optional(),
@@ -147,6 +150,12 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     if (found !== ids.length) return NextResponse.json({ error: 'Attach PDFs from this workspace’s Documents only.' }, { status: 400 });
   }
   const mode = (body.mode ?? blast.mode) as BlastMode;
+  // A reply in the same thread must keep the original subject (Gmail threads only on a matching subject).
+  let lockedSubject: string | undefined;
+  if (blast.parentBlastId && (body.followUpMode ?? blast.followUpMode) !== 'NEW' && (body.subject !== undefined || body.followUpMode === 'THREAD')) {
+    const parent = await prisma.recruiterBlast.findUnique({ where: { id: blast.parentBlastId }, select: { subject: true } });
+    if (parent) lockedSubject = followUpSubject(parent.subject);
+  }
   const gapSeconds = body.gapSeconds !== undefined || body.mode ? Math.max(MIN_GAP[mode], body.gapSeconds ?? blast.gapSeconds) : undefined;
 
   const next = { body: body.body ?? blast.body, format: body.format ?? blast.format, includeSignature: body.includeSignature ?? blast.includeSignature };
@@ -174,8 +183,9 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       ...(body.mode !== undefined ? { mode: body.mode } : {}),
       ...(body.sendOrder !== undefined ? { sendOrder: body.sendOrder } : {}),
       ...(body.onMailboxDown !== undefined ? { onMailboxDown: body.onMailboxDown } : {}),
+      ...(body.followUpMode !== undefined && blast.parentBlastId ? { followUpMode: body.followUpMode } : {}),
       ...(body.toAddress !== undefined ? { toAddress: body.toAddress || null } : {}),
-      ...(body.subject !== undefined ? { subject: body.subject } : {}),
+      ...(lockedSubject !== undefined ? { subject: lockedSubject } : body.subject !== undefined ? { subject: body.subject } : {}),
       ...(body.fromName !== undefined ? { fromName: body.fromName || null } : {}),
       ...(body.replyTo !== undefined ? { replyTo: body.replyTo || null } : {}),
       ...(cc !== undefined ? { ccAddresses: cc } : {}),

@@ -183,7 +183,7 @@ export function estimateMinutes(rounds: number, gapSeconds: number, order: SendO
   return Math.max(1, Math.ceil((rounds * perRound) / 60));
 }
 
-type PlanBlastInput = { id: string; workspaceId: string; organizationId?: string; repeatWindowDays?: number; parentBlastId?: string | null; onMailboxDown?: string; mode: string; sendOrder?: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null };
+type PlanBlastInput = { id: string; workspaceId: string; organizationId?: string; repeatWindowDays?: number; parentBlastId?: string | null; onMailboxDown?: string; followUpMode?: string; mode: string; sendOrder?: string; groupSize: number; gapSeconds: number; accountIds: string[]; accountLimits?: unknown; subject?: string; html?: string; plainText?: string; columns?: string[]; emailColumn?: string | null };
 
 /** The expensive part of a plan: every recruiter checked and personalised, batches and mailboxes. */
 async function planCore(blast: PlanBlastInput) {
@@ -262,22 +262,24 @@ async function planCore(blast: PlanBlastInput) {
   const ordered = blast.accountIds.map((id) => capacity.find((c) => c.accountId === id)).filter((c): c is (typeof capacity)[number] => !!c);
   // A follow-up keeps recruiters who share an earlier email together and sends it from that email's mailbox.
   const isFollowUp = !!blast.parentBlastId;
+  // "Individual new email": nothing is tied to the earlier thread or mailbox, so it is planned like an ordinary send.
+  const threaded = isFollowUp && blast.followUpMode !== 'NEW';
   const onDown: OnMailboxDown = blast.onMailboxDown === 'FALLBACK' ? 'FALLBACK' : 'WAIT';
   const sourceOf = new Map(recipients.map((r) => [r.id, r.sourceGroupId ?? null]));
-  const specs: FollowUpGroup[] = isFollowUp
+  const specs: FollowUpGroup[] = threaded
     ? followUpGroups(eligibleIds.map((id) => ({ id, sourceGroupId: sourceOf.get(id) ?? null })), mode, blast.groupSize)
     : planGroups(eligibleIds, mode, blast.groupSize).map((ids) => ({ ids, sourceGroupId: null }));
   const groups = specs.map((s) => s.ids);
-  const pinOf = isFollowUp ? await sourceAccounts(specs.map((s) => s.sourceGroupId)) : new Map<string, string | null>();
+  const pinOf = threaded ? await sourceAccounts(specs.map((s) => s.sourceGroupId)) : new Map<string, string | null>();
   const pinned = specs.map((s) => (s.sourceGroupId ? pinOf.get(s.sourceGroupId) ?? null : null));
   const sendOrder: SendOrder = blast.sendOrder === 'SEQUENTIAL' ? 'SEQUENTIAL' : 'PARALLEL';
   const room = ordered.map((c) => ({ accountId: c.accountId, messagesLeft: c.messagesLeft, peopleLeft: c.peopleLeft, sendLimit: Number(limits[c.accountId]) > 0 ? Number(limits[c.accountId]) : null }));
-  const assigned = isFollowUp
+  const assigned = threaded
     ? planFollowUpMailboxes(groups.map((g, i) => ({ size: g.length, pinnedAccountId: pinned[i] ?? null })), room, onDown)
     : planMailboxes(groups.map((g) => g.length), room, sendOrder);
   const planned = assigned.map((a) => (a.mailbox === null ? null : ordered[a.mailbox]!.emailAddress));
   // A follow-up message waiting for its earlier mailbox keeps that mailbox as its plan.
-  const plannedAccountIds = assigned.map((a, i) => (a.mailbox === null ? (isFollowUp ? pinned[i] ?? null : null) : ordered[a.mailbox]!.accountId));
+  const plannedAccountIds = assigned.map((a, i) => (a.mailbox === null ? (threaded ? pinned[i] ?? null : null) : ordered[a.mailbox]!.accountId));
   const groupSpecs = specs.map((s, i) => ({ ids: s.ids, sourceGroupId: s.sourceGroupId, pinnedAccountId: pinned[i] ?? null }));
   const continues = (i: number) => !!specs[i]!.sourceGroupId && !!pinned[i] && plannedAccountIds[i] === pinned[i];
   const followUp = isFollowUp
@@ -304,7 +306,7 @@ async function planCore(blast: PlanBlastInput) {
 const CORE_TTL_MS = 60_000;
 const coreCache = new Map<string, { at: number; core: Promise<Awaited<ReturnType<typeof planCore>>> }>();
 function coreKey(blast: PlanBlastInput): string {
-  return JSON.stringify([blast.id, blast.parentBlastId, blast.onMailboxDown, blast.mode, blast.sendOrder, blast.groupSize, blast.gapSeconds, blast.accountIds, blast.accountLimits, blast.subject, blast.html, blast.plainText, blast.columns, blast.emailColumn, blast.repeatWindowDays]);
+  return JSON.stringify([blast.id, blast.parentBlastId, blast.onMailboxDown, blast.followUpMode, blast.mode, blast.sendOrder, blast.groupSize, blast.gapSeconds, blast.accountIds, blast.accountLimits, blast.subject, blast.html, blast.plainText, blast.columns, blast.emailColumn, blast.repeatWindowDays]);
 }
 function cachedCore(blast: PlanBlastInput, reuse: boolean) {
   const key = coreKey(blast);

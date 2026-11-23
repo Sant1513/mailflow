@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { MailboxDownChoice, type Segment } from '@/components/recruiter-send/FollowUpPanel';
+import { FollowUpTypeChoice, MailboxDownChoice, type Segment } from '@/components/recruiter-send/FollowUpPanel';
 import { OriginalQuickEmail, QuickFollowUpAudience, addressesIn, emailsInSegments, type FollowUpDetail } from '@/components/quick-send/QuickFollowUpPanel';
 import { EmailPreview } from '@/components/email-preview/EmailPreview';
 import { RsvpEditor } from '@/components/rsvp/RsvpEditor';
@@ -122,6 +122,8 @@ function QuickSendCompose() {
   const [fuPicked, setFuPicked] = useState<Set<string>>(new Set());
   const [fuExtra, setFuExtra] = useState('');
   const [onDown, setOnDown] = useState<'WAIT' | 'FALLBACK'>('WAIT');
+  // How a follow-up goes out: in the original thread (same subject) or as an individual new email. Asked every time.
+  const [fuType, setFuType] = useState<'THREAD' | 'NEW'>('THREAD');
 
   // 0. Campaign name (blank = the subject + date)
   const [campaignName, setCampaignName] = useState('');
@@ -238,7 +240,7 @@ function QuickSendCompose() {
         setFu(d);
         setFuSegs(start);
         setFuPicked(new Set(emailsInSegments(d.candidates, start)));
-        // The usual "Re: <subject>", unless a saved draft already has a subject.
+        // The earlier email's subject (kept as it was for a reply in the thread), unless a saved draft already has a subject.
         setSubject((cur) => cur || d.suggestedSubject);
       })
       .catch(() => !stop && setFuError('Could not load the send to follow up.'));
@@ -323,9 +325,9 @@ function QuickSendCompose() {
       fallbackAccountIds: backups,
       scheduledAt: scheduleAt ? new Date(scheduleAt).toISOString() : undefined,
       rsvp: rsvp.enabled ? rsvp : undefined,
-      followUp: followUpMode ? { onMailboxDown: onDown, segments: fuSegs } : undefined,
+      followUp: followUpMode ? { mode: fuType, onMailboxDown: onDown, segments: fuSegs } : undefined,
     }),
-    [recipients, campaignName, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt, rsvp, followUpMode, onDown, fuSegs],
+    [recipients, campaignName, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt, rsvp, followUpMode, fuType, onDown, fuSegs],
   );
 
   // ── live check: dry run + preview as you type ──
@@ -689,10 +691,14 @@ function QuickSendCompose() {
             <label htmlFor="qs-subject" className="mb-1 block text-xs font-medium">
               Subject
             </label>
+            {followUpMode && fu && (
+              <FollowUpTypeChoice value={fuType} onChange={(v) => { setFuType(v); if (v === 'THREAD') setSubject(fu.suggestedSubject); }} />
+            )}
             <input
               id="qs-subject"
               ref={subjectRef}
               value={subject}
+              readOnly={followUpMode && fuType === 'THREAD'}
               onFocus={() => setLastFocus('subject')}
               onChange={(e) => setSubject(e.target.value)}
               placeholder="e.g. {{Name}}, your interview is confirmed"
@@ -906,11 +912,12 @@ function QuickSendCompose() {
                   )}
                   {followUpMode && (
                     <div className="space-y-2">
-                      <MailboxDownChoice value={onDown} onChange={setOnDown} />
-                      {onDown === 'FALLBACK' && !backups.length && (
+                      <FollowUpTypeChoice value={fuType} onChange={(v) => { setFuType(v); if (v === 'THREAD' && fu) setSubject(fu.suggestedSubject); }} />
+                      {fuType === 'THREAD' && <MailboxDownChoice value={onDown} onChange={setOnDown} />}
+                      {fuType === 'THREAD' && onDown === 'FALLBACK' && !backups.length && (
                         <p className="text-xs text-amber-700">“Another mailbox” uses the backup mailboxes you tick under More options. With none ticked, emails whose mailbox is unavailable wait for it.</p>
                       )}
-                      {check.followUp && (
+                      {fuType === 'THREAD' && check.followUp && (
                         <p className="rounded border bg-muted/30 p-2 text-xs">
                           <b>{check.followUp.replying.toLocaleString()}</b> email{check.followUp.replying === 1 ? '' : 's'} continue{check.followUp.replying === 1 ? 's' : ''} the earlier Gmail thread
                           {check.followUp.newThread > 0 && <> · <b>{check.followUp.newThread.toLocaleString()}</b> start{check.followUp.newThread === 1 ? 's' : ''} a new thread</>}.

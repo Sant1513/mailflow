@@ -53,8 +53,17 @@ export function parseSegments(saved: string | null | undefined): FollowUpSegment
 }
 export type OnMailboxDown = 'WAIT' | 'FALLBACK';
 
+/** How a follow-up goes out: in the original Gmail thread (same subject), or as an individual new email. */
+export type FollowUpMode = 'THREAD' | 'NEW';
+export const FOLLOW_UP_MODES = ['THREAD', 'NEW'] as const;
+export const followUpModeOf = (v: string | null | undefined): FollowUpMode => (v === 'NEW' ? 'NEW' : 'THREAD');
+
+/**
+ * The subject a follow-up starts with: the earlier email's subject exactly as it was. A reply in the same thread must keep
+ * it (Gmail only threads a message whose subject matches), and an individual new email starts from it too and may change it.
+ */
 export function followUpSubject(subject: string): string {
-  return `Re: ${stripRe(subject)}`;
+  return subject.trim();
 }
 
 /** A recruiter of the chain, with what is known about them across every round sent so far. */

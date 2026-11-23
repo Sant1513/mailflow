@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { STATUS_STYLE } from '@/lib/recruiterSend/ui';
@@ -259,6 +259,26 @@ export function FollowUpAudience({ blastId, editable, onChanged }: { blastId: st
         </div>
       )}
     </div>
+  );
+}
+
+/** How the follow-up goes out: in the original Gmail thread (same subject), or as an individual new email. Asked every time. */
+export function FollowUpTypeChoice({ value, onChange, disabled }: { value: 'THREAD' | 'NEW'; onChange: (v: 'THREAD' | 'NEW') => void; disabled?: boolean }) {
+  // The page can show this twice (step 3 and the send step): each copy needs its own radio group.
+  const group = useId();
+  return (
+    <fieldset disabled={disabled} className="mb-4 space-y-1 rounded border border-primary/40 bg-primary/5 p-3" data-follow-up-type>
+      <legend className="sr-only">How to send this follow-up</legend>
+      <p className="text-xs font-medium">How do you want to send this follow-up?</p>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="radio" name={group} className="mt-1" checked={value === 'THREAD'} onChange={() => onChange('THREAD')} />
+        <span>On the same thread <span className="text-xs text-muted-foreground">— a reply under the original email in the same Gmail conversation, from the mailbox that sent it, with the same subject (the subject is kept as it was)</span></span>
+      </label>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="radio" name={group} className="mt-1" checked={value === 'NEW'} onChange={() => onChange('NEW')} />
+        <span>Individual new email <span className="text-xs text-muted-foreground">— a separate email, its own conversation, with a subject you can change; goes out from any mailbox you tick</span></span>
+      </label>
+    </fieldset>
   );
 }
 

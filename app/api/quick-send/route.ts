@@ -73,7 +73,7 @@ const bodySchema = z.object({
   /** RSVP buttons in the email (lib/rsvp/config.ts); omitted or disabled = none. */
   rsvp: rsvpConfigSchema.nullable().optional(),
   /** Follow-up only: what to do when the mailbox that sent the earlier email is unavailable, and the groups it was aimed at (for the record). */
-  followUp: z.object({ onMailboxDown: z.enum(['WAIT', 'FALLBACK']).default('WAIT'), segments: z.array(z.enum(FOLLOW_UP_SEGMENTS)).max(FOLLOW_UP_SEGMENTS.length).optional() }).optional(),
+  followUp: z.object({ mode: z.enum(['THREAD', 'NEW']).default('THREAD'), onMailboxDown: z.enum(['WAIT', 'FALLBACK']).default('WAIT'), segments: z.array(z.enum(FOLLOW_UP_SEGMENTS)).max(FOLLOW_UP_SEGMENTS.length).optional() }).optional(),
   /** One key per compose (the browser makes it): a repeated "send" returns the campaign already made. */
   requestId: z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/).optional(),
 });
@@ -169,7 +169,9 @@ export const POST = withErrorHandling(async (req) => {
     return NextResponse.json({ error: 'No email column found. Name a column "Email", or paste one email address per line.' }, { status: 400 });
   }
 
-  const subject = normalizeVariables(body.subject, resolved.columns);
+  // A follow-up in the same thread keeps the original subject exactly (Gmail only threads on a matching subject).
+  const followMode = body.followUp?.mode === 'NEW' ? 'NEW' : 'THREAD';
+  const subject = resolved.followUpParent && followMode === 'THREAD' ? resolved.followUpParent.subject : normalizeVariables(body.subject, resolved.columns);
   const me = await prisma.user.findUnique({ where: { id: session.userId }, select: { emailSignature: true } });
   const signature = body.includeSignature && me?.emailSignature?.trim() ? me.emailSignature : null;
   // Pasted HTML is HTML even if "Simple" was left on; its CSS is inlined so every inbox shows the design.
@@ -221,6 +223,7 @@ export const POST = withErrorHandling(async (req) => {
         rootCampaignId: followUp.parent.rootId,
         organizationId: session.organizationId,
         onMailboxDown: followUp.onMailboxDown,
+        mode: followMode,
         sender: { id: sender.id, emailAddress: sender.emailAddress, displayName: sender.displayName },
         emails: simulation.evaluations.filter((e) => e.willSend && e.email).map((e) => e.email!),
       })
@@ -377,7 +380,7 @@ export const POST = withErrorHandling(async (req) => {
         fallbackAccountIds: fallback.ids,
         ...(rsvp ? { rsvp: rsvp as unknown as Prisma.InputJsonValue } : {}),
         ...(followUp
-          ? { parentCampaignId: followUp.parent.id, rootCampaignId: followUp.parent.rootId, round: followUp.parent.round + 1, followUpAudience: (followUp.segments ?? []).join(',') || null, onMailboxDown: followUp.onMailboxDown }
+          ? { parentCampaignId: followUp.parent.id, rootCampaignId: followUp.parent.rootId, round: followUp.parent.round + 1, followUpAudience: (followUp.segments ?? []).join(',') || null, onMailboxDown: followUp.onMailboxDown, followUpMode: followMode }
           : {}),
         // Attached PDFs go out unchanged: a plain copy, no reference stamp.
         documents: { create: orderedDocs.map((d, i) => ({ documentTemplateId: d.id, order: i, ...snapshotFromTemplate(d), stampReference: false })) },

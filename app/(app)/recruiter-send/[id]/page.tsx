@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { STATUS_STYLE, stripRe } from '@/lib/recruiterSend/ui';
-import { FollowUpAudience, MailboxDownChoice, OriginalEmail, type FollowUpContext } from '@/components/recruiter-send/FollowUpPanel';
+import { FollowUpAudience, FollowUpTypeChoice, MailboxDownChoice, OriginalEmail, type FollowUpContext } from '@/components/recruiter-send/FollowUpPanel';
 import { Avatar } from '@/components/ui/Avatar';
 import { LivePreview, Pager, SendSummary, WhoReceives, type MailboxShare, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
 import { VariablePicker, variableProblems } from '@/components/recruiter-send/Variables';
@@ -28,7 +28,7 @@ interface Blast {
   /** Where the messages go out from; runOnChangedAt is set when the cloud took over from a silent laptop. */
   runOn?: 'cloud' | 'laptop'; runOnChangedAt?: string | null;
   /** Follow-ups (Recruiter Follow-up tab): the send this follows up, its round, and what to do when the original mailbox is unavailable. */
-  parentBlastId?: string | null; round?: number; onMailboxDown?: 'WAIT' | 'FALLBACK'; followUpAudience?: string | null;
+  parentBlastId?: string | null; round?: number; onMailboxDown?: 'WAIT' | 'FALLBACK'; followUpMode?: 'THREAD' | 'NEW'; followUpAudience?: string | null;
 }
 interface LaptopStatus { laptopOnline: boolean; activeServer: 'cloud' | 'laptop' }
 interface Mailbox { id: string; emailAddress: string; ownerName: string | null; status: string; own: boolean; sentLast24h: number; dailyLimit: number }
@@ -233,7 +233,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
     const next = { ...form, ...patch };
     setForm(next);
     // Batches depend on these; the plan refreshes by itself once the change is saved.
-    const affectsPlan = (['accountIds', 'accountLimits', 'groupSize', 'mode', 'sendOrder', 'onMailboxDown', 'repeatWindowDays'] as const).some((k) => k in patch);
+    const affectsPlan = (['accountIds', 'accountLimits', 'groupSize', 'mode', 'sendOrder', 'onMailboxDown', 'followUpMode', 'repeatWindowDays'] as const).some((k) => k in patch);
     // Variables decide who has every value they need, so the plan follows the text too.
     const affectsVariables = ('subject' in patch || 'body' in patch) && /\{\{/.test(`${patch.subject ?? ''}${patch.body ?? ''}${form.subject}${form.body}`);
     setSaving('saving');
@@ -651,11 +651,12 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
 
           <Section n={3} title="The email" summary={stepSummary[3]} done={stepDone[3]}>
             <div className="space-y-3">
-              <label className="block"><span className={LABEL}>Subject</span><input ref={subjectRef} onFocus={() => (lastField.current = 'subject')} value={form.subject} onChange={(e) => edit({ subject: e.target.value })} className={FIELD} maxLength={300} />
+              {isFollowUp && <FollowUpTypeChoice value={form.followUpMode ?? 'THREAD'} onChange={(v) => edit(v === 'THREAD' ? { followUpMode: v, subject: parentSubject } : { followUpMode: v })} />}
+              <label className="block"><span className={LABEL}>Subject</span><input ref={subjectRef} onFocus={() => (lastField.current = 'subject')} value={form.subject} onChange={(e) => edit({ subject: e.target.value })} readOnly={isFollowUp && (form.followUpMode ?? 'THREAD') === 'THREAD'} className={FIELD} maxLength={300} />
                 {isFollowUp && (
-                  stripRe(form.subject).toLowerCase() === stripRe(parentSubject).toLowerCase()
-                    ? <span className="mt-0.5 block text-xs text-muted-foreground">Same subject as the original (with “Re:”), so Gmail keeps it in the original thread.</span>
-                    : <span className="mt-0.5 block text-xs text-amber-700 dark:text-amber-400">This subject differs from the original (“{parentSubject}”). Gmail may then show it as a separate conversation; the email is still sent.</span>
+                  (form.followUpMode ?? 'THREAD') === 'THREAD'
+                    ? <span className="mt-0.5 block text-xs text-muted-foreground">Kept the same as the original, so Gmail puts it in the original thread. Choose “Individual new email” above to change it.</span>
+                    : <span className="mt-0.5 block text-xs text-muted-foreground">An individual new email: it starts its own conversation, so the subject can be anything.</span>
                 )}
               </label>
               <div>
@@ -867,8 +868,9 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           </Section>
 
           <Section n={7} title="Check and send" summary={stepSummary[7]} done={stepDone[7]}>
-            {isFollowUp && <MailboxDownChoice value={form.onMailboxDown ?? 'WAIT'} onChange={(v) => edit({ onMailboxDown: v })} />}
-            {isFollowUp && check?.followUp && (
+            {isFollowUp && <FollowUpTypeChoice value={form.followUpMode ?? 'THREAD'} onChange={(v) => edit(v === 'THREAD' ? { followUpMode: v, subject: parentSubject } : { followUpMode: v })} />}
+            {isFollowUp && (form.followUpMode ?? 'THREAD') === 'THREAD' && <MailboxDownChoice value={form.onMailboxDown ?? 'WAIT'} onChange={(v) => edit({ onMailboxDown: v })} />}
+            {isFollowUp && (form.followUpMode ?? 'THREAD') === 'THREAD' && check?.followUp && (
               <p className="mb-3 rounded border bg-muted/30 p-2 text-sm">
                 <b>{check.followUp.replying.toLocaleString()}</b> email{check.followUp.replying === 1 ? '' : 's'} continue{check.followUp.replying === 1 ? 's' : ''} the original Gmail thread
                 {check.followUp.newThread > 0 && <> · <b>{check.followUp.newThread.toLocaleString()}</b> start{check.followUp.newThread === 1 ? 's' : ''} a new thread (new addresses, or sent from another mailbox)</>}.
@@ -989,7 +991,7 @@ function pickEditable(b: Blast) {
     name: b.name, mode: b.mode, toAddress: b.toAddress, subject: b.subject, body: b.body, format: b.format, includeSignature: b.includeSignature,
     fromName: b.fromName, replyTo: b.replyTo, ccAddresses: b.ccAddresses ?? [], accountIds: b.accountIds, accountLimits: b.accountLimits ?? {}, attachmentDocumentIds: b.attachmentDocumentIds,
     groupSize: b.groupSize, gapSeconds: b.gapSeconds, sendOrder: b.sendOrder ?? 'PARALLEL', repeatWindowDays: b.repeatWindowDays ?? 10,
-    ...(b.parentBlastId ? { onMailboxDown: b.onMailboxDown ?? 'WAIT' } : {}),
+    ...(b.parentBlastId ? { onMailboxDown: b.onMailboxDown ?? 'WAIT', followUpMode: b.followUpMode ?? 'THREAD' } : {}),
   };
 }
 

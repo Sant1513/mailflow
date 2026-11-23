@@ -161,6 +161,8 @@ export async function planFollowUpJobs(input: {
   rootCampaignId: string;
   organizationId: string;
   onMailboxDown: OnMailboxDown;
+  /** THREAD (default): reply in each person's earlier thread. NEW: an individual new email from the sender, no thread. */
+  mode?: 'THREAD' | 'NEW';
   sender: { id: string; emailAddress: string; displayName: string | null };
   emails: string[];
 }): Promise<Map<string, JobPlan>> {
@@ -168,6 +170,10 @@ export async function planFollowUpJobs(input: {
   const plans = new Map<string, JobPlan>();
   const own: Omit<JobPlan, 'replyThreadId' | 'inReplyToJobId' | 'blockedBy'> = { accountId: input.sender.id, accountEmail: input.sender.emailAddress, accountName: input.sender.displayName };
   if (!wanted.length) return plans;
+  if (input.mode === 'NEW') {
+    for (const email of wanted) plans.set(email, { ...own, replyThreadId: null, inReplyToJobId: null, blockedBy: null });
+    return plans;
+  }
 
   const jobs = await prisma.emailJob.findMany({
     where: { campaign: chainWhere(input.rootCampaignId), status: EmailJobStatus.SENT, toEmail: { in: wanted, mode: 'insensitive' } },

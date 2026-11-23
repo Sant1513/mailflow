@@ -44,10 +44,15 @@ const { markRecruiterReplied } = await import('@/lib/recruiterSend/replies');
 const cand = (over: Partial<import('@/lib/recruiterSend/followUp').Candidate> = {}) => ({ email: 'a@corp.com', name: null, data: null, sourceGroupId: 'g1', replied: false, opened: null, bounced: false, suppressed: false, lastSentAt: null, ...over });
 
 describe('the follow-up subject', () => {
-  it('has exactly one Re:', () => {
-    expect(fu.followUpSubject('Hiring drive')).toBe('Re: Hiring drive');
+  it('starts as the earlier email’s subject, unchanged (a reply in the thread must not change it)', () => {
+    expect(fu.followUpSubject('Hiring drive')).toBe('Hiring drive');
+    expect(fu.followUpSubject('  Test followup ')).toBe('Test followup');
     expect(fu.followUpSubject('Re: Hiring drive')).toBe('Re: Hiring drive');
-    expect(fu.followUpSubject('RE: re: Fwd: Hiring drive')).toBe('Re: Hiring drive');
+  });
+  it('the follow-up type is THREAD unless it says NEW', () => {
+    expect(fu.followUpModeOf(undefined)).toBe('THREAD');
+    expect(fu.followUpModeOf('NEW')).toBe('NEW');
+    expect(fu.followUpModeOf('whatever')).toBe('THREAD');
   });
 });
 
@@ -272,6 +277,18 @@ describe('sending a follow-up', () => {
     expect(sent[0].from).toBe('two@masaischool.com');
     expect(sent[0].threadId).toBeUndefined();
     expect(sent[0].inReplyTo).toBeUndefined();
+  });
+
+  it('"Individual new email": goes out as a new thread (no thread ids) from a chosen mailbox', async () => {
+    db.recruiterBlast.findMany.mockResolvedValueOnce([blast({ followUpMode: 'NEW', subject: 'A different subject' })]).mockResolvedValue([]);
+    db.recruiterBlastGroup.findFirst.mockImplementation(async (q: any) => (q.where.status === 'PENDING' ? { id: 'f1g', seq: 1, attempts: 0, inReplyToGroupId: null, plannedAccountId: 'a2' } : null));
+    groupsById.set('f1g', { inReplyToGroupId: null });
+    const r = await runRecruiterWorker({ budgetMs: 45_000, send: capture });
+    expect(r.sent).toBe(1);
+    expect(sent[0]).toMatchObject({ subject: 'A different subject' });
+    expect(sent[0].threadId).toBeUndefined();
+    expect(sent[0].inReplyTo).toBeUndefined();
+    expect(sent[0].references).toBeUndefined();
   });
 
   it('drops a recruiter who replied after the follow-up was prepared', async () => {

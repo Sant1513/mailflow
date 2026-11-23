@@ -84,7 +84,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   }
   // A follow-up that waits for the mailbox that sent the original can only go out from it.
   const isFollowUp = !!blast.parentBlastId;
-  if (isFollowUp && blast.onMailboxDown === 'WAIT' && plan.followUp?.missingMailboxes.length) {
+  if (isFollowUp && blast.followUpMode !== 'NEW' && blast.onMailboxDown === 'WAIT' && plan.followUp?.missingMailboxes.length) {
     const named = await prisma.emailProviderAccount.findMany({ where: { id: { in: plan.followUp.missingMailboxes } }, select: { emailAddress: true } });
     problems.push(`The original email went out from ${named.map((m) => m.emailAddress).join(', ') || 'a mailbox that is not chosen'}. Tick it in "Send from" so the follow-up stays in that thread, or choose “another mailbox (new thread)” when the mailbox is unavailable.`);
   }
@@ -109,7 +109,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
       }
       const created = await tx.recruiterBlastGroup.createManyAndReturn({
         // Each batch keeps the mailbox the check showed (PARALLEL: round robin across mailboxes).
-        data: groups.map((g, i) => ({ blastId: blast.id, seq: i + 1, recipientCount: g.length, plannedAccountId: plan.plannedAccountIds[i] ?? null, inReplyToGroupId: isFollowUp ? plan.groupSpecs[i]?.sourceGroupId ?? null : null })),
+        data: groups.map((g, i) => ({ blastId: blast.id, seq: i + 1, recipientCount: g.length, plannedAccountId: plan.plannedAccountIds[i] ?? null, inReplyToGroupId: isFollowUp && blast.followUpMode !== 'NEW' ? plan.groupSpecs[i]?.sourceGroupId ?? null : null })),
         select: { id: true, seq: true },
       });
       const bySeq = new Map(created.map((c) => [c.seq, c.id]));
