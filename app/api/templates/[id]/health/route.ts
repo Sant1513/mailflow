@@ -13,6 +13,7 @@ const healthSchema = z.object({
     .object({
       subject: z.string(),
       html: z.string(),
+      css: z.string().nullable().optional(),
       plainText: z.string().nullable().optional(),
     })
     .optional(),
@@ -49,7 +50,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   });
 
   const result = runHealthCheck({
-    template: { subject: source.subject, html: source.html, plainText: source.plainText },
+    template: { subject: source.subject, html: source.html, css: (source as { css?: string | null }).css ?? null, plainText: source.plainText },
     availableKeys,
     hasRecipientColumn,
     senderConnected: !!senderAccount,

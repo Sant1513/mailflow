@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -12,6 +12,7 @@ import { VariableMenu } from '@/components/email-editor/VariableMenu';
 import { AiWriter } from '@/components/ai/AiWriter';
 import { formatHtml } from '@/lib/templates/format';
 import { PaneDivider, usePaneWidths } from '@/components/email-editor/PaneDivider';
+import { VisualEditor, type VisualEditorHandle } from '@/components/email-editor/VisualEditor';
 
 // CodeMirror touches `document` on load, so it must not be server-rendered.
 const CodeEditor = dynamic(() => import('@/components/email-editor/CodeEditor').then((m) => m.CodeEditor), {
@@ -55,7 +56,19 @@ export default function TemplateEditorPage() {
   const [subject, setSubject] = useState('');
   const [html, setHtml] = useState('');
   const [css, setCss] = useState('');
-  const [tab, setTab] = useState<'html' | 'css'>('html');
+  // Visual is where most people work (edit the email as the recipient sees it); HTML and CSS are the code behind it.
+  const [tab, setTabState] = useState<'visual' | 'html' | 'css'>('visual');
+  const setTab = (t: 'visual' | 'html' | 'css') => {
+    setTabState(t);
+    try { localStorage.setItem('mailflow.template.tab', t); } catch { /* private window */ }
+  };
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('mailflow.template.tab');
+      if (saved === 'html' || saved === 'css' || saved === 'visual') setTabState(saved);
+    } catch { /* ignore */ }
+  }, []);
+  const visual = useRef<VisualEditorHandle>(null);
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
   /** Exact preview width from the slider; null = follow the desktop/mobile preset. */
   const [previewWidth, setPreviewWidth] = useState<number | null>(null);
@@ -193,7 +206,7 @@ export default function TemplateEditorPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        draft: { subject, html },
+        draft: { subject, html, css: css || null },
         ...(datasetId ? { datasetId } : {}),
       }),
     });
@@ -226,6 +239,8 @@ export default function TemplateEditorPage() {
   }
 
   function insertVariable(name: string) {
+    // In the Visual tab the field goes where the cursor is; in the code tabs it is added at the end of the HTML.
+    if (tab === 'visual' && html.trim()) return visual.current?.insertText(`{{${name}}}`);
     setHtml((prev) => `${prev}{{${name}}}`);
   }
 
@@ -475,18 +490,20 @@ export default function TemplateEditorPage() {
         {/* CENTER: code editor */}
         <div className={`${mobilePane === 'code' ? 'flex' : 'hidden'} min-w-0 flex-1 flex-col border-r lg:flex`}>
           <div className="flex items-center gap-1 border-b bg-muted px-2 py-1">
-            {(['html', 'css'] as const).map((t) => (
+            {(['visual', 'html', 'css'] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
                 className={`rounded px-2 py-1 text-xs ${tab === t ? 'bg-card font-medium shadow-sm' : 'text-muted-foreground'}`}
               >
-                {t.toUpperCase()}
+                {t === 'visual' ? 'Visual' : t.toUpperCase()}
               </button>
             ))}
           </div>
           <div className="min-h-0 flex-1 overflow-auto">
-            {tab === 'html' ? (
+            {tab === 'visual' ? (
+              <VisualEditor ref={visual} html={html} css={css} onChange={setHtml} columns={datasetColumns} />
+            ) : tab === 'html' ? (
               <CodeEditor value={html} onChange={setHtml} language="html" />
             ) : (
               <CodeEditor value={css} onChange={setCss} language="css" />

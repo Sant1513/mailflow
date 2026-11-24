@@ -1,4 +1,5 @@
 import { validateVariables } from './variables';
+import { checkEmailStandards } from './emailStandards';
 
 /**
  * §27 Email Health Check — the pre-flight run before a campaign can launch.
@@ -15,7 +16,7 @@ export interface HealthCheckItem {
 }
 
 export interface HealthCheckInput {
-  template: { subject: string; html: string; plainText?: string | null };
+  template: { subject: string; html: string; css?: string | null; plainText?: string | null };
   /** Column keys available on the dataset this template will be sent against. */
   availableKeys?: string[];
   /** Whether a recipient (EMAIL-typed) column exists on the dataset. */
@@ -134,6 +135,11 @@ export function runHealthCheck(input: HealthCheckInput): HealthCheckResult {
     items.push({ id: 'size', label: 'Message size', level: 'warn', detail: `${sizeKb.toFixed(0)}KB — Gmail clips messages over ~102KB.` });
   } else {
     items.push({ id: 'size', label: 'Message size', level: 'pass', detail: `${sizeKb.toFixed(1)}KB` });
+  }
+
+  // Email standards (mobile width, alt text, contrast, preheader, table layout…): advice only, never blocks a send.
+  for (const s of checkEmailStandards(template.html, input.template.css).items) {
+    if (s.level === 'warn') items.push({ id: `std-${s.id}`, label: s.label, level: 'warn', detail: s.detail });
   }
 
   const failCount = items.filter((i) => i.level === 'fail').length;

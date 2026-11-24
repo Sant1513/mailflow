@@ -89,7 +89,7 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
   );
 
   const health = runHealthCheck({
-    template: { subject: version.subject, html: version.html, plainText: version.plainText },
+    template: { subject: version.subject, html: version.html, css: (version as { css?: string | null }).css ?? null, plainText: version.plainText },
     availableKeys: columnKeys,
     hasRecipientColumn: !!emailColumnKeyOf(campaign.dataset),
     senderConnected: !!sender && sender.status === 'CONNECTED',
