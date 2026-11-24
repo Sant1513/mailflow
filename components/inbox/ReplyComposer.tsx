@@ -8,6 +8,8 @@ import { ReplyAssistant } from '@/components/ai/ReplyAssistant';
 import { formatHtml } from '@/lib/templates/format';
 import { htmlToPlainText } from '@/lib/templates/variables';
 import { normalizeHref } from '@/lib/email/links';
+import { EMAIL_FONT_SIZES, EMAIL_FONTS } from '@/lib/editor/convert';
+import { addFontFallbacks, applyPixelSize } from '@/lib/editor/dom';
 
 interface ContactSuggestion { id: string; name: string | null; primaryEmail: string; }
 
@@ -262,7 +264,20 @@ export function ReplyComposer({
 
   function exec(command: string, value?: string) {
     editorRef.current?.focus();
+    document.execCommand('styleWithCSS', false, 'true');
     document.execCommand(command, false, value);
+    syncFromEditor();
+  }
+  function applyFont(name: string) {
+    if (!name) return;
+    exec('fontName', name);
+    if (editorRef.current) addFontFallbacks(editorRef.current, name);
+    syncFromEditor();
+  }
+  function applySize(px: string) {
+    if (!px) return;
+    exec('fontSize', '7');
+    if (editorRef.current) applyPixelSize(editorRef.current, px);
     syncFromEditor();
   }
 
@@ -512,9 +527,22 @@ export function ReplyComposer({
         </div>
         {mode === 'write' && (
           <>
+            <select aria-label="Font" className="!w-auto !py-0.5 text-[11px]" value="" onChange={(e) => applyFont(e.target.value)}>
+              <option value="">Font</option>
+              {EMAIL_FONTS.map((f) => <option key={f.name} value={f.name} style={{ fontFamily: f.name }}>{f.name}</option>)}
+            </select>
+            <select aria-label="Size" className="!w-auto !py-0.5 text-[11px]" value="" onChange={(e) => applySize(e.target.value)}>
+              <option value="">Size</option>
+              {EMAIL_FONT_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
             <ToolButton title="Bold" onClick={() => exec('bold')}><b>B</b></ToolButton>
             <ToolButton title="Italic" onClick={() => exec('italic')}><i>I</i></ToolButton>
             <ToolButton title="Underline" onClick={() => exec('underline')}><u>U</u></ToolButton>
+            <ToolButton title="Strikethrough" onClick={() => exec('strikeThrough')}><s>S</s></ToolButton>
+            <label title="Text colour" className="flex h-6 items-center gap-0.5 rounded px-1 text-[11px] hover:bg-elevated">A<input type="color" aria-label="Text colour" defaultValue="#1a1a1a" onChange={(e) => exec('foreColor', e.target.value)} className="h-4 w-5 cursor-pointer border-0 bg-transparent p-0" /></label>
+            <ToolButton title="Align left" onClick={() => exec('justifyLeft')}>⇤</ToolButton>
+            <ToolButton title="Centre" onClick={() => exec('justifyCenter')}>↔</ToolButton>
+            <ToolButton title="Align right" onClick={() => exec('justifyRight')}>⇥</ToolButton>
             <ToolButton title="Bulleted list" onClick={() => exec('insertUnorderedList')}>•≡</ToolButton>
             <ToolButton title="Numbered list" onClick={() => exec('insertOrderedList')}>1≡</ToolButton>
             <ToolButton title="Remove formatting" onClick={() => exec('removeFormat')}>Tx</ToolButton>

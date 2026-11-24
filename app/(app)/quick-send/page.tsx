@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
+import { MessageEditor, type MessageEditorHandle } from '@/components/editor/MessageEditor';
 import { FollowUpTypeChoice, MailboxDownChoice, type Segment } from '@/components/recruiter-send/FollowUpPanel';
 import { OriginalQuickEmail, QuickFollowUpAudience, addressesIn, emailsInSegments, type FollowUpDetail } from '@/components/quick-send/QuickFollowUpPanel';
 import { EmailPreview } from '@/components/email-preview/EmailPreview';
@@ -149,7 +150,7 @@ function QuickSendCompose() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [library, setLibrary] = useState<{ id: string; name: string; fileName: string; size: number; fieldCount: number }[]>([]);
   const [uploading, setUploading] = useState(false);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const bodyRef = useRef<MessageEditorHandle>(null);
   const subjectRef = useRef<HTMLInputElement>(null);
   const [lastFocus, setLastFocus] = useState<'subject' | 'body'>('body');
 
@@ -391,9 +392,7 @@ function QuickSendCompose() {
       setSubject(subject.slice(0, at) + token + subject.slice(el.selectionEnd ?? at));
       return;
     }
-    const el = bodyRef.current;
-    const at = el?.selectionStart ?? body.length;
-    setBody(body.slice(0, at) + token + body.slice(el?.selectionEnd ?? at));
+    bodyRef.current?.insertText(token);
   }
 
   async function loadTemplate(id: string) {
@@ -681,10 +680,6 @@ function QuickSendCompose() {
                     ))}
                   </select>
                 )}
-                <div className="flex rounded-full border border-border p-0.5 text-[11px]">
-                  <button onClick={() => setFormat('text')} className={`rounded-full px-2 py-0.5 ${format === 'text' ? 'bg-foreground text-background' : 'text-muted-foreground'}`}>Simple</button>
-                  <button onClick={() => setFormat('html')} className={`rounded-full px-2 py-0.5 ${format === 'html' ? 'bg-foreground text-background' : 'text-muted-foreground'}`}>HTML</button>
-                </div>
               </div>
             </div>
 
@@ -708,23 +703,16 @@ function QuickSendCompose() {
             <label htmlFor="qs-body" className="mb-1 block text-xs font-medium">
               Message
             </label>
-            <textarea
+            <MessageEditor
               id="qs-body"
               ref={bodyRef}
               value={body}
+              format={format}
+              onChange={setBody}
+              onFormatChange={setFormat}
               onFocus={() => setLastFocus('body')}
-              onChange={(e) => {
-                const next = e.target.value;
-                // Pasting a designed HTML email into Simple mode: switch to HTML so it renders, not shows as code.
-                if (format === 'text' && looksLikeHtml(next) && next.length - body.length > 200) {
-                  setFormat('html');
-                  toast.success('That looks like an HTML email, so the message is now in HTML mode and will show as designed.');
-                }
-                setBody(next);
-              }}
               rows={12}
-              placeholder={format === 'text' ? 'Hi {{Name}},\n\nWrite your message here. Links become clickable automatically.\n\nRegards,\nPlacement Team' : '<p>Hi {{Name}},</p>\n<p>…</p>'}
-              className={`${FIELD} ${format === 'html' ? 'font-mono' : ''}`}
+              placeholderText={'Hi {{Name}},\n\nWrite your message here. Links become clickable automatically.\n\nRegards,\nPlacement Team'}
             />
             {fields.length > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-1 text-xs">

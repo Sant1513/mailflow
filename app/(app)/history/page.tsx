@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
@@ -42,21 +43,39 @@ interface ReceivedItem {
   conversation: { id: string; subject: string; status: string; contact: { id: string; name: string | null } };
 }
 
+interface RecruiterItem {
+  id: string;
+  email: string;
+  name: string | null;
+  status: string;
+  skipReason: string | null;
+  sentAt: string | null;
+  openedAt: string | null;
+  openCount: number;
+  repliedAt: string | null;
+  blast: { id: string; name: string; subject: string; round: number; parentBlastId: string | null };
+  group: { fromEmail: string | null } | null;
+}
+
 const SENT_BADGE: Record<string, string> = { SENT: 'badge-success', FAILED: 'badge-danger', SKIPPED: 'badge-neutral', QUEUED: 'badge-info', SENDING: 'badge-info', CANCELLED: 'badge-neutral' };
 const CLASS_BADGE: Record<string, string> = { HUMAN_REPLY: 'badge-success', BOUNCE: 'badge-danger', DELIVERY_FAILURE: 'badge-danger', OUT_OF_OFFICE: 'badge-warning', AUTO_REPLY: 'badge-neutral', UNKNOWN: 'badge-neutral' };
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 
 /** §61/§126 immutable email history for the workspace: everything sent, everything received. */
-export default function HistoryPage() {
-  const [direction, setDirection] = useState<'sent' | 'received'>('sent');
-  const [q, setQ] = useState('');
+function HistoryView() {
+  // A link can open a tab with a search already filled in (the Contacts page does this for Recruiter Bulk Send emails).
+  const params = useSearchParams();
+  const startTab = params.get('tab');
+  const [direction, setDirection] = useState<'sent' | 'received' | 'recruiter'>(startTab === 'recruiter' ? 'recruiter' : startTab === 'received' ? 'received' : 'sent');
+  const [recruiterMatches, setRecruiterMatches] = useState(0);
+  const [q, setQ] = useState((params.get('q') ?? '').slice(0, 200));
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
   // The rows and which tab they belong to: Sent and Received rows have different shapes, so a
   // tab only draws rows fetched for it (drawing Sent rows as Received crashed the page).
-  const [items, setItems] = useState<(SentItem | ReceivedItem)[]>([]);
-  const [itemsFor, setItemsFor] = useState<'sent' | 'received'>('sent');
+  const [items, setItems] = useState<(SentItem | ReceivedItem | RecruiterItem)[]>([]);
+  const [itemsFor, setItemsFor] = useState<'sent' | 'received' | 'recruiter'>('sent');
   const requestSeq = useRef(0);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [meta, setMeta] = useState({ total: 0, page: 1, pageCount: 1 });
@@ -82,6 +101,7 @@ export default function HistoryPage() {
     const json = await res.json();
     if (seq !== requestSeq.current) return;
     setItems(json.items ?? []);
+    setRecruiterMatches(direction === 'sent' ? json.recruiterMatches ?? 0 : 0);
     setItemsFor(direction);
     setCounts(json.counts ?? {});
     setMeta({ total: json.total, page: json.page, pageCount: json.pageCount });
@@ -94,7 +114,7 @@ export default function HistoryPage() {
     return () => clearTimeout(t);
   }, [load, q]);
 
-  const statusOptions = direction === 'sent' ? ['SENT', 'FAILED', 'SKIPPED', 'QUEUED', 'SENDING', 'CANCELLED'] : ['HUMAN_REPLY', 'BOUNCE', 'DELIVERY_FAILURE', 'OUT_OF_OFFICE', 'AUTO_REPLY', 'UNKNOWN'];
+  const statusOptions = direction === 'sent' ? ['SENT', 'FAILED', 'SKIPPED', 'QUEUED', 'SENDING', 'CANCELLED'] : direction === 'recruiter' ? ['SENT', 'BOUNCED', 'SKIPPED', 'PENDING'] : ['HUMAN_REPLY', 'BOUNCE', 'DELIVERY_FAILURE', 'OUT_OF_OFFICE', 'AUTO_REPLY', 'UNKNOWN'];
 
   return (
     <div className="p-4 sm:p-6">
@@ -102,10 +122,10 @@ export default function HistoryPage() {
         <div>
           <div className="eyebrow mb-2">Records are immutable</div>
           <h1 className="font-heading text-2xl font-bold tracking-tight">History</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Every campaign and Quick Send email this workspace sent, and the replies received, exactly as it happened. Recruiter Bulk Send has its own page.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Every campaign and Quick Send email this workspace sent, the Recruiter Bulk Send emails, and the replies received, exactly as it happened.</p>
         </div>
         <div className="flex rounded-full border border-border bg-card p-1">
-          {(['sent', 'received'] as const).map((d) => (
+          {(['sent', 'recruiter', 'received'] as const).map((d) => (
             <button
               key={d}
               onClick={() => {
@@ -118,7 +138,7 @@ export default function HistoryPage() {
               }}
               className={`rounded-full px-3 py-1 text-xs font-medium capitalize ${direction === d ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >
-              {d}
+              {d === 'recruiter' ? 'Recruiter Bulk Send' : d}
             </button>
           ))}
         </div>
@@ -131,7 +151,7 @@ export default function HistoryPage() {
             setQ(e.target.value);
             setPage(1);
           }}
-          placeholder={direction === 'sent' ? 'Search address, subject, campaign, error…' : 'Search sender, subject, text…'}
+          placeholder={direction === 'sent' ? 'Search address, subject, campaign, error…' : direction === 'recruiter' ? 'Search address, name, send name, subject…' : 'Search sender, subject, text…'}
           className="w-full !py-1.5 text-sm sm:w-72"
         />
         <div className="flex flex-wrap gap-1">
@@ -144,11 +164,56 @@ export default function HistoryPage() {
         </div>
       </div>
 
+      {direction === 'sent' && recruiterMatches > 0 && (
+        <p className="mb-3 rounded-lg border border-border bg-card px-3 py-2 text-sm" data-recruiter-hint>
+          Also found in <b>Recruiter Bulk Send</b>: {recruiterMatches.toLocaleString()} email{recruiterMatches === 1 ? '' : 's'} matching “{q.trim()}”.{' '}
+          <button className="underline" onClick={() => { setDirection('recruiter'); setItems([]); setLoading(true); setStatus(''); setPage(1); }}>Show them</button>
+        </p>
+      )}
+
       <div className="panel overflow-hidden">
         {loading || itemsFor !== direction ? (
           loadedOnce ? <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p> : <LoadingScreen context={[contextLine('Looking for “{}”…', q), status ? contextLine('Narrowing it down to {}…', status.replace(/_/g, ' ').toLowerCase()) : null]} />
         ) : items.length === 0 ? (
-          <p className="px-4 py-8 text-center text-sm text-muted-foreground">{direction === 'sent' ? 'Nothing has been sent yet.' : 'Nothing has been received yet — replies appear after Gmail sync.'}</p>
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">{direction === 'sent' ? 'Nothing has been sent yet.' : direction === 'recruiter' ? (q.trim() ? 'No Recruiter Bulk Send email matches that.' : 'No Recruiter Bulk Send emails yet.') : 'Nothing has been received yet — replies appear after Gmail sync.'}</p>
+        ) : direction === 'recruiter' ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2">To</th>
+                  <th className="px-4 py-2">Subject</th>
+                  <th className="hidden px-4 py-2 md:table-cell">Send</th>
+                  <th className="px-4 py-2">Outcome</th>
+                  <th className="hidden px-4 py-2 lg:table-cell">When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(items as RecruiterItem[]).map((r) => (
+                  <tr key={r.id} className="border-t border-border-subtle align-top">
+                    <td className="px-4 py-3">
+                      <span className="flex items-center gap-2.5">
+                        <Avatar email={r.email} name={r.name} size={28} />
+                        <span><span className="block">{r.email}</span>{r.name && <span className="block text-xs text-faint">{r.name}</span>}</span>
+                      </span>
+                    </td>
+                    <td className="max-w-[320px] truncate px-4 py-3" title={r.blast.subject}>{r.blast.subject}</td>
+                    <td className="hidden px-4 py-3 text-xs md:table-cell">
+                      <Link href={`/recruiter-send/${r.blast.id}`} className="hover:text-primary">{r.blast.name}</Link>
+                      <div className="text-faint">{r.blast.parentBlastId ? `Follow-up · round ${r.blast.round}` : 'Recruiter Bulk Send'}{r.group?.fromEmail ? ` · from ${r.group.fromEmail}` : ''}</div>
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      <span className={`badge ${r.status === 'SENT' ? 'badge-success' : r.status === 'BOUNCED' ? 'badge-danger' : 'badge-neutral'}`}>{r.status.toLowerCase()}</span>
+                      {r.skipReason && <div className="mt-1 max-w-[260px] truncate text-faint" title={r.skipReason}>{r.skipReason}</div>}
+                      {r.openCount > 0 && <div className="text-faint">opened {r.openCount}×</div>}
+                      {r.repliedAt && <div className="text-faint">replied {when(r.repliedAt)}</div>}
+                    </td>
+                    <td className="hidden px-4 py-3 text-xs text-muted-foreground lg:table-cell">{when(r.sentAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : direction === 'sent' ? (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -239,5 +304,14 @@ export default function HistoryPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/** The page: the tab and search may come from the link (useSearchParams needs a Suspense boundary). */
+export default function HistoryPage() {
+  return (
+    <Suspense fallback={null}>
+      <HistoryView />
+    </Suspense>
   );
 }

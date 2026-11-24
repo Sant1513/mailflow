@@ -9,18 +9,63 @@ import { EmailJobStatus, MessageDirection, Prisma } from '@prisma/client';
  * §61/§126 workspace email history. Two views over immutable rows:
  *   direction=sent      every EmailJob (campaign/automation sends) with its outcome
  *   direction=received  every inbound ConversationMessage with its classification
+ *   direction=recruiter  every recruiter in a Recruiter Bulk Send (own tables: no Contact or Record is made for them)
  * Filters: `q` (address / subject / campaign), `status`, `campaignId`, paging.
  */
 export const GET = withErrorHandling(async (req) => {
   const session = await requireSession();
   const url = new URL(req.url);
   const workspaceId = await resolveWorkspaceId(session, url.searchParams.get('workspaceId'));
-  const direction = url.searchParams.get('direction') === 'received' ? 'received' : 'sent';
+  const dir = url.searchParams.get('direction');
+  const direction = dir === 'received' ? 'received' : dir === 'recruiter' ? 'recruiter' : 'sent';
   const q = url.searchParams.get('q')?.trim();
   const status = url.searchParams.get('status')?.trim();
   const campaignId = url.searchParams.get('campaignId')?.trim();
   const page = Math.max(1, Number(url.searchParams.get('page') ?? '1'));
   const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') ?? '50')));
+
+  // Recruiter Bulk Send keeps its recipients in its own tables, so a recruiter emailed that way has no contact, record or
+  // campaign email: this view is where "what did we send to this address?" is answered for those sends.
+  const recruiterWhere = (search?: string): Prisma.RecruiterBlastRecipientWhereInput => ({
+    blast: { workspaceId },
+    ...(search
+      ? {
+          OR: [
+            { email: { contains: search, mode: 'insensitive' } },
+            { name: { contains: search, mode: 'insensitive' } },
+            { blast: { name: { contains: search, mode: 'insensitive' } } },
+            { blast: { subject: { contains: search, mode: 'insensitive' } } },
+          ],
+        }
+      : {}),
+  });
+  if (direction === 'recruiter') {
+    const where: Prisma.RecruiterBlastRecipientWhereInput = { ...recruiterWhere(q), ...(status ? { status } : {}) };
+    const [rows, total, byStatus] = await Promise.all([
+      prisma.recruiterBlastRecipient.findMany({
+        where,
+        orderBy: [{ sentAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true, email: true, name: true, status: true, skipReason: true, sentAt: true, openedAt: true, openCount: true, repliedAt: true,
+          blast: { select: { id: true, name: true, subject: true, round: true, parentBlastId: true } },
+          group: { select: { fromEmail: true } },
+        },
+      }),
+      prisma.recruiterBlastRecipient.count({ where }),
+      prisma.recruiterBlastRecipient.groupBy({ by: ['status'], where: recruiterWhere(q), _count: { _all: true } }),
+    ]);
+    return NextResponse.json({
+      direction,
+      items: rows,
+      total,
+      counts: Object.fromEntries(byStatus.map((s) => [s.status, s._count._all])),
+      page,
+      pageSize,
+      pageCount: Math.max(1, Math.ceil(total / pageSize)),
+    });
+  }
 
   if (direction === 'sent') {
     const where: Prisma.EmailJobWhereInput = {
@@ -66,9 +111,12 @@ export const GET = withErrorHandling(async (req) => {
       prisma.emailJob.count({ where }),
       prisma.emailJob.groupBy({ by: ['status'], where: { campaign: { workspaceId } }, _count: { _all: true } }),
     ]);
+    // A search that finds nothing here may still be an address emailed through Recruiter Bulk Send: say so.
+    const recruiterMatches = q && q.length >= 3 && !campaignId && !status ? await prisma.recruiterBlastRecipient.count({ where: recruiterWhere(q) }) : 0;
     return NextResponse.json({
       direction,
       items: jobs,
+      recruiterMatches,
       total,
       counts: Object.fromEntries(byStatus.map((s) => [s.status, s._count._all])),
       page,

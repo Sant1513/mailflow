@@ -32,6 +32,21 @@ export default function ContactsPage() {
   const [pageSize, setPageSize] = useState(50);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Recruiter Bulk Send keeps its recruiters in its own tables (no contact is made), so a search here can miss an address
+  // that was emailed that way: count them and point to where they are listed.
+  const [recruiterHits, setRecruiterHits] = useState(0);
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 3) { setRecruiterHits(0); return; }
+    let live = true;
+    const t = setTimeout(() => {
+      fetch(`/api/history?direction=recruiter&pageSize=1&q=${encodeURIComponent(term)}`, { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => live && setRecruiterHits(j?.total ?? 0))
+        .catch(() => undefined);
+    }, 400);
+    return () => { live = false; clearTimeout(t); };
+  }, [q]);
 
   // Names for contacts without one, from their lists and their replies (never overwrites).
   async function fillNames() {
@@ -97,6 +112,12 @@ export default function ContactsPage() {
         />
         <RecentlyEmailedFilter value={emailed} onChange={setEmailed} />
       </div>
+      {recruiterHits > 0 && (
+        <p className="mb-4 rounded-lg border border-border bg-card px-3 py-2 text-sm" data-recruiter-hint>
+          Also found in <b>Recruiter Bulk Send</b>: {recruiterHits.toLocaleString()} email{recruiterHits === 1 ? '' : 's'} matching “{q.trim()}”. Recruiters emailed that way are not saved as contacts.{' '}
+          <Link href={`/history?tab=recruiter&q=${encodeURIComponent(q.trim())}`} className="underline">See them in History</Link>
+        </p>
+      )}
 
       {error ? (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{error} <button type="button" onClick={() => setReload((n) => n + 1)} className="ml-2 underline">Try again</button></div>

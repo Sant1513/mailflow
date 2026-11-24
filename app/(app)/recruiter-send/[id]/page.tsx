@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { STATUS_STYLE, stripRe } from '@/lib/recruiterSend/ui';
+import { MessageEditor, type MessageEditorHandle } from '@/components/editor/MessageEditor';
 import { FollowUpAudience, FollowUpTypeChoice, MailboxDownChoice, OriginalEmail, type FollowUpContext } from '@/components/recruiter-send/FollowUpPanel';
 import { Avatar } from '@/components/ui/Avatar';
 import { LivePreview, Pager, SendSummary, WhoReceives, type MailboxShare, type PlannedBatch, type PlannedPerson } from '@/components/recruiter-send/RecruiterPreview';
@@ -119,7 +120,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   // The last list sent, so the email column can be chosen again without pasting again.
   const lastSource = useRef<Record<string, unknown> | null>(null);
   const subjectRef = useRef<HTMLInputElement | null>(null);
-  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const bodyRef = useRef<MessageEditorHandle | null>(null);
   const lastField = useRef<'subject' | 'body'>('body');
   const [ccText, setCcText] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -662,13 +663,18 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <span className="text-xs font-medium">Message</span>
-                  <span className="flex gap-1 text-xs">
-                    {(['text', 'html'] as const).map((f) => (
-                      <button key={f} type="button" onClick={() => edit({ format: f })} className={`rounded px-2 py-0.5 ${form.format === f ? 'bg-primary text-primary-foreground' : 'border'}`}>{f === 'text' ? 'Simple' : 'HTML'}</button>
-                    ))}
-                  </span>
                 </div>
-                <textarea ref={bodyRef} onFocus={() => (lastField.current = 'body')} value={form.body} onChange={(e) => edit({ body: e.target.value })} rows={10} className={`${FIELD} ${form.format === 'html' ? 'font-mono text-xs' : ''}`} placeholder={form.format === 'html' ? 'Paste your HTML email…' : 'Dear Hiring Team,\n\n…'} />
+                <MessageEditor
+                  ref={bodyRef}
+                  value={form.body}
+                  format={form.format}
+                  onChange={(v) => edit({ body: v })}
+                  onFormatChange={(f) => edit({ format: f })}
+                  onFocus={() => (lastField.current = 'body')}
+                  rows={10}
+                  placeholderText={'Dear Hiring Team,\n\n…'}
+                  placeholderHtml="Paste your HTML email…"
+                />
                 <p className="mt-1 text-xs text-muted-foreground">Links are sent exactly as written (no click tracking). An unsubscribe line is added at the bottom.</p>
                 <VariablePicker
                   columns={b.columns}
@@ -678,12 +684,12 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
                   subject={form.subject}
                   body={form.body}
                   onInsert={(token) => {
-                    const field = lastField.current;
-                    const el = field === 'subject' ? subjectRef.current : bodyRef.current;
-                    const text = field === 'subject' ? form.subject : form.body;
+                    if (lastField.current !== 'subject') return bodyRef.current?.insertText(token);
+                    const el = subjectRef.current;
+                    const text = form.subject;
                     const at = el?.selectionStart ?? text.length;
                     const end = el?.selectionEnd ?? at;
-                    edit(field === 'subject' ? { subject: text.slice(0, at) + token + text.slice(end) } : { body: text.slice(0, at) + token + text.slice(end) });
+                    edit({ subject: text.slice(0, at) + token + text.slice(end) });
                     requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(at + token.length, at + token.length); });
                   }}
                   onIndividual={() => edit({ mode: 'INDIVIDUAL', gapSeconds: 3 })}
