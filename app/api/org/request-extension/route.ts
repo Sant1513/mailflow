@@ -9,7 +9,7 @@ import { audit } from '@/lib/audit/log';
 export const dynamic = 'force-dynamic';
 
 /** One request per organisation every 12 hours: the Super Admins are told once, not on every click. */
-export const REQUEST_COOLDOWN_MS = 12 * 3_600_000;
+const REQUEST_COOLDOWN_MS = 12 * 3_600_000;
 
 const bodySchema = z.object({ message: z.string().trim().max(500).optional() });
 
