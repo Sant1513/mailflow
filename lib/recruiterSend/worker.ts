@@ -11,6 +11,7 @@ import { personalize } from '@/lib/recruiterSend/personalize';
 import { sendViaUpload, UPLOAD_THRESHOLD_BYTES } from '@/lib/recruiterSend/gmailUpload';
 import { readRef } from '@/lib/storage/files';
 import { allowedMailboxIds } from '@/lib/recruiterSend/access';
+import { sendLockReasonOf } from '@/lib/orgs/access';
 import { markRecruiterBounced, suppressRejectedRecruiter } from '@/lib/recruiterSend/replies';
 import { LAPTOP_SILENT_MS, readState } from '@/lib/system/serverState';
 import { audit } from '@/lib/audit/log';
@@ -204,9 +205,9 @@ async function checkMailbox(
  * One mailbox after another (SEQUENTIAL sends): the first chosen mailbox that can send this
  * message, or every reason none can.
  */
-async function chooseMailbox(blast: { id: string; organizationId: string; createdById: string; accountIds: string[]; accountLimits: unknown; ccAddresses?: string[] }, to: string, bcc: string[]) {
+async function chooseMailbox(blast: { id: string; organizationId: string; createdById: string; orgUnitId?: string | null; accountIds: string[]; accountLimits: unknown; ccAddresses?: string[] }, to: string, bcc: string[]) {
   const reasons: string[] = [];
-  const [used, allowed] = await Promise.all([sentPerAccount(blast.id), allowedMailboxIds(blast.organizationId, blast.createdById)]);
+  const [used, allowed] = await Promise.all([sentPerAccount(blast.id), allowedMailboxIds(blast.organizationId, blast.createdById, blast)]);
   for (const id of blast.accountIds) {
     const r = await checkMailbox(blast, id, bcc.length || 1, { used, allowed }, { to, bcc });
     if (r.account) return { account: r.account, reasons };
@@ -418,7 +419,7 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
   if (!pending.length) return { ready: [], nextGap: Infinity, waiting: null };
   const [used, allowed, lastSent, busyRows] = await Promise.all([
     sentPerAccount(blast.id),
-    allowedMailboxIds(blast.organizationId, blast.createdById),
+    allowedMailboxIds(blast.organizationId, blast.createdById, blast),
     prisma.recruiterBlastGroup.groupBy({ by: ['accountId'], where: { blastId: blast.id, status: { in: ['SENT', 'SENDING'] }, sentAt: { not: null } }, _max: { sentAt: true } }),
     prisma.recruiterBlastGroup.findMany({ where: { blastId: blast.id, status: 'SENDING' }, select: { accountId: true } }),
   ]);
@@ -548,6 +549,12 @@ export async function runRecruiterWorker(opts: {
     for (const blast of blasts) {
       if (timeLeft() <= 0 || stopped()) break;
       if (await finishIfDone(blast.id)) continue;
+      // An expired or disabled organisation does not send: the send waits (it is not failed) and carries on by itself once renewed.
+      const lockNote = await sendLockReasonOf(blast);
+      if (lockNote) {
+        await setWaiting(blast, lockNote);
+        continue;
+      }
 
       if (blast.sendOrder !== 'SEQUENTIAL') {
         if (round.length >= maxParallel) continue;

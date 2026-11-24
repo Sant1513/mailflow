@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db/client';
 import { cronAuthorised } from '@/lib/cron/auth';
 import { dispatchDailyReport } from '@/lib/digest/dispatch';
 import { syncOrgBounces } from '@/lib/email/bounces';
+import { sendRenewalReminders } from '@/lib/orgs/reminders';
 
 export const maxDuration = 60;
 
@@ -19,6 +20,8 @@ export async function GET(req: Request) {
     // Daily backstop: every workspace has every bounce known in the organisation.
     const bouncesAdded = await syncOrgBounces(org.id).catch((err) => { console.error('[daily] bounce sync failed', err); return 0; });
     if (bouncesAdded) console.log(`[daily] added ${bouncesAdded} org-wide bounce(s) to workspaces that lacked them`);
+    // Renewal reminders to the Super Admins (each threshold once); never allowed to break the report.
+    await sendRenewalReminders(org.id).catch((err) => console.error('[daily] renewal reminders failed', err));
     try {
       results.push(await dispatchDailyReport(org.id));
     } catch (err) {

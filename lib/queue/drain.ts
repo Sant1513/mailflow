@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db/client';
 import { processEmailJob, reconcileBatchStatus } from '@/lib/email/processJob';
+import { sendLockReasonOf } from '@/lib/orgs/access';
 import { SendEmailError, type EmailProvider } from '@/lib/email/provider';
 import { fallbackOptIns, holdReasonText, type HoldReason } from '@/lib/campaigns/fallback';
 import { EmailJobStatus, BatchStatus } from '@prisma/client';
@@ -31,6 +32,8 @@ export interface DrainResult {
   rateLimited: boolean;
   /** Sending from this mailbox is on hold: Google's daily limit is near, or Gmail asked us to back off. */
   heldReason?: 'daily_limit' | 'backoff' | 'disconnected';
+  /** The campaign's organisation is expired or disabled: nothing was sent, everything stays queued. */
+  lockedReason?: string;
 }
 
 function ratePerMinute(): number {
@@ -206,6 +209,16 @@ export interface DrainOptions {
   providerFactory?: (account: any) => EmailProvider;
 }
 
+/** Why this campaign's organisation may not send now (null = it may). A failed lookup never blocks sending. */
+async function campaignLockReason(campaignId: string): Promise<string | null> {
+  try {
+    const c = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { orgUnitId: true, createdById: true } });
+    return c ? await sendLockReasonOf(c) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function drainBatch(batchId: string, options: number | DrainOptions = {}): Promise<DrainResult> {
   // Accepts a bare number for convenience: drainBatch(id, 10).
   const opts: DrainOptions = typeof options === 'number' ? { limit: options } : options;
@@ -226,6 +239,13 @@ export async function drainBatch(batchId: string, options: number | DrainOptions
       batchStatus: batch.status,
       rateLimited: false,
     };
+  }
+
+  // An expired or disabled organisation does not send: the batch is left as it is and carries on when the organisation is renewed.
+  const lockReason = await campaignLockReason(batch.campaignId);
+  if (lockReason) {
+    const remaining = await prisma.emailJob.count({ where: { batchId, status: EmailJobStatus.QUEUED } });
+    return { batchId, processed: 0, sent: 0, failed: 0, skipped: 0, remaining, batchStatus: batch.status, rateLimited: false, lockedReason: lockReason };
   }
 
   // Conditional, so a Pause or Cancel landing between the read above and this write is not undone.

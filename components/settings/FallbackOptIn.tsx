@@ -42,7 +42,7 @@ export function FallbackOptIn() {
         <span>
           <span className="font-medium">Allow my mailbox as a backup sender</span>
           <span className="mt-0.5 block text-xs text-muted-foreground">
-            Teammates can add {state.mailbox.emailAddress} to a campaign as a backup. It is used only when their own mailbox reaches
+            Teammates in your organisation can add {state.mailbox.emailAddress} to a send as a backup (people in other organisations never can). It is used only when their own mailbox reaches
             Google&apos;s daily limit, is asked to slow down, or is disconnected. Emails then go out from your address (counting towards
             your daily limit) and replies come to your inbox and to the campaign in MailFlow. You can turn this off at any time.
           </span>

@@ -8,6 +8,7 @@ import { buildReferences, buildQuotedTrail } from '@/lib/email/mime';
 import { sanitizeEmailHtml } from '@/lib/templates/sanitize';
 import { gmailThreadOf } from '@/lib/recruiterSend/replies';
 import { MessageDirection, EmailProvider as EmailProviderEnum } from '@prisma/client';
+import { isOrgLocked } from '@/lib/orgs/access';
 
 /** Shared header-only, constant-time check (lib/cron/auth.ts). */
 const authorised = cronAuthorised;
@@ -39,6 +40,10 @@ export async function GET(req: Request) {
 
   for (const reply of pending) {
     const conversation = reply.conversation;
+
+    // A locked (expired or disabled) organisation does not send: the reply stays scheduled and goes after it is renewed.
+    const orgUnitId = (await prisma.workspace.findUnique({ where: { id: conversation.workspaceId }, select: { orgUnitId: true } }))?.orgUnitId ?? null;
+    if (await isOrgLocked(orgUnitId)) continue;
 
     // Find the Gmail account for this conversation's workspace + original account.
     const sender = await prisma.emailProviderAccount.findUnique({

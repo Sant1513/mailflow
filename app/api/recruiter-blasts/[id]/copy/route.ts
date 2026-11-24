@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { loadBlast, requireBlastAdmin, sendableMailboxes } from '@/lib/recruiterSend/access';
+import { orgOfSend, resolveSendOrg } from '@/lib/orgs/units';
 
 /** Copy a recruiter send into a new draft: same recruiters, email, mailboxes and settings. */
 export const dynamic = 'force-dynamic';
@@ -13,13 +14,17 @@ export const POST = withErrorHandling(async (_req, { params }: { params: { id: s
   const source = await loadBlast(session, params.id);
   if (!source) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   // Keep only mailboxes this admin may still use.
-  const allowed = new Set((await sendableMailboxes(session)).map((m) => m.id));
+  // The copy is made as the same organisation when this admin may (their own, or any for a Super Admin); else as their own.
+  const sourceOrg = await orgOfSend(source);
+  const copyOrg = await resolveSendOrg(session, sourceOrg).catch(() => resolveSendOrg(session, null));
+  const allowed = new Set((await sendableMailboxes(session, copyOrg.id)).map((m) => m.id));
   const accountIds = source.accountIds.filter((id) => allowed.has(id));
   const limits = (source.accountLimits && typeof source.accountLimits === 'object' ? source.accountLimits : {}) as Record<string, number>;
 
   const copy = await prisma.recruiterBlast.create({
     data: {
       organizationId: session.organizationId,
+      orgUnitId: copyOrg.id,
       workspaceId: session.workspaceId!,
       createdById: session.userId,
       name: `Copy of ${source.name}`.slice(0, 200),

@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db/client';
+import { isOrgLocked } from '@/lib/orgs/access';
 import { evaluateCondition, describeCondition, type Condition } from './conditions';
 import { checkFrequency, checkStopConditions, type FrequencyPolicy } from './frequency';
 import { renderTemplate } from '@/lib/templates/variables';
@@ -116,6 +117,11 @@ export async function evaluateAutomationForRecord(opts: {
     include: { versions: { orderBy: { version: 'desc' }, take: 1 } },
   });
   const version = automation?.versions[0];
+
+  // An expired or disabled organisation does not send: automations do nothing while it is locked (a preview still works).
+  if (automation && performActions && (await isOrgLocked(await workspaceOrgUnit(automation.workspaceId)))) {
+    return { result: 'SKIPPED', conditionsMet: false, actionTaken: null, reason: 'The organisation is locked (expired or disabled), so automations are paused.' };
+  }
 
   if (!automation || !version) {
     return { result: 'ERROR', conditionsMet: false, actionTaken: null, reason: 'Automation or version not found.' };
@@ -446,12 +452,17 @@ async function performSendEmail(opts: {
  * Entry point called after a record is created or updated. Finds every
  * enabled automation whose trigger matches and evaluates each one.
  */
+async function workspaceOrgUnit(workspaceId: string): Promise<string | null> {
+  return (await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { orgUnitId: true } }).catch(() => null))?.orgUnitId ?? null;
+}
+
 export async function onRecordChanged(opts: {
   recordId: string;
   datasetId: string;
   workspaceId: string;
   triggerType: 'RECORD_CREATED' | 'RECORD_UPDATED';
 }): Promise<EvaluateResult[]> {
+  if (await isOrgLocked(await workspaceOrgUnit(opts.workspaceId))) return [];
   const automations = await prisma.automation.findMany({
     where: {
       workspaceId: opts.workspaceId,

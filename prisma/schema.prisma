@@ -32,6 +32,65 @@ enum UserStatus {
   DISABLED
 }
 
+/// A team / business unit inside the company (Operations, HR, Tech, Curriculum, Neev Labs…), shown in the app as an
+/// "Organisation". Every user belongs to exactly one (the Super Admin assigns it when approving, and can change it).
+/// A send is made "as" one of them and may use only mailboxes of that organisation: that is what keeps one team's
+/// (or brand's) mailboxes from sending another's email. The row above (Organization) is the company: suppression lists
+/// and the repeat guard stay company-wide on purpose, so a bounce or "emailed recently" is known to every team.
+model OrgUnit {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  /// Domains its mailboxes may send from (e.g. ["masaischool.com"]). Empty = any domain, but still only its members' mailboxes.
+  domains        String[] @default([])
+  /// ACTIVE | DISABLED. A disabled organisation is locked completely (docs/org-lifecycle.md).
+  status         String   @default("ACTIVE")
+  /// Most ACTIVE people it may have; null = unlimited.
+  seatLimit      Int?
+  /// End of the paid / allowed period (to 23:59:59 India time that day); null = no expiry.
+  validUntil     DateTime?
+  /// Days after validUntil before everything but the Dashboard locks (0 = lock at once).
+  graceDays      Int      @default(0)
+  /// The renewal reminder (days left: 30, 14, 7, 3, 1, 0) last sent to the Super Admins, so each is sent once.
+  lastReminderDays Int?
+  /// Private note for the Super Admin (customer, plan, contact).
+  billingNote    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  users        User[]
+  workspaces   Workspace[]
+  payments     OrgPayment[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+/// One activation / extension of an organisation, recorded when the payment arrives (taken outside MailFlow).
+model OrgPayment {
+  id                String   @id @default(cuid())
+  orgUnitId         String
+  /// ACTIVATE (first time or after a lapse) | EXTEND | ADJUST (correction, no payment)
+  kind              String   @default("EXTEND")
+  /// Amount in the smallest unit (paise / cents); null when not recorded.
+  amountMinor       Int?
+  currency          String   @default("INR")
+  /// Transaction id / invoice number.
+  reference         String?
+  note              String?
+  /// Days added, when the extension was "add N days".
+  days              Int?
+  previousValidUntil DateTime?
+  validUntil        DateTime?
+  recordedById      String
+  createdAt         DateTime @default(now())
+
+  orgUnit OrgUnit @relation(fields: [orgUnitId], references: [id], onDelete: Cascade)
+
+  @@index([orgUnitId, createdAt])
+}
+
 model Organization {
   id            String   @id @default(cuid())
   name          String
@@ -40,6 +99,7 @@ model Organization {
   updatedAt     DateTime @updatedAt
 
   users               User[]
+  orgUnits            OrgUnit[]
   workspaces          Workspace[]
   auditLogs           AuditLog[]
   contacts            Contact[]
@@ -71,6 +131,9 @@ model User {
   emailSignature   String?  @db.Text
 
   organization           Organization           @relation(fields: [organizationId], references: [id])
+  /// The organisation (team) this user belongs to; set by a Super Admin at approval. Null only while pending.
+  orgUnitId              String?
+  orgUnit                OrgUnit?               @relation(fields: [orgUnitId], references: [id], onDelete: SetNull)
   ownedWorkspaces        Workspace[]            @relation("WorkspaceOwner")
   workspaceMemberships   WorkspaceMember[]
   accounts               Account[]
@@ -145,6 +208,9 @@ model Workspace {
   updatedAt      DateTime @updatedAt
 
   organization Organization      @relation(fields: [organizationId], references: [id])
+  /// Follows its owner's organisation (kept in step when the Super Admin changes it).
+  orgUnitId    String?
+  orgUnit      OrgUnit?          @relation(fields: [orgUnitId], references: [id], onDelete: SetNull)
   owner        User              @relation("WorkspaceOwner", fields: [ownerId], references: [id])
   members      WorkspaceMember[]
 
@@ -531,6 +597,8 @@ model Campaign {
   onMailboxDown            String         @default("WAIT")
   /// THREAD: reply in the original Gmail thread, same subject | NEW: an individual new email with its own subject.
   followUpMode             String         @default("THREAD")
+  /// The organisation this send was made as (its mailboxes only). Null on old sends = the creator's organisation then.
+  orgUnitId                String?
   createdAt                DateTime       @default(now())
   updatedAt                DateTime       @updatedAt
 
@@ -1578,6 +1646,8 @@ model RecruiterBlast {
   onMailboxDown   String    @default("WAIT")
   /// THREAD: reply in the original Gmail thread, same subject | NEW: an individual new email with its own subject.
   followUpMode    String    @default("THREAD")
+  /// The organisation this send was made as (its mailboxes only). Null on old sends = the creator's organisation then.
+  orgUnitId       String?
   /// Repeat guard: a recruiter who was emailed from MailFlow (any recruiter send, campaign or Quick
   /// Send) in the last N days is skipped unless the admin ticks "send again". 0 = no check.
   /// Follow-ups are exempt: re-emailing the same recruiters is their point.

@@ -7,7 +7,7 @@ import { audit } from '@/lib/audit/log';
 
 /** The caller's own profile — the only things a person edits about themselves. */
 export const GET = withErrorHandling(async () => {
-  const session = await requireSession();
+  const session = await requireSession({ allowLocked: true }); // the lock screen and top bar need to know who is signed in
   const me = await prisma.user.findUnique({ where: { id: session.userId }, select: { id: true, name: true, email: true, role: true, slackUserId: true } });
   return NextResponse.json({ me });
 });

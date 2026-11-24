@@ -15,9 +15,10 @@ const check = (n: string, ok: boolean, x?: unknown) => { ok ? pass++ : fail++; c
 async function main() {
   if (!/:5433\//.test(process.env.DATABASE_URL ?? '')) throw new Error('Run against the laptop standby (5433) only.');
   const org = await prisma.organization.findFirstOrThrow({ where: { allowedDomain: 'masaischool.com' } });
+  const unit = await prisma.orgUnit.findFirstOrThrow({ where: { organizationId: org.id }, orderBy: { createdAt: 'asc' } });
   const tag = Date.now();
-  const u = await prisma.user.create({ data: { organizationId: org.id, googleId: `qa-mv-${tag}`, email: `qa-mv-${tag}@masaischool.com`, name: 'QA Mover', role: Role.SUPER_ADMIN } });
-  const w = await prisma.workspace.create({ data: { organizationId: org.id, ownerId: u.id, name: 'QA mover ws' } });
+  const u = await prisma.user.create({ data: { organizationId: org.id, orgUnitId: unit.id, googleId: `qa-mv-${tag}`, email: `qa-mv-${tag}@masaischool.com`, name: 'QA Mover', role: Role.SUPER_ADMIN } });
+  const w = await prisma.workspace.create({ data: { organizationId: org.id, orgUnitId: unit.id, ownerId: u.id, name: 'QA mover ws' } });
   const token = crypto.randomBytes(32).toString('hex');
   await prisma.session.create({ data: { sessionToken: token, userId: u.id, expires: new Date(Date.now() + 3600_000) } });
   const blast = await prisma.recruiterBlast.create({ data: { organizationId: org.id, workspaceId: w.id, createdById: u.id, name: 'QA move send', subject: 's', html: '<p>x</p>', plainText: 'x', body: 'x', status: 'SENDING', startedAt: new Date(), runOn: 'cloud' } });

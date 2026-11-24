@@ -6,7 +6,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 
 /** §87 notification centre: the caller's own notifications, newest first. */
 export const GET = withErrorHandling(async (req) => {
-  const session = await requireSession();
+  const session = await requireSession({ allowLocked: true }); // the bell stays readable on the lock screen
   const url = new URL(req.url);
   const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit') ?? '20')));
   const [items, unread] = await Promise.all([
@@ -23,7 +23,7 @@ const markSchema = z.object({
 
 /** Mark notifications read — only the caller's own rows can ever be touched. */
 export const POST = withErrorHandling(async (req) => {
-  const session = await requireSession();
+  const session = await requireSession({ allowLocked: true });
   const body = markSchema.parse(await req.json());
   const result = await prisma.notification.updateMany({
     where: { userId: session.userId, read: false, ...(body.all ? {} : { id: { in: body.ids ?? [] } }) },

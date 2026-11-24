@@ -12,6 +12,7 @@ export const GET = withErrorHandling(async () => {
     where: { organizationId: session.organizationId },
     orderBy: { createdAt: 'asc' },
     include: {
+      orgUnit: { select: { id: true, name: true } },
       ownedWorkspaces: {
         include: { _count: { select: { contacts: true, campaigns: true } } },
       },
@@ -29,6 +30,7 @@ export const GET = withErrorHandling(async () => {
       status: u.status,
       lastLoginAt: u.lastLoginAt,
       slackUserId: u.slackUserId,
+      orgUnit: u.orgUnit,
       workspace: u.ownedWorkspaces[0]
         ? {
             id: u.ownedWorkspaces[0].id,

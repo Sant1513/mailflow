@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { allowedMailboxIds, loadBlast, requireBlastAdmin, requireBlastReader } from '@/lib/recruiterSend/access';
+import { orgOfSend } from '@/lib/orgs/units';
 import { applyAudience, FOLLOW_UP_SEGMENTS, followUpSubject, LEGACY_AUDIENCES, NOT_REPLIED_SEGMENTS, parseSegments } from '@/lib/recruiterSend/followUp';
 
 /**
@@ -81,7 +82,7 @@ export const POST = withErrorHandling(async (req) => {
   if (open) return NextResponse.json({ error: 'A follow-up to this send is already ' + (open.status === 'SENDING' ? 'sending' : open.status.toLowerCase()) + '. Wait for it to finish (or cancel it) before making another.', existingId: open.id }, { status: 409 });
 
   // The mailboxes that carried the chain, so the follow-up can reply from them (kept to ones this admin may still use).
-  const allowed = await allowedMailboxIds(session.organizationId, session.userId);
+  const allowed = await allowedMailboxIds(session.organizationId, session.userId, parent);
   const used = await prisma.recruiterBlastGroup.findMany({
     where: { status: 'SENT', accountId: { not: null }, blast: { OR: [{ id: rootId }, { rootBlastId: rootId }] } },
     distinct: ['accountId'],
@@ -93,6 +94,7 @@ export const POST = withErrorHandling(async (req) => {
   const draft = await prisma.recruiterBlast.create({
     data: {
       organizationId: session.organizationId,
+      orgUnitId: await orgOfSend(parent),
       workspaceId: session.workspaceId!,
       createdById: session.userId,
       name: `Follow-up ${parent.round} · ${parent.name}`.slice(0, 200),

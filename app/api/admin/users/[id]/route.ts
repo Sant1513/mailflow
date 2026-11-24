@@ -4,11 +4,15 @@ import { prisma } from '@/lib/db/client';
 import { requireRole } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
+import { assignUserToOrg } from '@/lib/orgs/units';
+import { seatProblem } from '@/lib/orgs/seats';
 import { Role, UserStatus } from '@prisma/client';
 
 const patchSchema = z.object({
   role: z.nativeEnum(Role).optional(),
   status: z.nativeEnum(UserStatus).optional(),
+  /** The organisation (team) the person belongs to: chosen when approving, changeable later. */
+  orgUnitId: z.string().trim().min(1).max(64).optional(),
   /** Slack member id (U…); empty string clears it. */
   slackUserId: z.string().trim().max(40).regex(/^(U|W)[A-Z0-9]{6,}$|^$/, 'Slack member ids look like U04ABCDEF').optional(),
 });
@@ -35,9 +39,23 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
     if (!others) return NextResponse.json({ error: 'This is the last active Super Admin. Make someone else a Super Admin first.' }, { status: 400 });
   }
 
+  // Approving needs an organisation: a person without one could not send as anyone.
+  if (body.status === 'ACTIVE' && target.status !== 'ACTIVE' && !target.orgUnitId && !body.orgUnitId) {
+    return NextResponse.json({ error: 'Choose an organisation for this person before approving them.' }, { status: 400 });
+  }
+  // Approving or re-enabling someone takes a seat in their organisation (the one chosen now, else the one they have).
+  if (body.status === 'ACTIVE' && target.status !== 'ACTIVE') {
+    const seatMsg = await seatProblem(body.orgUnitId ?? target.orgUnitId, target.id);
+    if (seatMsg) return NextResponse.json({ error: seatMsg, code: 'SEAT_LIMIT' }, { status: 409 });
+  }
+  if (body.orgUnitId) {
+    const placed = await assignUserToOrg(session, target.id, body.orgUnitId);
+    if (!placed) return NextResponse.json({ error: 'That organisation does not exist.' }, { status: 400 });
+  }
+  const { orgUnitId: _org, ...rest } = body;
   const updated = await prisma.user.update({
     where: { id: target.id },
-    data: { ...body, ...(body.slackUserId !== undefined ? { slackUserId: body.slackUserId || null } : {}) },
+    data: { ...rest, ...(body.slackUserId !== undefined ? { slackUserId: body.slackUserId || null } : {}) },
   });
 
   // Disabling (or sending back to pending) signs them out everywhere at once. Role changes need

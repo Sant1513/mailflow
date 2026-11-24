@@ -53,7 +53,7 @@ interface RecruiterItem {
   openedAt: string | null;
   openCount: number;
   repliedAt: string | null;
-  blast: { id: string; name: string; subject: string; round: number; parentBlastId: string | null };
+  blast: { id: string; name: string; subject: string; round: number; parentBlastId: string | null; sentBy?: string | null; orgName?: string | null };
   group: { fromEmail: string | null } | null;
 }
 
@@ -69,6 +69,17 @@ function HistoryView() {
   const startTab = params.get('tab');
   const [direction, setDirection] = useState<'sent' | 'received' | 'recruiter'>(startTab === 'recruiter' ? 'recruiter' : startTab === 'received' ? 'received' : 'sent');
   const [recruiterMatches, setRecruiterMatches] = useState(0);
+  // Recruiter Bulk Send emails are for admins: an Admin sees their organisation's, a Super Admin every organisation's.
+  const [canSeeRecruiters, setCanSeeRecruiters] = useState<boolean | null>(null);
+  const [rFilters, setRFilters] = useState<{ senders: { id: string; name: string }[]; orgs: { id: string; name: string }[] }>({ senders: [], orgs: [] });
+  const [orgFilter, setOrgFilter] = useState('');
+  const [senderFilter, setSenderFilter] = useState('');
+  useEffect(() => {
+    fetch('/api/history?direction=recruiter&pageSize=1', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setCanSeeRecruiters(!!j?.canSee))
+      .catch(() => setCanSeeRecruiters(false));
+  }, []);
   const [q, setQ] = useState((params.get('q') ?? '').slice(0, 200));
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
@@ -87,6 +98,8 @@ function HistoryView() {
     const qs = new URLSearchParams({ direction, page: String(page) });
     if (q.trim()) qs.set('q', q.trim());
     if (status) qs.set('status', status);
+    if (direction === 'recruiter' && orgFilter) qs.set('org', orgFilter);
+    if (direction === 'recruiter' && senderFilter) qs.set('sender', senderFilter);
     const res = await fetch(`/api/history?${qs}`).catch(() => null);
     if (seq !== requestSeq.current) return; // a newer request (other tab, new search) wins
     if (!res?.ok) {
@@ -102,12 +115,13 @@ function HistoryView() {
     if (seq !== requestSeq.current) return;
     setItems(json.items ?? []);
     setRecruiterMatches(direction === 'sent' ? json.recruiterMatches ?? 0 : 0);
+    if (direction === 'recruiter') setRFilters(json.filters ?? { senders: [], orgs: [] });
     setItemsFor(direction);
     setCounts(json.counts ?? {});
     setMeta({ total: json.total, page: json.page, pageCount: json.pageCount });
     setLoading(false);
     setLoadedOnce(true);
-  }, [direction, q, status, page]);
+  }, [direction, q, status, page, orgFilter, senderFilter]);
 
   useEffect(() => {
     const t = setTimeout(load, q ? 250 : 0);
@@ -125,7 +139,7 @@ function HistoryView() {
           <p className="mt-1 text-sm text-muted-foreground">Every campaign and Quick Send email this workspace sent, the Recruiter Bulk Send emails, and the replies received, exactly as it happened.</p>
         </div>
         <div className="flex rounded-full border border-border bg-card p-1">
-          {(['sent', 'recruiter', 'received'] as const).map((d) => (
+          {(['sent', 'recruiter', 'received'] as const).filter((d) => d !== 'recruiter' || canSeeRecruiters || direction === 'recruiter').map((d) => (
             <button
               key={d}
               onClick={() => {
@@ -164,6 +178,23 @@ function HistoryView() {
         </div>
       </div>
 
+      {direction === 'recruiter' && (rFilters.orgs.length > 0 || rFilters.senders.length > 1) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs" data-recruiter-filters>
+          {rFilters.orgs.length > 0 && (
+            <select value={orgFilter} onChange={(e) => { setOrgFilter(e.target.value); setPage(1); }} className="input !w-auto !py-1 text-xs" aria-label="Organisation">
+              <option value="">All organisations</option>
+              {rFilters.orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          )}
+          {rFilters.senders.length > 1 && (
+            <select value={senderFilter} onChange={(e) => { setSenderFilter(e.target.value); setPage(1); }} className="input !w-auto !py-1 text-xs" aria-label="Sent by">
+              <option value="">Anyone who sent</option>
+              {rFilters.senders.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          )}
+        </div>
+      )}
+
       {direction === 'sent' && recruiterMatches > 0 && (
         <p className="mb-3 rounded-lg border border-border bg-card px-3 py-2 text-sm" data-recruiter-hint>
           Also found in <b>Recruiter Bulk Send</b>: {recruiterMatches.toLocaleString()} email{recruiterMatches === 1 ? '' : 's'} matching “{q.trim()}”.{' '}
@@ -201,6 +232,7 @@ function HistoryView() {
                     <td className="hidden px-4 py-3 text-xs md:table-cell">
                       <Link href={`/recruiter-send/${r.blast.id}`} className="hover:text-primary">{r.blast.name}</Link>
                       <div className="text-faint">{r.blast.parentBlastId ? `Follow-up · round ${r.blast.round}` : 'Recruiter Bulk Send'}{r.group?.fromEmail ? ` · from ${r.group.fromEmail}` : ''}</div>
+                      {(r.blast.sentBy || r.blast.orgName) && <div className="text-faint">{r.blast.sentBy ? `by ${r.blast.sentBy}` : ''}{r.blast.sentBy && r.blast.orgName ? ' · ' : ''}{r.blast.orgName ?? ''}</div>}
                     </td>
                     <td className="px-4 py-3 text-xs">
                       <span className={`badge ${r.status === 'SENT' ? 'badge-success' : r.status === 'BOUNCED' ? 'badge-danger' : 'badge-neutral'}`}>{r.status.toLowerCase()}</span>

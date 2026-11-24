@@ -35,7 +35,7 @@ interface LaptopStatus { laptopOnline: boolean; activeServer: 'cloud' | 'laptop'
 interface Mailbox { id: string; emailAddress: string; ownerName: string | null; status: string; own: boolean; sentLast24h: number; dailyLimit: number }
 interface Group { id: string; seq: number; status: string; recipientCount: number; fromEmail: string | null; sentAt: string | null; openCount: number; firstOpenedAt: string | null; lastOpenedAt: string | null; error: string | null }
 interface RecipientRow { email: string; name: string | null; status: string; skipReason: string | null; sentAt: string | null; openedAt: string | null; openCount: number; repliedAt: string | null }
-interface Detail { blast: Blast; counts: Record<string, number>; stats: { messagesSent: number; messagesTotal: number; opens: number; openedRecruiters: number }; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; hasSignature: boolean; previewHtml: string; previewSubject?: string; previewRecipient?: string | null; followUp?: FollowUpContext | null }
+interface Detail { blast: Blast; counts: Record<string, number>; stats: { messagesSent: number; messagesTotal: number; opens: number; openedRecruiters: number }; recipients: RecipientRow[]; groups: Group[]; mailboxes: Mailbox[]; org?: { id: string; name: string; domains: string[] } | null; orgOptions?: { id: string; name: string }[]; hasSignature: boolean; previewHtml: string; previewSubject?: string; previewRecipient?: string | null; followUp?: FollowUpContext | null }
 interface Check {
   total: number; eligible: number; skipped: { email: string; reason: string }[]; skippedByReason: Record<string, number>; messages: number; perMessage: number;
   capacity: { accountId: string; emailAddress: string; messagesLeft: number; peopleLeft: number }[]; messagesPossibleToday: number; estimatedMinutes: number; preview: string; previewSubject?: string; previewRecipient?: string | null;
@@ -406,6 +406,15 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
   const anyLimit = Object.values(limits).some((v) => v > 0);
 
   // Ticking a mailbox: it gets the "every mailbox" limit when one was applied and it has none yet.
+  /** Send as another organisation (Super Admin): only that organisation's mailboxes stay chosen. */
+  async function changeOrg(orgUnitId: string) {
+    const res = await fetch(`/api/recruiter-blasts/${params.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ orgUnitId }) }).catch(() => null);
+    const j = await res?.json().catch(() => ({}));
+    if (!res?.ok) { toast.error(j?.error ?? 'Could not change the organisation.'); return; }
+    toast.success('Now sending as another organisation: choose its mailboxes below.');
+    await load();
+  }
+
   function tick(ids: string[]) {
     const add = ids.filter((id) => !chosen.includes(id));
     if (!add.length) return;
@@ -768,7 +777,24 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
           </Section>
 
           <Section n={5} title="Send from" summary={stepSummary[5]} done={stepDone[5]} hint={form.sendOrder === 'SEQUENTIAL' ? "Tick the mailboxes to use, in order. MailFlow moves to the next one when a mailbox reaches its limit for this send, Google's daily limit, or is paused by Gmail. Leave a limit empty for no extra limit." : "Tick the mailboxes to use. They all send together, each with its own pause; if one reaches its limit for this send or Google's daily limit, or Gmail pauses it, its batches move to the others. Leave a limit empty for no extra limit."}>
-            {detail.mailboxes.length === 0 ? <p className="text-sm text-muted-foreground">Connect your Gmail in Settings first.</p> : (
+            {detail.org && (
+              <div className="mb-3 rounded-md border border-primary/30 bg-primary/5 p-2 text-xs" data-send-org>
+                <label className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">Send as organisation</span>
+                  {(detail.orgOptions?.length ?? 0) > 1 && draft ? (
+                    <select className="input !w-auto !py-0.5 text-xs" value={detail.org.id} onChange={(e) => void changeOrg(e.target.value)} aria-label="Send as organisation">
+                      {detail.orgOptions!.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                  ) : (
+                    <b>{detail.org.name}</b>
+                  )}
+                </label>
+                <p className="mt-1 text-muted-foreground">
+                  Only {detail.org.name}’s mailboxes can send this{detail.org.domains.length ? ` (${detail.org.domains.map((d) => '@' + d).join(', ')} addresses)` : ''}: another team’s or brand’s mailboxes are never offered.
+                </p>
+              </div>
+            )}
+            {detail.mailboxes.length === 0 ? <p className="text-sm text-muted-foreground">{detail.org ? `No connected mailbox of ${detail.org.name} is available: connect your Gmail in Settings, or ask a teammate in ${detail.org.name} to share theirs as a backup.` : 'Connect your Gmail in Settings first.'}</p> : (
               <>
               <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border bg-muted/30 p-2 text-xs">
                 <form className="flex flex-wrap items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); applyLimitToAll(); }}>

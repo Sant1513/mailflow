@@ -25,7 +25,8 @@ export const REVIEWER_ITEMS: NavItem[] = [
 export const SETTINGS_ITEM: NavItem = { href: '/settings', label: 'Settings' };
 
 export const ADMIN_ITEMS: NavItem[] = [
-  { href: '/admin/organization', label: 'Organization' },
+  { href: '/admin/organization', label: 'Company overview' },
+  { href: '/admin/organisations', label: 'Organisations' },
   { href: '/admin/users', label: 'Users' },
   { href: '/admin/workspaces', label: 'Workspaces' },
   { href: '/admin/all-data', label: 'All Data' },

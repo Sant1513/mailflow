@@ -41,6 +41,8 @@ interface Check {
   unknownVariables: string[];
   preview: { to: string; subject: string; html: string; missingVariables: string[] } | null;
   sender: { emailAddress: string; status: string; sentToday: number; capacityToday: number } | null;
+  /** The organisation this send is made as; `problem` is why the sender's mailbox may not send for it. */
+  org?: { id: string; name: string; problem: string | null; options: { id: string; name: string }[] };
   backups: { id: string; emailAddress: string; ownerName: string; status: string }[];
   estimatedMinutes: number;
   approval: 'none' | 'required';
@@ -123,6 +125,8 @@ function QuickSendCompose() {
   const [fuPicked, setFuPicked] = useState<Set<string>>(new Set());
   const [fuExtra, setFuExtra] = useState('');
   const [onDown, setOnDown] = useState<'WAIT' | 'FALLBACK'>('WAIT');
+  // The organisation this send is made as (empty = your own). Only its mailboxes can send it.
+  const [sendAs, setSendAs] = useState('');
   // How a follow-up goes out: in the original thread (same subject) or as an individual new email. Asked every time.
   const [fuType, setFuType] = useState<'THREAD' | 'NEW'>('THREAD');
 
@@ -327,8 +331,9 @@ function QuickSendCompose() {
       scheduledAt: scheduleAt ? new Date(scheduleAt).toISOString() : undefined,
       rsvp: rsvp.enabled ? rsvp : undefined,
       followUp: followUpMode ? { mode: fuType, onMailboxDown: onDown, segments: fuSegs } : undefined,
+      orgUnitId: sendAs || undefined,
     }),
-    [recipients, campaignName, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt, rsvp, followUpMode, fuType, onDown, fuSegs],
+    [sendAs, recipients, campaignName, subject, body, format, includeSignature, attachments, fromName, replyTo, cc, bcc, backups, scheduleAt, rsvp, followUpMode, fuType, onDown, fuSegs],
   );
 
   // ── live check: dry run + preview as you type ──
@@ -510,7 +515,7 @@ function QuickSendCompose() {
 
   const fields = check?.columns ?? (table ? table.headers.map((h) => ({ key: h, label: h })) : []);
   const overCapacity = check?.sender && check.wouldSend > check.sender.capacityToday;
-  const ready = !!check && check.wouldSend > 0 && !check.unknownVariables.length && check.sender?.status === 'CONNECTED' && !checking && !(followUpMode && (check.followUp?.blocked.length || fu?.openFollowUp));
+  const ready = !!check && check.wouldSend > 0 && !check.unknownVariables.length && check.sender?.status === 'CONNECTED' && !check.org?.problem && !checking && !(followUpMode && (check.followUp?.blocked.length || fu?.openFollowUp));
   const attachedBytes = attachments.reduce((n, a) => n + a.size, 0);
 
   return (
@@ -913,6 +918,25 @@ function QuickSendCompose() {
                             <span className="mt-1 block text-destructive">The earlier email went out from {check.followUp.blocked.join(', ')}, which you can&apos;t send from (not yours, not shared as a backup). Choose “another mailbox”, or ask its owner to share it.</span>
                           )}
                         </p>
+                      )}
+                    </div>
+                  )}
+                  {check.org && (
+                    <div className="rounded border border-primary/30 bg-primary/5 p-2 text-xs" data-send-org>
+                      <label className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">Send as organisation</span>
+                        {check.org.options.length > 1 ? (
+                          <select className="input !w-auto !py-0.5 text-xs" value={sendAs || check.org.id} onChange={(e) => setSendAs(e.target.value)} aria-label="Send as organisation">
+                            {check.org.options.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                          </select>
+                        ) : (
+                          <b>{check.org.name}</b>
+                        )}
+                      </label>
+                      {check.org.problem ? (
+                        <p className="mt-1 text-destructive">{check.org.problem}</p>
+                      ) : (
+                        <p className="mt-1 text-muted-foreground">Only {check.org.name}’s mailboxes can send this.</p>
                       )}
                     </div>
                   )}

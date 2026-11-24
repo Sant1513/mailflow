@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth/options';
 import { prisma } from '@/lib/db/client';
 import { VIEW_AS_COOKIE, verifyViewAs } from '@/lib/auth/viewAs';
 import { Role } from '@prisma/client';
+import { orgLockOf, type OrgLockCode } from '@/lib/orgs/access';
 
 export class UnauthorizedError extends Error {
   status = 401;
@@ -19,6 +20,14 @@ export class ForbiddenError extends Error {
   }
 }
 
+/** The person's organisation is expired (only the Dashboard works) or disabled (nothing works). HTTP 402. */
+export class OrgLockedError extends Error {
+  status = 402;
+  constructor(public code: OrgLockCode, message: string) {
+    super(message);
+  }
+}
+
 /** §9 — present only while a SUPER_ADMIN is inspecting another workspace. */
 export interface ViewingAs {
   workspaceId: string;
@@ -30,6 +39,8 @@ export interface ViewingAs {
 export interface AppSession {
   userId: string;
   organizationId: string;
+  /** The organisation (team) the user belongs to; null only while the sign-up is pending. */
+  orgUnitId?: string | null;
   /** The workspace every query is scoped to. Overridden while viewing as. */
   workspaceId: string | null;
   /** The caller's own workspace, untouched by "view as". */
@@ -50,6 +61,7 @@ async function baseSession(): Promise<AppSession | null> {
   return {
     userId: user.id,
     organizationId: user.organizationId,
+    orgUnitId: user.orgUnitId ?? null,
     workspaceId: user.workspaceId,
     homeWorkspaceId: user.workspaceId,
     role: user.role as Role,
@@ -107,12 +119,18 @@ async function applyViewAs(session: AppSession): Promise<AppSession> {
  * call this (or requireRole) instead of trusting any userId/workspaceId/role
  * sent by the client — see ARCHITECTURE.md §12.
  */
-export async function requireSession(): Promise<AppSession> {
+export async function requireSession(opts: { allowLocked?: boolean } = {}): Promise<AppSession> {
   const session = await baseSession();
   if (!session || session.status === 'DISABLED') throw new UnauthorizedError();
   // A PENDING account has a real session (NextAuth creates it on first sign-in) but must not use
   // any API until a super admin approves it; only the /pending page and sign-out work for it.
   if (session.status !== 'ACTIVE') throw new ForbiddenError('Your account is waiting for approval');
+  // An expired or disabled organisation is locked: every API answers 402, except the few the lock screen and the Dashboard
+  // opt into with allowLocked. Super Admins run the platform and are never locked (docs/org-lifecycle.md).
+  if (!opts.allowLocked && session.role !== Role.SUPER_ADMIN && session.orgUnitId) {
+    const lock = await orgLockOf(session.orgUnitId);
+    if (lock) throw new OrgLockedError(lock.code, lock.message);
+  }
   return applyViewAs(session);
 }
 

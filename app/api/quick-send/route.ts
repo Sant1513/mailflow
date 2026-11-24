@@ -16,6 +16,8 @@ import { linkContactsForDataset } from '@/lib/records/contactLink';
 import { loadCampaignForSession, senderAccountFor } from '@/lib/campaigns/context';
 import { startCampaignSend } from '@/lib/campaigns/startSend';
 import { availableFallbackMailboxes, validateFallbackList } from '@/lib/campaigns/fallback';
+import { resolveSendOrg, sendableOrgs, senderOrgProblem } from '@/lib/orgs/units';
+import { sendLockReason } from '@/lib/orgs/access';
 import { sendApprovalRequestEmail } from '@/lib/campaigns/approvalEmails';
 import { dailyLimit, usageLast24h } from '@/lib/queue/drain';
 import { buildContactWhere } from '@/app/api/segments/_filterContacts';
@@ -74,6 +76,8 @@ const bodySchema = z.object({
   rsvp: rsvpConfigSchema.nullable().optional(),
   /** Follow-up only: what to do when the mailbox that sent the earlier email is unavailable, and the groups it was aimed at (for the record). */
   followUp: z.object({ mode: z.enum(['THREAD', 'NEW']).default('THREAD'), onMailboxDown: z.enum(['WAIT', 'FALLBACK']).default('WAIT'), segments: z.array(z.enum(FOLLOW_UP_SEGMENTS)).max(FOLLOW_UP_SEGMENTS.length).optional() }).optional(),
+  /** The organisation this send is made as (default: your own). Its mailboxes only. */
+  orgUnitId: z.string().trim().min(1).max(64).nullable().optional(),
   /** One key per compose (the browser makes it): a repeated "send" returns the campaign already made. */
   requestId: z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/).optional(),
 });
@@ -212,6 +216,11 @@ export const POST = withErrorHandling(async (req) => {
   const simulation = dryRun(resolved.rows, { emailColumnKey: resolved.emailKey, template: { subject, html, plainText }, origin: { campaignName: body.subject }, addressProblems });
 
   const sender = await senderAccountFor({ workspaceId: session.workspaceId, createdById: session.userId });
+  // The organisation this send is made as: its mailboxes only, on its sender domains.
+  const sendOrg = await resolveSendOrg(session, body.orgUnitId);
+  const lockedWhy = await sendLockReason(sendOrg.id);
+  if (lockedWhy && session.role !== 'SUPER_ADMIN') return NextResponse.json({ error: lockedWhy.replace(/^Paused: /, ''), code: 'ORG_LOCKED' }, { status: 402 });
+  const orgProblem = sender ? await senderOrgProblem(sender, sendOrg.id) : null;
   const usage = sender ? await usageLast24h(sender.id) : null;
   const wouldSend = simulation.wouldSend;
   const capacity = usage ? Math.max(0, dailyLimit() - usage.messages) : 0;
@@ -246,7 +255,8 @@ export const POST = withErrorHandling(async (req) => {
       unknownVariables,
       preview: preview && first ? { to: first.email, subject: preview.subject, html: sanitizeEmailHtml(normalizeEmailLinks(withRsvp(preview.html))), missingVariables: preview.missingVariables } : null,
       sender: sender ? { emailAddress: sender.emailAddress, status: sender.status, sentToday: usage?.messages ?? 0, capacityToday: capacity } : null,
-      backups: await availableFallbackMailboxes(session.organizationId, sender?.id),
+      backups: await availableFallbackMailboxes(session.organizationId, sender?.id, { orgUnitId: sendOrg.id, domains: sendOrg.domains }),
+      org: { id: sendOrg.id, name: sendOrg.name, problem: orgProblem, options: await sendableOrgs(session) },
       estimatedMinutes: Math.ceil((Math.min(wouldSend, capacity || wouldSend) * 3.6) / 60),
       approval: session.role === Role.ADMIN || session.role === Role.SUPER_ADMIN ? 'none' : 'required',
       hasSignature: !!me?.emailSignature?.trim(),
@@ -261,6 +271,7 @@ export const POST = withErrorHandling(async (req) => {
   if (!sender || sender.status !== 'CONNECTED') {
     return NextResponse.json({ error: 'Connect your Gmail first: Settings → Gmail → Connect Gmail.' }, { status: 400 });
   }
+  if (orgProblem) return NextResponse.json({ error: orgProblem }, { status: 400 });
   if (unknownVariables.length) {
     return NextResponse.json({ error: `These fields aren't in your list: ${unknownVariables.map((v) => `{{${v}}}`).join(', ')}. Fix or remove them.` }, { status: 400 });
   }
@@ -317,7 +328,7 @@ export const POST = withErrorHandling(async (req) => {
     }
   }
   if (wouldSend <= 0) return NextResponse.json({ error: 'Nobody to send to: every row was skipped. Check the reasons above.' }, { status: 400 });
-  const fallback = await validateFallbackList(session.organizationId, sender.id, body.fallbackAccountIds ?? []);
+  const fallback = await validateFallbackList(session.organizationId, sender.id, body.fallbackAccountIds ?? [], { orgUnitId: sendOrg.id, domains: sendOrg.domains });
   if (!fallback.ok) return NextResponse.json({ error: fallback.error }, { status: 400 });
   const scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
   if (scheduledAt && scheduledAt.getTime() < Date.now() - 60_000) return NextResponse.json({ error: 'The scheduled time is in the past.' }, { status: 400 });
@@ -364,6 +375,7 @@ export const POST = withErrorHandling(async (req) => {
     created = await prisma.campaign.create({
       data: {
         organizationId: session.organizationId,
+        orgUnitId: sendOrg.id,
         workspaceId: session.workspaceId,
         clientRequestId: body.requestId ?? null,
         name,

@@ -11,6 +11,11 @@ vi.mock('@/lib/recruiterSend/access', () => ({
   requireBlastReader: vi.fn(),
   sendableMailboxes: vi.fn(async () => [{ id: 'a1', own: true }]),
 }));
+vi.mock('@/lib/orgs/units', () => ({
+  resolveSendOrg: vi.fn(async () => ({ id: 'ou1', name: 'Masai School', domains: [] as string[] })),
+  sendableOrgs: vi.fn(async () => [{ id: 'ou1', name: 'Masai School' }]),
+  senderOrgProblem: vi.fn(async () => null),
+}));
 vi.mock('@/lib/recruiterSend/worker', () => ({ nudgeStuckSends: vi.fn() }));
 
 import { getRecruiterRepeatDays, parseOrgSettings, orgSettingsSchema } from '@/lib/settings/org';

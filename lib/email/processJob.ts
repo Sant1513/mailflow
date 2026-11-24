@@ -17,6 +17,7 @@ import { repliedSince, threadHeaders } from '@/lib/quickSend/followUp';
 import crypto from 'crypto';
 import { suppressedKeys } from '@/lib/email/suppressedKeys';
 import { visibleToWorkspace } from '@/lib/suppressions/scope';
+import { sendLockReasonOf } from '@/lib/orgs/access';
 import { emailKey } from '@/lib/recruiterSend/emailKey';
 
 /**
@@ -65,6 +66,10 @@ export async function processEmailJob(
   if (job.batch.status === BatchStatus.PAUSED) {
     return { status: 'SKIPPED', emailJobId, reason: 'Batch is paused.' };
   }
+  // An expired or disabled organisation does not send: the email is held (callers put it back in the queue), never failed or
+  // deleted, and goes out by itself once the organisation is renewed (docs/org-lifecycle.md).
+  const lockReason = await sendLockReasonOf({ orgUnitId: job.batch.campaign.orgUnitId, createdById: job.batch.campaign.createdById });
+  if (lockReason) return { status: 'SKIPPED', emailJobId, reason: lockReason };
   if (job.batch.status === BatchStatus.CANCELLED || job.batch.campaign.status === CampaignStatus.CANCELLED) {
     await prisma.emailJob.update({
       where: { id: job.id },

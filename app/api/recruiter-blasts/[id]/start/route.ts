@@ -10,6 +10,7 @@ import { readVideo, VIDEO_INDIVIDUAL_MAX } from '@/lib/recruiterSend/video';
 import { kickRecruiterWorker, type RunOn } from '@/lib/recruiterSend/worker';
 import { currentState, laptopOnline } from '@/lib/system/serverState';
 import { isValidEmail } from '@/lib/quickSend/prepare';
+import { sendLockReasonOf } from '@/lib/orgs/access';
 import { variableCheck } from '@/lib/recruiterSend/personalize';
 
 /**
@@ -59,8 +60,12 @@ export const POST = withErrorHandling(async (req, { params }: { params: { id: st
     : 0;
   if (blast.accountIds.length && !connected) problems.push('None of the chosen mailboxes is connected.');
   // A teammate may have withdrawn their backup mailbox since the draft was saved.
-  const allowed = await allowedMailboxIds(blast.organizationId, blast.createdById);
-  if (blast.accountIds.some((id) => !allowed.has(id))) problems.push('A chosen mailbox is no longer shared as a backup; choose the mailboxes again.');
+  // An expired or disabled organisation does not send.
+  const lockedWhy = await sendLockReasonOf(blast);
+  if (lockedWhy) return NextResponse.json({ error: lockedWhy.replace(/^Paused: /, ''), code: 'ORG_LOCKED' }, { status: 402 });
+  // Only mailboxes of the organisation this send is made as: never another team's or brand's.
+  const allowed = await allowedMailboxIds(blast.organizationId, blast.createdById, blast);
+  if (blast.accountIds.some((id) => !allowed.has(id))) problems.push('A chosen mailbox does not belong to this send’s organisation (or is no longer shared as a backup); choose the mailboxes again.');
 
   const docs = blast.attachmentDocumentIds.length
     ? await prisma.documentTemplate.findMany({ where: { id: { in: blast.attachmentDocumentIds }, workspaceId: blast.workspaceId, archived: false }, select: { id: true, file: { select: { size: true } } } })

@@ -7,7 +7,8 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { requireCanWrite } from '@/lib/permissions/workspace';
 import { audit } from '@/lib/audit/log';
 import { loadCampaignForSession, senderAccountFor } from '@/lib/campaigns/context';
-import { availableFallbackMailboxes, fallbackOptIns, validateFallbackList } from '@/lib/campaigns/fallback';
+import { availableFallbackMailboxes, fallbackOptIns, loadOrgScope, validateFallbackList } from '@/lib/campaigns/fallback';
+import { orgOfSend } from '@/lib/orgs/units';
 import { kickSendWorker } from '@/lib/queue/sendWorker';
 
 async function mainAccountOf(campaign: { senderAccountId: string | null; workspaceId: string; createdById: string }) {
@@ -48,7 +49,7 @@ export const GET = withErrorHandling(async (_req, { params }: { params: { id: st
   return NextResponse.json({
     main,
     selected,
-    available: await availableFallbackMailboxes(campaign.organizationId, main?.id),
+    available: await availableFallbackMailboxes(campaign.organizationId, main?.id, await loadOrgScope(await orgOfSend(campaign))),
     sentBy: sentGroups.map((g) => ({ emailAddress: g.fromEmail, count: g._count })).sort((a, b) => b.count - a.count),
     editable: !([CampaignStatus.COMPLETED, CampaignStatus.CANCELLED] as CampaignStatus[]).includes(campaign.status),
   });
@@ -72,7 +73,7 @@ export const PUT = withErrorHandling(async (req, { params }: { params: { id: str
 
   const { accountIds } = putSchema.parse(await req.json());
   const main = await mainAccountOf(campaign);
-  const checked = await validateFallbackList(campaign.organizationId, main?.id ?? null, accountIds);
+  const checked = await validateFallbackList(campaign.organizationId, main?.id ?? null, accountIds, await loadOrgScope(await orgOfSend(campaign)));
   if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
 
   await prisma.campaign.update({ where: { id: campaign.id }, data: { fallbackAccountIds: checked.ids } });

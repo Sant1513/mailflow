@@ -1,7 +1,8 @@
 import { Role } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { ForbiddenError, requireRole, type AppSession } from '@/lib/auth/session';
-import { availableFallbackMailboxes, ownMailbox } from '@/lib/campaigns/fallback';
+import { availableFallbackMailboxes, loadOrgScope, ownMailboxIn } from '@/lib/campaigns/fallback';
+import { orgOfSend, resolveSendOrg } from '@/lib/orgs/units';
 
 /** Recruiter Bulk Send is for admins (ADMIN, SUPER_ADMIN). */
 export async function requireBlastAdmin(): Promise<AppSession> {
@@ -38,17 +39,24 @@ export async function loadBlast(session: AppSession, id: string) {
   return blast;
 }
 
-/** Ids of the mailboxes this user may send recruiter email from (checked again at start and before every message). */
-export async function allowedMailboxIds(organizationId: string, userId: string): Promise<Set<string>> {
-  const own = await ownMailbox(userId);
-  const others = await availableFallbackMailboxes(organizationId, own?.id);
+/**
+ * Ids of the mailboxes this send may use: the sender's own and the opted-in backups of ONE organisation, the one the send
+ * is made as (checked again at start and before every message). `send` is the blast, or an organisation id.
+ */
+export async function allowedMailboxIds(organizationId: string, userId: string, send: { orgUnitId?: string | null } | string | null): Promise<Set<string>> {
+  const orgUnitId = typeof send === 'string' ? send : await orgOfSend({ orgUnitId: send?.orgUnitId, createdById: userId });
+  const scope = await loadOrgScope(orgUnitId);
+  const own = await ownMailboxIn(userId, scope);
+  const others = await availableFallbackMailboxes(organizationId, own?.id, scope);
   return new Set([...(own ? [own.id] : []), ...others.map((m) => m.id)]);
 }
 
-/** Mailboxes the admin may send from: their own, plus teammates' opted-in backup mailboxes. */
-export async function sendableMailboxes(session: AppSession) {
-  const own = await ownMailbox(session.userId);
-  const others = await availableFallbackMailboxes(session.organizationId, own?.id);
+/** Mailboxes the admin may send from as this organisation (default: their own): their mailbox if it belongs, plus the organisation's opted-in backups. */
+export async function sendableMailboxes(session: AppSession, orgUnitId?: string | null) {
+  const unit = await resolveSendOrg(session, orgUnitId);
+  const scope = { orgUnitId: unit.id, domains: unit.domains };
+  const own = await ownMailboxIn(session.userId, scope);
+  const others = await availableFallbackMailboxes(session.organizationId, own?.id, scope);
   const list = [
     ...(own ? [{ id: own.id, emailAddress: own.emailAddress, ownerName: session.name, status: own.status, own: true }] : []),
     ...others.map((m) => ({ id: m.id, emailAddress: m.emailAddress, ownerName: m.ownerName, status: m.status, own: false })),

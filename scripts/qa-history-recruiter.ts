@@ -16,16 +16,18 @@ async function main() {
   if (!/:5433\//.test(process.env.DATABASE_URL ?? '')) throw new Error('Run against the laptop standby (5433) only.');
   const org = await prisma.organization.findFirstOrThrow({ where: { allowedDomain: 'masaischool.com' } });
   const tag = Date.now();
-  const mk = async (name: string) => {
-    const u = await prisma.user.create({ data: { organizationId: org.id, googleId: `qa-hr-${name}-${tag}`, email: `qa-hr-${name}-${tag}@masaischool.com`, name: `QA ${name}`, role: Role.SUPER_ADMIN } });
-    const w = await prisma.workspace.create({ data: { organizationId: org.id, ownerId: u.id, name: `QA ${name} ws` } });
+  const unitA = await prisma.orgUnit.create({ data: { organizationId: org.id, name: `QA hr A ${tag}` } });
+  const unitB = await prisma.orgUnit.create({ data: { organizationId: org.id, name: `QA hr B ${tag}` } });
+  const mk = async (name: string, orgUnitId: string) => {
+    const u = await prisma.user.create({ data: { organizationId: org.id, googleId: `qa-hr-${name}-${tag}`, email: `qa-hr-${name}-${tag}@masaischool.com`, name: `QA ${name}`, role: Role.ADMIN, orgUnitId } });
+    const w = await prisma.workspace.create({ data: { organizationId: org.id, ownerId: u.id, orgUnitId, name: `QA ${name} ws` } });
     const token = crypto.randomBytes(32).toString('hex');
     await prisma.session.create({ data: { sessionToken: token, userId: u.id, expires: new Date(Date.now() + 3600_000) } });
     return { u, w, token };
   };
-  const a = await mk('A'), b = await mk('B');
+  const a = await mk('A', unitA.id), b = await mk('B', unitB.id);
   const target = `koustabh.qa${tag}@gmail.com`;
-  const blast = await prisma.recruiterBlast.create({ data: { organizationId: org.id, workspaceId: a.w.id, createdById: a.u.id, name: 'QA drive invite', subject: 'QA subject line', html: '<p>x</p>', plainText: 'x', body: 'x', status: 'COMPLETED', startedAt: new Date(), completedAt: new Date() } });
+  const blast = await prisma.recruiterBlast.create({ data: { organizationId: org.id, workspaceId: a.w.id, orgUnitId: unitA.id, createdById: a.u.id, name: 'QA drive invite', subject: 'QA subject line', html: '<p>x</p>', plainText: 'x', body: 'x', status: 'COMPLETED', startedAt: new Date(), completedAt: new Date() } });
   await prisma.recruiterBlastRecipient.create({ data: { blastId: blast.id, email: target, name: 'Koustabh QA', status: 'SENT', sentAt: new Date() } });
   await prisma.recruiterBlastRecipient.create({ data: { blastId: blast.id, email: `other.${tag}@gmail.com`, status: 'BOUNCED', skipReason: 'Bounced: Address does not exist', sentAt: new Date() } });
   const get = async (path: string, token: string) => (await fetch(BASE + path, { headers: { cookie: `next-auth.session-token=${token}` } })).json();
@@ -35,12 +37,12 @@ async function main() {
     check('the Recruiter Bulk Send tab finds the address', r.total === 1 && r.items[0]?.email === target && r.items[0].blast.name === 'QA drive invite' && r.items[0].status === 'SENT', r);
     const s = await get(`/api/history?direction=sent&q=koustabh.qa${tag}`, a.token);
     check('the Sent tab says it is also in Recruiter Bulk Send', s.total === 0 && s.recruiterMatches === 1, { total: s.total, m: s.recruiterMatches });
-    const all = await get('/api/history?direction=recruiter', a.token);
+    const all = await get('/api/history?direction=recruiter&q=QA%20drive%20invite', a.token);
     check('the tab lists the send’s recruiters with their outcomes', all.counts.SENT === 1 && all.counts.BOUNCED === 1, all.counts);
-    const bounced = await get('/api/history?direction=recruiter&status=BOUNCED', a.token);
+    const bounced = await get('/api/history?direction=recruiter&q=QA%20drive%20invite&status=BOUNCED', a.token);
     check('the outcome filter works', bounced.total === 1 && bounced.items[0].status === 'BOUNCED', bounced.total);
     const other = await get(`/api/history?direction=recruiter&q=koustabh.qa${tag}`, b.token);
-    check('another workspace does not see it', other.total === 0, other.total);
+    check('an admin of another organisation does not see it', other.total === 0, other.total);
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1400, height: 900 });
@@ -59,6 +61,7 @@ async function main() {
     await browser.close();
     await prisma.recruiterBlastRecipient.deleteMany({ where: { blastId: blast.id } });
     await prisma.recruiterBlast.deleteMany({ where: { id: blast.id } });
+    await prisma.orgUnit.deleteMany({ where: { id: { in: [unitA.id, unitB.id] } } }).catch(() => undefined);
     for (const x of [a, b]) {
       await prisma.auditLog.deleteMany({ where: { actorId: x.u.id } }).catch(() => undefined);
       await prisma.session.deleteMany({ where: { userId: x.u.id } });

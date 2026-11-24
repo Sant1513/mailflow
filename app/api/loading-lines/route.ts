@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export const GET = withErrorHandling(async () => {
-  await requireSession();
+  await requireSession({ allowLocked: true }); // cosmetic: the loading screen's words
   const daily = await getDailyLines();
   const body = daily ?? { date: dayKey(), empty: true };
   return NextResponse.json(body, { headers: { 'Cache-Control': 'private, max-age=300' } });

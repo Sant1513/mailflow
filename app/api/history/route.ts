@@ -4,6 +4,7 @@ import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { resolveWorkspaceId } from '@/lib/permissions/workspace';
 import { EmailJobStatus, MessageDirection, Prisma } from '@prisma/client';
+import { blastScope } from '@/lib/orgs/scope';
 
 /**
  * §61/§126 workspace email history. Two views over immutable rows:
@@ -26,8 +27,11 @@ export const GET = withErrorHandling(async (req) => {
 
   // Recruiter Bulk Send keeps its recipients in its own tables, so a recruiter emailed that way has no contact, record or
   // campaign email: this view is where "what did we send to this address?" is answered for those sends.
+  // Admins see their organisation's Recruiter Bulk Send emails, a Super Admin every organisation's (narrowed by ?org= / ?sender=).
+  const narrow = { orgUnitId: url.searchParams.get('org')?.trim() || null, createdById: url.searchParams.get('sender')?.trim() || null };
+  const scopeWhere = blastScope(session, narrow);
   const recruiterWhere = (search?: string): Prisma.RecruiterBlastRecipientWhereInput => ({
-    blast: { workspaceId },
+    blast: scopeWhere ?? { id: '__none__' },
     ...(search
       ? {
           OR: [
@@ -49,16 +53,27 @@ export const GET = withErrorHandling(async (req) => {
         take: pageSize,
         select: {
           id: true, email: true, name: true, status: true, skipReason: true, sentAt: true, openedAt: true, openCount: true, repliedAt: true,
-          blast: { select: { id: true, name: true, subject: true, round: true, parentBlastId: true } },
+          blast: { select: { id: true, name: true, subject: true, round: true, parentBlastId: true, orgUnitId: true, createdById: true } },
           group: { select: { fromEmail: true } },
         },
       }),
       prisma.recruiterBlastRecipient.count({ where }),
       prisma.recruiterBlastRecipient.groupBy({ by: ['status'], where: recruiterWhere(q), _count: { _all: true } }),
     ]);
+    // Who and which organisations the filters can offer (a Super Admin: everyone; an Admin: their organisation's senders).
+    const senderIds = scopeWhere
+      ? (await prisma.recruiterBlast.findMany({ where: blastScope(session) ?? { id: '__none__' }, distinct: ['createdById'], select: { createdById: true } })).map((s) => s.createdById)
+      : [];
+    const people = await prisma.user.findMany({ where: { id: { in: [...new Set([...senderIds, ...rows.map((r) => r.blast.createdById)])] } }, select: { id: true, name: true } });
+    const nameOf = new Map(people.map((p) => [p.id, p.name]));
+    const orgNames = new Map((await prisma.orgUnit.findMany({ where: { organizationId: session.organizationId }, select: { id: true, name: true } })).map((o) => [o.id, o.name]));
+    const senders = senderIds.map((id) => ({ id, name: nameOf.get(id) ?? 'Unknown' }));
+    const orgs = session.role === 'SUPER_ADMIN' ? await prisma.orgUnit.findMany({ where: { organizationId: session.organizationId }, orderBy: { name: 'asc' }, select: { id: true, name: true } }) : [];
     return NextResponse.json({
       direction,
-      items: rows,
+      canSee: !!scopeWhere,
+      items: rows.map((r) => ({ ...r, blast: { ...r.blast, sentBy: nameOf.get(r.blast.createdById) ?? null, orgName: r.blast.orgUnitId ? orgNames.get(r.blast.orgUnitId) ?? null : null } })),
+      filters: { senders, orgs },
       total,
       counts: Object.fromEntries(byStatus.map((s) => [s.status, s._count._all])),
       page,
@@ -112,7 +127,7 @@ export const GET = withErrorHandling(async (req) => {
       prisma.emailJob.groupBy({ by: ['status'], where: { campaign: { workspaceId } }, _count: { _all: true } }),
     ]);
     // A search that finds nothing here may still be an address emailed through Recruiter Bulk Send: say so.
-    const recruiterMatches = q && q.length >= 3 && !campaignId && !status ? await prisma.recruiterBlastRecipient.count({ where: recruiterWhere(q) }) : 0;
+    const recruiterMatches = q && q.length >= 3 && !campaignId && !status && scopeWhere ? await prisma.recruiterBlastRecipient.count({ where: recruiterWhere(q) }) : 0;
     return NextResponse.json({
       direction,
       items: jobs,

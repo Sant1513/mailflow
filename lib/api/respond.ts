@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
-import { UnauthorizedError, ForbiddenError } from '@/lib/auth/session';
+import { UnauthorizedError, ForbiddenError, OrgLockedError } from '@/lib/auth/session';
+import { SeatLimitError } from '@/lib/orgs/seats';
 
 const GENERIC_ERROR = 'Something went wrong on our side. Please try again; if it keeps happening, tell an admin.';
 
@@ -31,6 +32,12 @@ export function withErrorHandling(
     } catch (err) {
       if (err instanceof UnauthorizedError) {
         return NextResponse.json({ error: err.message }, { status: 401 });
+      }
+      if (err instanceof OrgLockedError) {
+        return NextResponse.json({ error: err.message, code: err.code }, { status: 402 });
+      }
+      if (err instanceof SeatLimitError) {
+        return NextResponse.json({ error: err.message, code: err.code }, { status: 409 });
       }
       if (err instanceof ForbiddenError) {
         return NextResponse.json({ error: err.message }, { status: 403 });

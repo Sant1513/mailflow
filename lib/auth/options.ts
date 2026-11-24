@@ -132,9 +132,15 @@ function mailflowAdapter(): Adapter {
       });
       const isFirstAdmin = !hasSuperAdmin;
 
+      // Someone signing in from a domain that exactly one organisation lists is placed there when approved (suggested, not forced).
+      const unit = isFirstAdmin
+        ? (await prisma.orgUnit.findFirst({ where: { organizationId: org.id, domains: { has: email.split('@')[1] ?? '' } }, select: { id: true } })) ??
+          (await prisma.orgUnit.create({ data: { organizationId: org.id, name: org.name, domains: [email.split('@')[1] ?? ''] }, select: { id: true } }))
+        : null;
       const user = await prisma.user.create({
         data: {
           organizationId: org.id,
+          orgUnitId: unit?.id ?? null,
           email,
           name,
           image: data.image ?? null,
@@ -149,6 +155,7 @@ function mailflowAdapter(): Adapter {
         data: {
           organizationId: org.id,
           ownerId: user.id,
+          orgUnitId: unit?.id ?? null,
           name: `${name}'s Workspace`,
           members: { create: { userId: user.id, role: isFirstAdmin ? Role.SUPER_ADMIN : Role.OPERATOR } },
         },
@@ -283,6 +290,7 @@ export const authOptions: NextAuthOptions = {
         (session.user as any).role = dbUser.role;
         (session.user as any).status = dbUser.status;
         (session.user as any).organizationId = dbUser.organizationId;
+        (session.user as any).orgUnitId = dbUser.orgUnitId;
         (session.user as any).workspaceId = dbUser.ownedWorkspaces[0]?.id ?? null;
       }
       return session;

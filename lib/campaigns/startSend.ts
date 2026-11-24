@@ -9,6 +9,8 @@ import { enqueueEmailJobs } from '@/lib/queue/queues';
 import { kickSendWorker } from '@/lib/queue/sendWorker';
 import { documentValidationIssues, jobAttachmentRows } from '@/lib/documents/campaign';
 import { planFollowUpJobs, planSummary } from '@/lib/quickSend/followUp';
+import { orgOfSend, senderOrgProblem } from '@/lib/orgs/units';
+import { sendLockReasonOf } from '@/lib/orgs/access';
 import { CampaignStatus, BatchStatus, EmailJobStatus, type Prisma } from '@prisma/client';
 
 export interface StartSendOptions {
@@ -68,6 +70,14 @@ export async function startCampaignSend(opts: StartSendOptions): Promise<StartSe
   if (!sender || sender.status !== 'CONNECTED') {
     return { ok: false, status: 400, body: { error: 'No connected Gmail account for the campaign owner. Connect one in Settings first.' } };
   }
+
+  // An expired or disabled organisation does not send (docs/org-lifecycle.md).
+  const lockedWhy = await sendLockReasonOf(campaign);
+  if (lockedWhy) return { ok: false, status: 402, body: { error: lockedWhy.replace(/^Paused: /, ''), code: 'ORG_LOCKED' } };
+
+  // The mailbox must belong to the organisation this campaign is sent as (and its sender domains): never another team's or brand's.
+  const orgProblem = await senderOrgProblem(sender, await orgOfSend(campaign));
+  if (orgProblem) return { ok: false, status: 400, body: { error: orgProblem } };
 
   const label = await nextBatchLabel(campaign.id);
   const built = await buildEvaluationContext(campaign, { batchLabel: label, senderEmail: sender.emailAddress });

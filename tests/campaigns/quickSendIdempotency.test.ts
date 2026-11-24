@@ -33,6 +33,12 @@ vi.mock('@/lib/campaigns/fallback', () => ({
   availableFallbackMailboxes: vi.fn(async () => []),
   validateFallbackList: vi.fn(async () => ({ ok: true, ids: [] })),
 }));
+vi.mock('@/lib/orgs/units', () => ({
+  resolveSendOrg: vi.fn(async () => ({ id: 'ou1', name: 'Masai School', domains: [] as string[] })),
+  sendableOrgs: vi.fn(async () => [{ id: 'ou1', name: 'Masai School' }]),
+  senderOrgProblem: vi.fn(async () => null),
+}));
+vi.mock('@/lib/orgs/access', () => ({ sendLockReason: vi.fn(async () => null) }));
 vi.mock('@/lib/campaigns/approvalEmails', () => ({ sendApprovalRequestEmail: vi.fn(async () => 'SENT') }));
 vi.mock('@/lib/queue/drain', () => ({ dailyLimit: () => 1500, usageLast24h: vi.fn(async () => ({ messages: 0, totalRecipients: 0, unique: new Set() })) }));
 

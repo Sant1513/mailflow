@@ -15,9 +15,10 @@ const check = (n: string, ok: boolean, x?: unknown) => { ok ? pass++ : fail++; c
 async function main() {
   if (!/:5433\//.test(process.env.DATABASE_URL ?? '')) throw new Error('Run against the laptop standby (5433) only.');
   const org = await prisma.organization.findFirstOrThrow({ where: { allowedDomain: 'masaischool.com' } });
+  const unit = await prisma.orgUnit.findFirstOrThrow({ where: { organizationId: org.id }, orderBy: { createdAt: 'asc' } });
   const tag = Date.now();
-  const u = await prisma.user.create({ data: { organizationId: org.id, googleId: `qa-fu-${tag}`, email: `qa-fu-${tag}@masaischool.com`, name: 'QA Follower', role: Role.SUPER_ADMIN } });
-  const w = await prisma.workspace.create({ data: { organizationId: org.id, ownerId: u.id, name: 'QA follow-up ws' } });
+  const u = await prisma.user.create({ data: { organizationId: org.id, orgUnitId: unit.id, googleId: `qa-fu-${tag}`, email: `qa-fu-${tag}@masaischool.com`, name: 'QA Follower', role: Role.SUPER_ADMIN } });
+  const w = await prisma.workspace.create({ data: { organizationId: org.id, orgUnitId: unit.id, ownerId: u.id, name: 'QA follow-up ws' } });
     const token = crypto.randomBytes(32).toString('hex');
   await prisma.session.create({ data: { sessionToken: token, userId: u.id, expires: new Date(Date.now() + 3600_000) } });
   const acc = await prisma.emailProviderAccount.create({ data: { organizationId: org.id, workspaceId: w.id, userId: u.id, emailAddress: u.email, status: 'CONNECTED', refreshTokenEnc: 'x' } });

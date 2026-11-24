@@ -39,7 +39,10 @@ interface PendingUser {
   email: string;
   image: string | null;
   createdAt: string;
+  /** The organisation their email domain points at, when exactly one does. */
+  suggestedOrgUnitId?: string | null;
 }
+interface OrgChoice { id: string; name: string; domains: string[] }
 
 const STATUS_BADGE: Record<string, string> = {
   PENDING_APPROVAL: 'badge-warning',
@@ -88,6 +91,9 @@ function ApprovalsPageInner() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [canReviewUsers, setCanReviewUsers] = useState(true);
   const [userBusy, setUserBusy] = useState<string | null>(null);
+  // The organisation chosen for each person before approving (the Super Admin always chooses; a domain match is only a suggestion).
+  const [orgChoices, setOrgChoices] = useState<OrgChoice[]>([]);
+  const [orgPick, setOrgPick] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/approvals?status=${tab}&q=${encodeURIComponent(q.trim())}&page=${page}&pageSize=${pageSize}`);
@@ -123,6 +129,12 @@ function ApprovalsPageInner() {
     } else if (res?.ok) {
       const json = await res.json().catch(() => ({}));
       setPendingUsers(json.users ?? []);
+      setOrgChoices(json.orgUnits ?? []);
+      setOrgPick((cur) => {
+        const next = { ...cur };
+        for (const u of (json.users ?? []) as PendingUser[]) if (next[u.id] === undefined && u.suggestedOrgUnitId) next[u.id] = u.suggestedOrgUnitId;
+        return next;
+      });
     } else toast.error('Pending sign-ups could not be loaded.');
     setUsersLoading(false);
   }, []);
@@ -139,15 +151,17 @@ function ApprovalsPageInner() {
   }, [section, loadUsers]);
 
   async function approveUser(id: string) {
+    const orgUnitId = orgPick[id];
+    if (!orgUnitId) { toast.error('Choose an organisation for this person first.'); return; }
     setUserBusy(id);
     const res = await fetch(`/api/admin/users/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'ACTIVE' }),
+      body: JSON.stringify({ status: 'ACTIVE', orgUnitId }),
     });
     setUserBusy(null);
-    if (!res.ok) { toast.error('Could not approve user'); return; }
-    toast.success('User approved — they can now sign in');
+    if (!res.ok) { const j = await res.json().catch(() => ({})); toast.error(j?.error ?? 'Could not approve user'); return; }
+    toast.success(`User approved in ${orgChoices.find((o) => o.id === orgUnitId)?.name ?? 'the organisation'}: they can now sign in`);
     loadUsers();
   }
 
@@ -250,6 +264,7 @@ function ApprovalsPageInner() {
                     <th className="px-4 py-2">Name</th>
                     <th className="px-4 py-2">Email</th>
                     <th className="px-4 py-2">Requested</th>
+                    <th className="px-4 py-2">Organisation <span className="font-normal normal-case text-muted-foreground">(required)</span></th>
                     <th className="px-4 py-2 text-right">Action</th>
                   </tr>
                 </thead>
@@ -266,10 +281,22 @@ function ApprovalsPageInner() {
                       <td className="px-4 py-3 text-muted-foreground text-xs">
                         {new Date(u.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
                       </td>
+                      <td className="px-4 py-3">
+                        <select
+                          aria-label={`Organisation for ${u.name}`}
+                          className="input !py-1 text-sm"
+                          value={orgPick[u.id] ?? ''}
+                          onChange={(e) => setOrgPick((cur) => ({ ...cur, [u.id]: e.target.value }))}
+                        >
+                          <option value="">Choose…</option>
+                          {orgChoices.map((o) => <option key={o.id} value={o.id}>{o.name}{u.suggestedOrgUnitId === o.id ? ' (matches their email)' : ''}</option>)}
+                        </select>
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex justify-end gap-2">
                           <button
-                            disabled={userBusy === u.id}
+                            disabled={userBusy === u.id || !orgPick[u.id]}
+                            title={orgPick[u.id] ? undefined : 'Choose an organisation first'}
                             onClick={() => approveUser(u.id)}
                             className="btn-primary !py-1 text-[11px]"
                           >

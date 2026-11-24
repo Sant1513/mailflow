@@ -13,6 +13,7 @@ vi.mock('@/lib/db/client', () => ({
     organization: { upsert: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     user: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
     workspace: { create: vi.fn() },
+    orgUnit: { findFirst: vi.fn(), create: vi.fn() },
   },
 }));
 
@@ -34,6 +35,8 @@ async function load(domain?: string) {
   (prisma.user.findMany as any).mockResolvedValue([]);
   (prisma.user.create as any).mockResolvedValue({ id: 'u1', name: 'Test User' });
   (prisma.workspace.create as any).mockResolvedValue({ id: 'ws1' });
+  (prisma.orgUnit.findFirst as any).mockResolvedValue({ id: 'ou1' });
+  (prisma.orgUnit.create as any).mockResolvedValue({ id: 'ou1' });
   return { mod, prisma };
 }
 

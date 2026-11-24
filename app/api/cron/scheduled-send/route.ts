@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db/client';
 import { enqueueEmailJobs } from '@/lib/queue/queues';
 import { kickSendWorker } from '@/lib/queue/sendWorker';
 import { CampaignStatus, BatchStatus, EmailJobStatus } from '@prisma/client';
+import { sendLockReasonOf } from '@/lib/orgs/access';
 
 /**
  * No-Redis fallback for scheduled campaign sends.
@@ -29,8 +30,14 @@ export async function GET(req: Request) {
       status: CampaignStatus.SCHEDULED,
       scheduledAt: { lte: now },
     },
-    select: { id: true },
+    select: { id: true, orgUnitId: true, createdById: true },
   });
+
+  // A locked (expired or disabled) organisation's scheduled sends stay scheduled and start after it is renewed.
+  const open: typeof campaigns = [];
+  for (const c of campaigns) if (!(await sendLockReasonOf(c))) open.push(c);
+  campaigns.length = 0;
+  campaigns.push(...open);
 
   if (campaigns.length === 0) {
     return NextResponse.json({ fired: 0 });

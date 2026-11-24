@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { loadBlast, requireBlastAdmin, sendableMailboxes, requireBlastReader } from '@/lib/recruiterSend/access';
+import { orgOfSend, resolveSendOrg, sendableOrgs } from '@/lib/orgs/units';
 import { buildBody, MAX_GROUP_SIZE, MIN_GAP, previewHtml, type BlastMode } from '@/lib/recruiterSend/core';
 import { personalisedPreview } from '@/lib/recruiterSend/plan';
 import { followUpSubject } from '@/lib/recruiterSend/followUp';
@@ -23,6 +24,7 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
   const blast = await loadBlast(session, params.id);
   if (!blast) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const page = Math.max(1, Number(new URL(req.url).searchParams.get('page') ?? '1'));
+  const blastOrgId = (await orgOfSend(blast)) ?? session.orgUnitId ?? null;
   // Watchdog: a send that should be moving but isn't gets a fresh run (in the background).
   try { waitUntil(nudgeStuckSends('page').catch(() => 0)); } catch { void nudgeStuckSends('page').catch(() => 0); }
 
@@ -53,9 +55,10 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
       take: 500,
       select: { id: true, seq: true, status: true, recipientCount: true, fromEmail: true, sentAt: true, openCount: true, firstOpenedAt: true, lastOpenedAt: true, error: true },
     }),
-    sendableMailboxes(session),
+    sendableMailboxes(session, blastOrgId),
     prisma.user.findUnique({ where: { id: session.userId }, select: { emailSignature: true } }),
   ]);
+  const [orgOptions, orgRow] = await Promise.all([sendableOrgs(session), blastOrgId ? prisma.orgUnit.findUnique({ where: { id: blastOrgId }, select: { id: true, name: true, domains: true } }) : null]);
   const usage = await Promise.all(mailboxes.map(async (m) => ({ id: m.id, sentLast24h: (await usageLast24h(m.id)).messages })));
   const counts = Object.fromEntries(statusCounts.map((c) => [c.status, c._count._all]));
 
@@ -68,6 +71,8 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
     groups,
     mailboxes: mailboxes.map((m) => ({ ...m, sentLast24h: usage.find((u) => u.id === m.id)?.sentLast24h ?? 0, dailyLimit: dailyLimit() })),
     hasSignature: !!me?.emailSignature?.trim(),
+    org: orgRow,
+    orgOptions,
     followUp: await followUpContext(blast),
     ...(await previewFields(blast)),
   });
@@ -106,6 +111,8 @@ const patchSchema = z.object({
   sendOrder: z.enum(['PARALLEL', 'SEQUENTIAL']).optional(),
   /** Follow-ups: what to do when the mailbox that sent the original is unavailable. */
   onMailboxDown: z.enum(['WAIT', 'FALLBACK']).optional(),
+  /** The organisation this send is made as (a Super Admin may pick another; its mailboxes only). */
+  orgUnitId: z.string().trim().min(1).max(64).optional(),
   /** Follow-ups: THREAD = reply in the original Gmail thread (same subject) | NEW = an individual new email with its own subject. */
   followUpMode: z.enum(['THREAD', 'NEW']).optional(),
   toAddress: z.string().trim().max(320).nullable().optional(),
@@ -140,9 +147,18 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
   const cc = body.ccAddresses ? [...new Set(body.ccAddresses.map((e) => e.toLowerCase()).filter(Boolean))] : undefined;
   if (cc?.some((e) => !isValidEmail(e))) return NextResponse.json({ error: 'A CC address is not a valid email address.' }, { status: 400 });
   if (body.replyTo && !isValidEmail(body.replyTo)) return NextResponse.json({ error: 'Reply-To is not a valid email address.' }, { status: 400 });
+  // Changing the organisation the send is made as: only its mailboxes stay chosen (the others are dropped, never silently kept).
+  let sendOrgId = (await orgOfSend(blast)) ?? session.orgUnitId ?? null;
+  let accountIdsAfterOrgChange: string[] | undefined;
+  if (body.orgUnitId && body.orgUnitId !== sendOrgId) {
+    const unit = await resolveSendOrg(session, body.orgUnitId);
+    sendOrgId = unit.id;
+    const usable = new Set((await sendableMailboxes(session, unit.id)).map((m) => m.id));
+    accountIdsAfterOrgChange = (body.accountIds ?? blast.accountIds).filter((id) => usable.has(id));
+  }
   if (body.accountIds) {
-    const allowed = new Set((await sendableMailboxes(session)).map((m) => m.id));
-    if (body.accountIds.some((id) => !allowed.has(id))) return NextResponse.json({ error: 'You can only send from your own mailbox or teammates’ opted-in backup mailboxes.' }, { status: 400 });
+    const allowed = new Set((await sendableMailboxes(session, sendOrgId)).map((m) => m.id));
+    if (body.accountIds.some((id) => !allowed.has(id))) return NextResponse.json({ error: 'You can only send from mailboxes of the organisation this send is made as: your own and teammates’ opted-in backup mailboxes.' }, { status: 400 });
   }
   if (body.attachmentDocumentIds?.length) {
     const ids = [...new Set(body.attachmentDocumentIds)];
@@ -183,13 +199,14 @@ export const PATCH = withErrorHandling(async (req, { params }: { params: { id: s
       ...(body.mode !== undefined ? { mode: body.mode } : {}),
       ...(body.sendOrder !== undefined ? { sendOrder: body.sendOrder } : {}),
       ...(body.onMailboxDown !== undefined ? { onMailboxDown: body.onMailboxDown } : {}),
+      ...(body.orgUnitId && sendOrgId ? { orgUnitId: sendOrgId } : {}),
       ...(body.followUpMode !== undefined && blast.parentBlastId ? { followUpMode: body.followUpMode } : {}),
       ...(body.toAddress !== undefined ? { toAddress: body.toAddress || null } : {}),
       ...(lockedSubject !== undefined ? { subject: lockedSubject } : body.subject !== undefined ? { subject: body.subject } : {}),
       ...(body.fromName !== undefined ? { fromName: body.fromName || null } : {}),
       ...(body.replyTo !== undefined ? { replyTo: body.replyTo || null } : {}),
       ...(cc !== undefined ? { ccAddresses: cc } : {}),
-      ...(body.accountIds !== undefined ? { accountIds: [...new Set(body.accountIds)] } : {}),
+      ...(accountIdsAfterOrgChange ? { accountIds: [...new Set(accountIdsAfterOrgChange)] } : body.accountIds !== undefined ? { accountIds: [...new Set(body.accountIds)] } : {}),
       ...(body.attachmentDocumentIds !== undefined ? { attachmentDocumentIds: [...new Set(body.attachmentDocumentIds)] } : {}),
       ...(body.groupSize !== undefined ? { groupSize: body.groupSize } : {}),
       ...(gapSeconds !== undefined ? { gapSeconds } : {}),

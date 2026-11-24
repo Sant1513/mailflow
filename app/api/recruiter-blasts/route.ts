@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db/client';
 import { withErrorHandling } from '@/lib/api/respond';
 import { audit } from '@/lib/audit/log';
 import { requireBlastAdmin, sendableMailboxes, requireBlastReader } from '@/lib/recruiterSend/access';
+import { resolveSendOrg } from '@/lib/orgs/units';
 import { waitUntil } from '@vercel/functions';
 import { nudgeStuckSends } from '@/lib/recruiterSend/worker';
 import { getRecruiterRepeatDays } from '@/lib/settings/org';
@@ -55,14 +56,18 @@ export const GET = withErrorHandling(async (req) => {
   });
 });
 
-export const POST = withErrorHandling(async () => {
+export const POST = withErrorHandling(async (req) => {
   const session = await requireBlastAdmin();
-  const mailboxes = await sendableMailboxes(session);
+  // The organisation this send is made as (default: the admin's own). Its mailboxes only.
+  const requested = (await req.json().catch(() => ({})) as { orgUnitId?: string | null }).orgUnitId ?? null;
+  const sendOrg = await resolveSendOrg(session, requested);
+  const mailboxes = await sendableMailboxes(session, sendOrg.id);
   const own = mailboxes.find((m) => m.own);
   const repeatWindowDays = await getRecruiterRepeatDays(session.organizationId);
   const blast = await prisma.recruiterBlast.create({
     data: {
       organizationId: session.organizationId,
+      orgUnitId: sendOrg.id,
       workspaceId: session.workspaceId!,
       createdById: session.userId,
       name: `Recruiter send · ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}`,

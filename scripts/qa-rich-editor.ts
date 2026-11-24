@@ -32,9 +32,10 @@ async function formatSelection(page: Page, editorSel: string) {
 async function main() {
   if (!/:5433\//.test(process.env.DATABASE_URL ?? '')) throw new Error('Run against the laptop standby (5433) only.');
   const org = await prisma.organization.findFirstOrThrow({ where: { allowedDomain: 'masaischool.com' } });
+  const unit = await prisma.orgUnit.findFirstOrThrow({ where: { organizationId: org.id }, orderBy: { createdAt: 'asc' } });
   const tag = Date.now();
-  const u = await prisma.user.create({ data: { organizationId: org.id, googleId: `qa-re-${tag}`, email: `qa-re-${tag}@masaischool.com`, name: 'QA Editor', role: Role.SUPER_ADMIN } });
-  const w = await prisma.workspace.create({ data: { organizationId: org.id, ownerId: u.id, name: 'QA editor ws' } });
+  const u = await prisma.user.create({ data: { organizationId: org.id, orgUnitId: unit.id, googleId: `qa-re-${tag}`, email: `qa-re-${tag}@masaischool.com`, name: 'QA Editor', role: Role.SUPER_ADMIN } });
+  const w = await prisma.workspace.create({ data: { organizationId: org.id, orgUnitId: unit.id, ownerId: u.id, name: 'QA editor ws' } });
   const token = crypto.randomBytes(32).toString('hex');
   await prisma.session.create({ data: { sessionToken: token, userId: u.id, expires: new Date(Date.now() + 3600_000) } });
   await prisma.emailProviderAccount.create({ data: { organizationId: org.id, workspaceId: w.id, userId: u.id, emailAddress: u.email, status: 'CONNECTED', refreshTokenEnc: 'x' } });
@@ -45,6 +46,8 @@ async function main() {
     await page.setViewport({ width: 1400, height: 1000 });
     await page.setCookie({ name: 'next-auth.session-token', value: token, domain: 'localhost', path: '/' });
     page.on('dialog', (d) => void d.accept());
+    page.on('pageerror', (e) => console.log('PAGEERROR', String(e).slice(0, 300)));
+    page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text().slice(0, 300)); });
 
     // ---------------- Quick Send ----------------
     await page.goto(`${BASE}/quick-send`, { waitUntil: 'networkidle2', timeout: 120_000 });

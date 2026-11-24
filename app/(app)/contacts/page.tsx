@@ -7,6 +7,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { ListPager } from '@/components/ui/ListPager';
 import { LoadingScreen } from '@/components/loading/LoadingScreen';
 import { contextLine } from '@/lib/loading/pick';
+import { RecruitersTab } from '@/components/contacts/RecruitersTab';
 import { CoolOffBadge, LastEmailedCell, RecentlyEmailedFilter } from '@/components/contacts/EmailedBits';
 import { DEFAULT_RECENT_DAYS, emailedQuery, isCoolingOff, type EmailedFilter, type LastEmailedInfo } from '@/lib/contacts/recentEmailed';
 
@@ -35,6 +36,12 @@ export default function ContactsPage() {
   // Recruiter Bulk Send keeps its recruiters in its own tables (no contact is made), so a search here can miss an address
   // that was emailed that way: count them and point to where they are listed.
   const [recruiterHits, setRecruiterHits] = useState(0);
+  // Admins also get the recruiters emailed through Recruiter Bulk Send (they are not saved as contacts).
+  const [view, setView] = useState<'contacts' | 'recruiters'>('contacts');
+  const [canSeeRecruiters, setCanSeeRecruiters] = useState(false);
+  useEffect(() => {
+    fetch('/api/recruiters?pageSize=1', { cache: 'no-store' }).then((r) => setCanSeeRecruiters(r.ok)).catch(() => undefined);
+  }, []);
   useEffect(() => {
     const term = q.trim();
     if (term.length < 3) { setRecruiterHits(0); return; }
@@ -103,6 +110,15 @@ export default function ContactsPage() {
         </div>
       </div>
 
+      {canSeeRecruiters && (
+        <div className="mb-3 flex w-fit rounded-full border border-border bg-card p-1 text-xs" role="tablist" aria-label="Contacts or recruiters">
+          {(['contacts', 'recruiters'] as const).map((v) => (
+            <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)} className={`rounded-full px-3 py-1 font-medium ${view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+              {v === 'contacts' ? 'Contacts' : 'Recruiters (Bulk Send)'}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <input
           value={q}
@@ -110,16 +126,19 @@ export default function ContactsPage() {
           placeholder="Search by name or email…"
           className="w-full max-w-sm btn-secondary"
         />
-        <RecentlyEmailedFilter value={emailed} onChange={setEmailed} />
+        {view === 'contacts' && <RecentlyEmailedFilter value={emailed} onChange={setEmailed} />}
       </div>
-      {recruiterHits > 0 && (
+      {view === 'contacts' && recruiterHits > 0 && (
         <p className="mb-4 rounded-lg border border-border bg-card px-3 py-2 text-sm" data-recruiter-hint>
           Also found in <b>Recruiter Bulk Send</b>: {recruiterHits.toLocaleString()} email{recruiterHits === 1 ? '' : 's'} matching “{q.trim()}”. Recruiters emailed that way are not saved as contacts.{' '}
+          {canSeeRecruiters && <button className="underline" onClick={() => setView('recruiters')}>Show them here</button>}{canSeeRecruiters && ' · '}
           <Link href={`/history?tab=recruiter&q=${encodeURIComponent(q.trim())}`} className="underline">See them in History</Link>
         </p>
       )}
 
-      {error ? (
+      {view === 'recruiters' ? (
+        <RecruitersTab q={q} />
+      ) : error ? (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{error} <button type="button" onClick={() => setReload((n) => n + 1)} className="ml-2 underline">Try again</button></div>
       ) : loading && contacts.length === 0 ? (
         loadedOnce ? <div className="text-sm text-muted-foreground">Loading…</div> : <LoadingScreen context={[contextLine('Looking for “{}”…', q)]} />

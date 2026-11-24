@@ -10,6 +10,8 @@ import { KeyboardShortcuts } from '@/components/nav/KeyboardShortcuts';
 import { MotionProvider, PageTransition } from '@/components/motion/Motion';
 import { Role } from '@prisma/client';
 import { reviewScope } from '@/lib/permissions/reviewer';
+import { orgAccessFor, platformContacts } from '@/lib/orgs/status';
+import { OrgGate, type OrgGateInfo } from '@/components/org/OrgGate';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // Resolved server-side, including any §9 "view as" scope, so the banner
@@ -17,6 +19,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const session = await getOptionalSession();
   if (!session) redirect('/login');
   if (session.status === 'PENDING') redirect('/pending');
+
+  // The organisation's access (docs/org-lifecycle.md): a renewal banner while it is ending, the lock screen once it has ended.
+  // Super Admins and people with no organisation are never locked.
+  const org = session.role === Role.SUPER_ADMIN ? null : await orgAccessFor(session.orgUnitId);
+  const orgInfo: OrgGateInfo | null =
+    org && org.message && org.access.state !== 'ACTIVE'
+      ? { orgId: org.unit.id, orgName: org.unit.name, state: org.access.state, lock: org.access.lock, level: org.access.level, daysLeft: org.access.daysLeft, title: org.message.title, body: org.message.body }
+      : null;
+  const contacts = orgInfo && orgInfo.lock !== 'none' ? await platformContacts(session.organizationId) : [];
 
   // Badge for reviewers: how many campaigns await a decision in their scope.
   let pendingApprovals = 0;
@@ -46,7 +57,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               they stay inside the column instead of stretching the browser page and leaving a blank
               scroll area below the content. */}
           <main className="relative min-h-0 flex-1 overflow-x-hidden">
-            <PageTransition>{children}</PageTransition>
+            <OrgGate info={orgInfo} role={session.role} contacts={contacts}>
+              <PageTransition>{children}</PageTransition>
+            </OrgGate>
           </main>
         </div>
       </div>

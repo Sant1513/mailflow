@@ -116,6 +116,7 @@ export const POST = withErrorHandling(async (req) => {
   const campaign = await prisma.campaign.create({
     data: {
       organizationId: session.organizationId,
+      orgUnitId: session.orgUnitId ?? null,
       workspaceId,
       name: body.name,
       description: body.description,
