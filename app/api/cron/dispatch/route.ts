@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { BatchStatus, EmailJobStatus } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { cronAuthorised } from '@/lib/cron/auth';
-import { kickSendWorker } from '@/lib/queue/sendWorker';
+import { handOverToSendWorker } from '@/lib/queue/sendWorker';
 import { kickRecruiterWorker, takeOverSilentLaptopSends } from '@/lib/recruiterSend/worker';
 import { dueReportDay } from '@/lib/digest/dailyActivity';
 import { dispatchDailyReport } from '@/lib/digest/dispatch';
@@ -30,7 +30,8 @@ export async function GET(req: Request) {
     prisma.emailJob.count({ where: { status: EmailJobStatus.QUEUED, batch: { status: { in: [BatchStatus.PREPARING, BatchStatus.QUEUED, BatchStatus.RUNNING] } } } }),
     prisma.recruiterBlast.count({ where: { runOn: { not: 'laptop' }, OR: [{ status: 'SENDING' }, { status: 'SCHEDULED', scheduledAt: { lte: now } }] } }),
   ]);
-  if (campaignEmails > 0) kickSendWorker('dispatch');
+  // Awaited so the hand-over is not lost when this short function ends (it was, now and then).
+  if (campaignEmails > 0) await handOverToSendWorker('dispatch');
   if (recruiterSends > 0) await kickRecruiterWorker('dispatch', { wait: true });
   // The daily report: only looked at once a report is due (8 PM–8 AM, Monday to Friday).
   let dailyReport: unknown = null;

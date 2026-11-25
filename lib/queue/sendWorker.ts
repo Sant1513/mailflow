@@ -242,22 +242,48 @@ export async function runSendWorker(opts: { budgetMs?: number; batchId?: string;
  * Starts (or continues) the worker in a fresh serverless invocation without
  * making the caller wait: the request is fired and the response not awaited.
  */
-export function kickSendWorker(reason: string, opts: { continuation?: boolean } = {}): void {
+/** How long a hand-over waits for the next invocation to start before hanging up (a cold start can take several seconds). */
+const HAND_OVER_WAIT_MS = 8_000;
+
+/**
+ * One hand-over: calls the send-queue route and returns once it has started (we hang up after
+ * HAND_OVER_WAIT_MS; the run goes on). A call that FAILS before that (network blip, 5xx from the
+ * edge) is tried once more, because a lost hand-over leaves the queue idle until the 15-minute
+ * backstop.
+ */
+export async function handOverToSendWorker(reason: string, opts: { continuation?: boolean } = {}): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return;
-  const controller = new AbortController();
+  if (!secret) return false;
   const chain = opts.continuation ? '&chain=1' : '';
   // On the laptop server INTERNAL_APP_URL points at the app itself, so the hand-over
   // doesn't travel out through the public address and back.
   const base = process.env.INTERNAL_APP_URL?.replace(/\/+$/, '') || appBaseUrl();
-  const call = fetch(`${base}/api/cron/send-queue?reason=${encodeURIComponent(reason)}${chain}`, {
-    headers: { Authorization: `Bearer ${secret}` },
-    signal: controller.signal,
-  }).catch(() => undefined);
-  // The next invocation only needs to start; it keeps running after we hang up.
-  const hangUp = new Promise<void>((resolve) => setTimeout(() => { controller.abort(); resolve(); }, 2_500));
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const hangUp = setTimeout(() => controller.abort(), HAND_OVER_WAIT_MS);
+    try {
+      const res = await fetch(`${base}/api/cron/send-queue?reason=${encodeURIComponent(reason)}${chain}`, {
+        headers: { Authorization: `Bearer ${secret}` },
+        signal: controller.signal,
+      });
+      clearTimeout(hangUp);
+      if (res.status < 500) return true;
+    } catch (err) {
+      clearTimeout(hangUp);
+      // Hung up on purpose: the next invocation started and is running.
+      if ((err as Error).name === 'AbortError') return true;
+    }
+    if (attempt === 1) await sleep(1_000);
+  }
+  console.error('[send-worker] hand-over failed twice; the 15-minute backstop will pick it up', { reason });
+  return false;
+}
+
+/** Fire-and-forget hand-over for callers that must answer quickly (the platform keeps it alive). */
+export function kickSendWorker(reason: string, opts: { continuation?: boolean } = {}): void {
+  const call = handOverToSendWorker(reason, opts);
   try {
-    waitUntil(Promise.race([call, hangUp]));
+    waitUntil(call);
   } catch {
     void call;
   }
