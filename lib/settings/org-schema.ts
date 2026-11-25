@@ -88,6 +88,22 @@ export const orgSettingsSchema = z.object({
       draftReplies: z.boolean().default(true),
     })
     .default({}),
+  /**
+   * How approval requests and decisions reach people. They always show in the app (bell and Approvals badge).
+   *   DIGEST  one summary email per interval listing what is waiting (the default: no flood)
+   *   IN_APP  nothing by email
+   *   EMAIL   one email per request and per decision (the old way)
+   */
+  approvals: z
+    .object({
+      notify: z.enum(['EMAIL', 'DIGEST', 'IN_APP']).default('DIGEST'),
+      /** Shortest gap between two summary emails. */
+      digestMinutes: z.number().int().min(15).max(1440).default(60),
+      /** Markers of the last summary email (internal): when, and which campaigns it listed. */
+      lastDigestAt: z.string().nullable().default(null),
+      lastDigestIds: z.array(z.string()).max(300).default([]),
+    })
+    .default({}),
   recruiter: z
     .object({
       /** New recruiter sends skip anyone emailed from MailFlow in the last N days (0 = off). */

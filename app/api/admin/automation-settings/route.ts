@@ -52,6 +52,8 @@ export const PUT = withErrorHandling(async (req) => {
   const session = await requireRole([Role.SUPER_ADMIN]);
   if (session.viewingAs) return NextResponse.json({ error: 'Read-only while viewing another workspace' }, { status: 403 });
   const body = putSchema.parse(await req.json());
+  // The summary-email markers belong to the sender job, never to a form.
+  if (body.approvals) { delete (body.approvals as Record<string, unknown>).lastDigestAt; delete (body.approvals as Record<string, unknown>).lastDigestIds; }
   if (body.senderAccountId) {
     const ok = await prisma.emailProviderAccount.count({ where: { id: body.senderAccountId, organizationId: session.organizationId } });
     if (!ok) return NextResponse.json({ error: 'That mailbox is not in this organisation' }, { status: 400 });

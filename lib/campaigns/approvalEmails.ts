@@ -4,6 +4,7 @@ import { buildReferences } from '@/lib/email/mime';
 import { SendEmailError } from '@/lib/email/provider';
 import { escapeHtml, htmlToPlainText } from '@/lib/templates/variables';
 import { audit } from '@/lib/audit/log';
+import { getOrgSettings } from '@/lib/settings/org';
 import { appBaseUrl } from '@/lib/app-url';
 import type { AppSession } from '@/lib/auth/session';
 import { EmailProvider as EmailProviderEnum, Role, UserStatus } from '@prisma/client';
@@ -146,6 +147,43 @@ export async function approverEmails(organizationId: string, workspaceId: string
   return Array.from(new Set(users.map((u) => u.email.toLowerCase())));
 }
 
+/** Active approvers (as people, with the workspace a notification belongs to): Super Admins and the workspace's Admins, minus the requester. */
+async function approverPeople(organizationId: string, workspaceId: string, excludeUserId: string) {
+  const users = await prisma.user.findMany({
+    where: {
+      organizationId,
+      status: UserStatus.ACTIVE,
+      id: { not: excludeUserId },
+      OR: [
+        { role: Role.SUPER_ADMIN },
+        { role: Role.ADMIN, OR: [{ ownedWorkspaces: { some: { id: workspaceId } } }, { workspaceMemberships: { some: { workspaceId } } }] },
+      ],
+    },
+    select: { id: true, ownedWorkspaces: { select: { id: true }, take: 1 } },
+  });
+  return users.filter((u) => u.ownedWorkspaces[0]).map((u) => ({ userId: u.id, workspaceId: u.ownedWorkspaces[0]!.id }));
+}
+
+/** The in-app side (bell + Approvals badge): always created, whatever the email setting. Never throws. */
+async function notifyApproversInApp(c: { id: string; name: string; organizationId: string; workspaceId: string; createdById: string; recipients: number; requesterName: string }) {
+  try {
+    const people = await approverPeople(c.organizationId, c.workspaceId, c.createdById);
+    if (!people.length) return;
+    await prisma.notification.createMany({
+      data: people.map((p) => ({
+        userId: p.userId,
+        workspaceId: p.workspaceId,
+        type: 'APPROVAL_REQUESTED',
+        title: `Approval requested: ${c.name}`.slice(0, 200),
+        body: `${c.requesterName} · ${c.recipients} recipient${c.recipients === 1 ? '' : 's'}`,
+        link: '/approvals',
+      })),
+    });
+  } catch (err) {
+    console.error('[approvals] in-app notification failed', err);
+  }
+}
+
 function describeError(err: unknown): string {
   if (err instanceof SendEmailError) return `${err.kind}: ${err.message}`.slice(0, 300);
   return ((err as Error)?.message ?? 'unknown error').slice(0, 300);
@@ -166,6 +204,17 @@ export async function sendApprovalRequestEmail(campaignId: string, session: AppS
     },
   });
   if (!c) return 'FAILED: campaign not found';
+
+  // Always in the app. By email only when the organisation chose "one email per request" (System Settings → Approvals).
+  await notifyApproversInApp({ id: c.id, name: c.name, organizationId: c.organizationId, workspaceId: c.workspaceId, createdById: c.createdById, recipients: c._count.campaignRecords, requesterName: c.createdBy.name });
+  const settings = await getOrgSettings(c.organizationId).catch(() => null);
+  const mode = settings?.approvals.notify ?? 'DIGEST';
+  if (mode !== 'EMAIL') {
+    const quiet = mode === 'DIGEST' ? `NOT EMAILED: shown in the app; one summary email at most every ${settings?.approvals.digestMinutes ?? 60} min` : 'NOT EMAILED: shown in the app only';
+    await prisma.campaign.update({ where: { id: c.id }, data: { approvalRequestEmail: quiet } });
+    await audit(session, 'CAMPAIGN_APPROVAL_EMAIL', { targetType: 'Campaign', targetId: c.id, metadata: { kind: 'request', status: quiet } });
+    return quiet;
+  }
 
   let status: string;
   try {
@@ -226,6 +275,29 @@ export async function sendApprovalDecisionEmail(campaignId: string, decision: De
     include: { createdBy: { select: { id: true, name: true, email: true } } },
   });
   if (!c) return 'FAILED: campaign not found';
+
+  // The requester always sees the decision in the app; the email in their thread only in "one email per request" mode.
+  try {
+    await prisma.notification.create({
+      data: {
+        userId: c.createdById,
+        workspaceId: c.workspaceId,
+        type: 'APPROVAL_DECIDED',
+        title: `${decision === 'APPROVED' ? 'Approved' : 'Rejected'}: ${c.name}`.slice(0, 200),
+        body: decision === 'REJECTED' && reason ? `Reason: ${reason}`.slice(0, 500) : `by ${session.name}`,
+        link: `/campaigns/${c.id}`,
+      },
+    });
+  } catch (err) {
+    console.error('[approvals] in-app decision notification failed', err);
+  }
+  const mode = (await getOrgSettings(c.organizationId).catch(() => null))?.approvals.notify ?? 'DIGEST';
+  if (mode !== 'EMAIL') {
+    const quiet = 'NOT EMAILED: shown in the app (the requester sees it in their notifications)';
+    await prisma.campaign.update({ where: { id: c.id }, data: { approvalDecisionEmail: quiet } });
+    await audit(session, 'CAMPAIGN_APPROVAL_EMAIL', { targetType: 'Campaign', targetId: c.id, metadata: { kind: 'decision', decision, status: quiet } });
+    return quiet;
+  }
 
   let status: string;
   try {

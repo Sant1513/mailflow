@@ -3,6 +3,7 @@
 # Vercel's free CPU allowance: one cheap call every 15 minutes, the heavier jobs less often.
 #   every 15 min  dispatch       starts the campaign / recruiter senders only if there is work
 #   every 15 min  bounce-scan    every connected mailbox is searched for bounce / block notices and the dead addresses are suppressed
+#   every 15 min  approval-digest  one summary email of the approvals waiting (only when something new is waiting)
 #   every 30 min  gmail-sync     every connected mailbox (replies show within 30 minutes)
 #   hourly        follow-ups, sheets-sync
 # Each step is independent (continue-on-error): one failing or slow endpoint must never stop
@@ -26,6 +27,10 @@ jobs:
         run: |
           curl -fsS -m 70 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "https://mailflowbymasai.vercel.app/api/cron/bounce-scan"
+      - name: Approvals summary email (every 15 minutes; sends only when something new is waiting)
+        continue-on-error: true
+        run: |
+          curl -fsS -m 60 -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"             "https://mailflowbymasai.vercel.app/api/cron/approval-digest"
       - name: Sync every connected Gmail mailbox (every 30 minutes)
         continue-on-error: true
         run: |

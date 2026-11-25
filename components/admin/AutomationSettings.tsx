@@ -244,6 +244,35 @@ export function AutomationSettings({ readOnly }: { readOnly: boolean }) {
         )}
       </div>
 
+      {/* Approvals */}
+      <div className="space-y-3 border-t border-border-subtle pt-5" data-approvals-settings>
+        <div>
+          <h3 className="text-sm font-semibold">Approval notifications</h3>
+          <p className="text-xs text-muted-foreground">Requests and decisions always appear in the app (the bell and the Approvals badge). Choose what also goes to Gmail.</p>
+        </div>
+        <div className="space-y-2">
+          {([
+            ['DIGEST', 'One summary email (recommended)', 'A single email listing everything that is waiting, sent when something new arrives and at most once per interval. No flood.'],
+            ['IN_APP', 'In the app only', 'No approval emails at all. Reviewers open Approvals (the badge shows the count).'],
+            ['EMAIL', 'An email for every request and decision', 'The old way: each request emails every approver and each decision replies in a thread. Floods the inbox when many campaigns need approval.'],
+          ] as const).map(([value, label, hint]) => (
+            <label key={value} className="flex items-start gap-2 text-sm">
+              <input type="radio" name="approvalNotify" className="mt-1" checked={s.approvals.notify === value} disabled={off} onChange={() => save({ approvals: { notify: value } })} />
+              <span><span className="font-medium">{label}</span><span className="block text-xs text-muted-foreground">{hint}</span></span>
+            </label>
+          ))}
+        </div>
+        {s.approvals.notify === 'DIGEST' && (
+          <label className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-medium">At most one summary every</span>
+            <select value={s.approvals.digestMinutes} disabled={off} onChange={(e) => save({ approvals: { digestMinutes: Number(e.target.value) } })} className="!w-auto !py-1 text-xs" aria-label="Summary interval">
+              {[15, 30, 60, 120, 240, 1440].map((m) => <option key={m} value={m}>{m < 60 ? `${m} minutes` : m === 60 ? '1 hour' : m < 1440 ? `${m / 60} hours` : 'day'}</option>)}
+            </select>
+            <span className="text-muted-foreground">Goes to every Admin and Super Admin, from the report mailbox above.</span>
+          </label>
+        )}
+      </div>
+
       {/* Recruiter bulk send */}
       <div className="space-y-3 border-t border-border-subtle pt-5">
         <div>
