@@ -29,28 +29,38 @@ export const GET = withErrorHandling(async (req) => {
   });
 
   const ids = campaigns.map((c) => c.id);
+  // Per person (campaign + email + type): the number of events is that person's opens/clicks, the number of groups is the unique people.
   const trackingGroups = ids.length
     ? await prisma.emailTrackingEvent.groupBy({
-        by: ['campaignId', 'type'],
+        by: ['campaignId', 'type', 'email'],
         where: { automated: false, campaignId: { in: ids } },
         _count: { _all: true },
       })
     : [];
-
-  const countTracking = (id: string, type: string) =>
-    trackingGroups.find((g) => g.campaignId === id && g.type === type)?._count._all ?? 0;
+  const totals = new Map<string, { total: number; unique: number }>();
+  for (const g of trackingGroups) {
+    const k = `${g.campaignId}|${g.type}`;
+    const t = totals.get(k) ?? { total: 0, unique: 0 };
+    t.total += g._count._all; t.unique += 1; totals.set(k, t);
+  }
+  const countTracking = (id: string, type: string) => totals.get(`${id}|${type}`) ?? { total: 0, unique: 0 };
 
   const enriched = campaigns.map((c) => {
     const sent = c.batches.reduce((s, b) => s + b.sentCount, 0);
-    const opens = countTracking(c.id, 'OPEN');
-    const clicks = countTracking(c.id, 'CLICK');
+    const o = countTracking(c.id, 'OPEN');
+    const k = countTracking(c.id, 'CLICK');
     return {
       ...c,
       tracking: {
-        opens,
-        clicks,
-        openRate: sent > 0 ? Math.round((opens / sent) * 100) : null,
-        clickRate: sent > 0 ? Math.round((clicks / sent) * 100) : null,
+        /** Unique people who opened / clicked (the rate is based on these). */
+        opens: o.unique,
+        clicks: k.unique,
+        /** Every open / click, repeats included. */
+        totalOpens: o.total,
+        totalClicks: k.total,
+        sent,
+        openRate: sent > 0 ? Math.round((o.unique / sent) * 100) : null,
+        clickRate: sent > 0 ? Math.round((k.unique / sent) * 100) : null,
       },
     };
   });

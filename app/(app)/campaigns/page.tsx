@@ -1,11 +1,14 @@
 'use client';
 
-import { useEffect, useState, Fragment } from 'react';
+import { useEffect, useMemo, useState, Fragment } from 'react';
 import { ListPager, useClientPaging } from '@/components/ui/ListPager';
 import Link from 'next/link';
+import { Search, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { LoadGate } from '@/components/loading/LoadingScreen';
+import { SortTh } from '@/components/ui/SortTh';
+import { sortRows, nextSort, type SortDir } from '@/lib/ui/sort';
 
 interface CampaignRow {
   id: string;
@@ -18,8 +21,23 @@ interface CampaignRow {
   createdBy: { name: string; email: string };
   batches: { id: string; label: string; status: string; sentCount: number; failedCount: number; total: number }[];
   _count?: { documents: number };
-  tracking?: { opens: number; clicks: number; openRate: number | null; clickRate: number | null };
+  tracking?: { opens: number; clicks: number; totalOpens?: number; totalClicks?: number; sent?: number; openRate: number | null; clickRate: number | null };
 }
+
+type SortKey = 'name' | 'status' | 'dataset' | 'template' | 'sent' | 'opens' | 'totalOpens' | 'clicks' | 'createdAt';
+const sortValue = (c: CampaignRow, k: SortKey): unknown => {
+  switch (k) {
+    case 'name': return c.name;
+    case 'status': return c.status;
+    case 'dataset': return c.dataset.name;
+    case 'template': return c.template.name;
+    case 'sent': return c.batches.reduce((s, b) => s + b.sentCount, 0);
+    case 'opens': return c.tracking?.opens ?? 0;
+    case 'totalOpens': return c.tracking?.totalOpens ?? c.tracking?.opens ?? 0;
+    case 'clicks': return c.tracking?.clicks ?? 0;
+    case 'createdAt': return c.createdAt;
+  }
+};
 
 const STATUS_STYLES: Record<string, string> = {
   DRAFT: 'bg-muted text-muted-foreground',
@@ -37,7 +55,25 @@ const STATUS_STYLES: Record<string, string> = {
 export default function CampaignsPage() {
   const router = useRouter();
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
-  const paged = useClientPaging(campaigns, 25);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'createdAt', dir: 'desc' });
+  const shown = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const filtered = campaigns.filter((c) => {
+      if (statusFilter !== 'ALL' && c.status !== statusFilter) return false;
+      if (!needle) return true;
+      return [c.name, c.createdBy.name, c.createdBy.email, c.dataset.name, c.template.name, c.status.replace(/_/g, ' ')].some((v) => v.toLowerCase().includes(needle));
+    });
+    return sortRows(filtered, (c) => sortValue(c, sort.key), sort.dir);
+  }, [campaigns, search, statusFilter, sort]);
+  const statusCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of campaigns) m.set(c.status, (m.get(c.status) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [campaigns]);
+  const onSort = (key: SortKey, first: SortDir) => setSort((cur) => nextSort(cur, key, first));
+  const paged = useClientPaging(shown, 25);
   const [datasets, setDatasets] = useState<{ id: string; name: string }[]>([]);
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -260,21 +296,57 @@ export default function CampaignsPage() {
           No campaigns yet. Create one to get started.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border bg-card">
+        <>
+        <div className="mb-3 flex flex-wrap items-center gap-2" data-campaign-filters>
+          <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search campaign, person, dataset, template…"
+              aria-label="Search campaigns"
+              className="w-full rounded-md border bg-card py-1.5 pl-8 pr-8 text-sm"
+            />
+            {search && (
+              <button type="button" onClick={() => setSearch('')} aria-label="Clear search" className="absolute right-2 top-1.5 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by status">
+            {[['ALL', campaigns.length] as [string, number], ...statusCounts].map(([s, n]) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(s)}
+                aria-pressed={statusFilter === s}
+                className={`rounded-full border px-2.5 py-0.5 text-xs ${statusFilter === s ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-elevated'}`}
+              >
+                {s === 'ALL' ? 'All' : s.replace(/_/g, ' ').toLowerCase()} <span className="tabular-nums opacity-70">{n}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full text-sm">
             <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
               <tr>
-                <th className="px-4 py-2">Campaign</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2">Dataset</th>
-                <th className="px-4 py-2">Template</th>
-                <th className="px-4 py-2">Progress</th>
-                <th className="px-4 py-2 text-right">Opens</th>
-                <th className="px-4 py-2 text-right">Clicks</th>
+                <SortTh label="Campaign" k="name" sort={sort} onSort={onSort} />
+                <SortTh label="Status" k="status" sort={sort} onSort={onSort} />
+                <SortTh label="Dataset" k="dataset" sort={sort} onSort={onSort} />
+                <SortTh label="Template" k="template" sort={sort} onSort={onSort} />
+                <SortTh label="Progress" k="sent" sort={sort} onSort={onSort} first="desc" />
+                <SortTh label="Unique opens" k="opens" sort={sort} onSort={onSort} first="desc" align="right" />
+                <SortTh label="Total opens" k="totalOpens" sort={sort} onSort={onSort} first="desc" align="right" />
+                <SortTh label="Clicks" k="clicks" sort={sort} onSort={onSort} first="desc" align="right" />
+                <SortTh label="Created" k="createdAt" sort={sort} onSort={onSort} first="desc" />
                 <th className="px-4 py-2"></th>
               </tr>
             </thead>
             <tbody>
+              {shown.length === 0 && (
+                <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  No campaign matches{search ? <> “{search}”</> : ''}. <button type="button" className="text-primary hover:underline" onClick={() => { setSearch(''); setStatusFilter('ALL'); }}>Clear filters</button>
+                </td></tr>
+              )}
               {paged.rows.map((c) => {
                 const batch = c.batches[0];
                 const isDraft = c.status === 'DRAFT';
@@ -316,6 +388,12 @@ export default function CampaignsPage() {
                           </span>
                         ) : '—'}
                       </td>
+                      <td className="px-4 py-2 text-right text-xs tabular-nums text-muted-foreground" title="Every open, repeats included">
+                        {(c.tracking?.totalOpens ?? 0) > 0 ? c.tracking!.totalOpens : '—'}
+                      </td>
+                      <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                        {new Date(c.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </td>
                       <td className="px-4 py-2 text-right text-xs text-muted-foreground">
                         {c.tracking && c.tracking.clicks > 0 ? (
                           <span title={`${c.tracking.clickRate ?? 0}% click rate`}>
@@ -348,7 +426,7 @@ export default function CampaignsPage() {
                     </tr>
                     {isEditingThis && (
                       <tr key={`${c.id}-edit`} className="border-t bg-elevated/30">
-                        <td colSpan={8} className="px-4 py-3">
+                        <td colSpan={10} className="px-4 py-3">
                           <div className="flex flex-wrap items-end gap-3">
                             <div>
                               <label className="mb-1 block text-xs font-medium">Dataset</label>
@@ -397,6 +475,7 @@ export default function CampaignsPage() {
           </table>
           <ListPager {...paged.pager} noun="campaigns" className="border-t px-3" />
         </div>
+        </>
       )}
     </div>
     </LoadGate>

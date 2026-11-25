@@ -16,6 +16,10 @@ import { CampaignReview, type CampaignPreview } from '@/components/campaign/Camp
 import { CampaignDocuments } from '@/components/campaign/CampaignDocuments';
 import { useDocumentPreview } from '@/components/documents/PdfPreviewDialog';
 import { ExportMenu } from '@/components/ui/ExportMenu';
+import { Search, X } from 'lucide-react';
+import { ListPager } from '@/components/ui/ListPager';
+import { SortTh } from '@/components/ui/SortTh';
+import { sortRows, nextSort, type SortDir } from '@/lib/ui/sort';
 
 interface Simulation {
   total: number;
@@ -64,6 +68,7 @@ export default function CampaignDetailPage() {
   const [analyticsData, setAnalyticsData] = useState<any>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsPage, setAnalyticsPage] = useState(1);
+  const [analyticsView, setAnalyticsView] = useState({ q: '', sort: '', dir: '', pageSize: 50 });
   const { openPreview, previewDialog } = useDocumentPreview();
   const previewDocument = useCallback(
     (campaignDocumentId: string, name: string, recordId?: string | null) => {
@@ -360,16 +365,20 @@ export default function CampaignDetailPage() {
 
   const loadAnalytics = useCallback(async (tab = analyticsTab, pg = analyticsPage) => {
     setAnalyticsLoading(true);
-    const res = await fetch(`/api/campaigns/${params.id}/analytics?tab=${tab}&page=${pg}`);
+    const qs = new URLSearchParams({ tab, page: String(pg), pageSize: String(analyticsView.pageSize) });
+    if (analyticsView.q) qs.set('q', analyticsView.q);
+    if (analyticsView.sort) qs.set('sort', analyticsView.sort);
+    if (analyticsView.dir) qs.set('dir', analyticsView.dir);
+    const res = await fetch(`/api/campaigns/${params.id}/analytics?${qs}`);
     setAnalyticsLoading(false);
     if (res.ok) setAnalyticsData(await res.json());
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.id, analyticsTab, analyticsPage]);
+  }, [params.id, analyticsTab, analyticsPage, analyticsView]);
 
   useEffect(() => {
     if (mainView === 'analytics') loadAnalytics(analyticsTab, analyticsPage);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mainView, analyticsTab, analyticsPage]);
+  }, [mainView, analyticsTab, analyticsPage, analyticsView]);
 
   async function verifyAttachment(attachmentId: string) {
     const res = await fetch(`/api/attachments/${attachmentId}?verify=1`);
@@ -436,7 +445,7 @@ export default function CampaignDetailPage() {
       </div>
 
       {/* ── Analytics dashboard ──────────────────────────────────────────── */}
-      {mainView === 'analytics' && <CampaignAnalytics campaignId={params.id} data={analyticsData} loading={analyticsLoading} tab={analyticsTab} page={analyticsPage} onTabChange={(t) => { setAnalyticsTab(t); setAnalyticsPage(1); }} onPageChange={setAnalyticsPage} />}
+      {mainView === 'analytics' && <CampaignAnalytics campaignId={params.id} data={analyticsData} loading={analyticsLoading} tab={analyticsTab} page={analyticsPage} view={analyticsView} onView={(v) => { setAnalyticsView((cur) => ({ ...cur, ...v })); setAnalyticsPage(1); }} onTabChange={(t) => { setAnalyticsTab(t); setAnalyticsPage(1); setAnalyticsView((cur) => ({ ...cur, q: '', sort: '', dir: '' })); }} onPageChange={setAnalyticsPage} />}
 
       {mainView === 'details' && (<>
 
@@ -884,6 +893,7 @@ const ANALYTICS_TABS = [
   { key: 'read',     label: 'Read' },
   { key: 'clicked',  label: 'Clicked' },
   { key: 'replied',  label: 'Replied' },
+  { key: 'unopened', label: 'Not opened' },
   { key: 'failed',   label: 'Failed' },
 ] as const;
 
@@ -892,7 +902,7 @@ type AnalyticsTabKey = typeof ANALYTICS_TABS[number]['key'];
 function statCount(data: any, tab: AnalyticsTabKey): number {
   if (!data?.stats) return 0;
   const s = data.stats;
-  return ({ overview: s.audience, sent: s.sent, read: s.opens, clicked: s.clicks, replied: s.replied, failed: s.failed } as Record<string, number>)[tab] ?? 0;
+  return ({ overview: s.audience, sent: s.sent, read: s.opens, clicked: s.clicks, replied: s.replied, unopened: s.unopened, failed: s.failed } as Record<string, number>)[tab] ?? 0;
 }
 
 function MiniChart({ trend }: { trend: { day: string; sent: number; opens: number; clicks: number; failed: number }[] }) {
@@ -936,105 +946,233 @@ function MiniChart({ trend }: { trend: { day: string; sent: number; opens: numbe
   );
 }
 
-function TabRows({ tab, tabData, page, onPage }: {
+const fmtDate = (d: string | Date | null | undefined) => (d ? new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+/** 95 s → "1 min", 5400 s → "1.5 h", 200000 s → "2.3 d" */
+function fmtDuration(s: number | null | undefined): string {
+  if (s === null || s === undefined) return '—';
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)} min`;
+  if (s < 86400) return `${Math.round((s / 3600) * 10) / 10} h`;
+  return `${Math.round((s / 86400) * 10) / 10} d`;
+}
+
+const TAB_COLUMNS: Record<string, { key: string; label: string; first?: 'asc' | 'desc'; right?: boolean }[]> = {
+  sent: [{ key: 'toEmail', label: 'Email' }, { key: 'subject', label: 'Subject' }, { key: 'sentAt', label: 'Sent', first: 'desc', right: true }],
+  read: [
+    { key: 'email', label: 'Email' }, { key: 'opens', label: 'Times opened', first: 'desc', right: true }, { key: 'clicks', label: 'Clicks', first: 'desc', right: true },
+    { key: 'device', label: 'Device' }, { key: 'secondsToFirstOpen', label: 'Time to open', right: true },
+    { key: 'firstOpenedAt', label: 'First opened', first: 'desc', right: true }, { key: 'lastOpenedAt', label: 'Last opened', first: 'desc', right: true },
+  ],
+  unopened: [{ key: 'email', label: 'Email' }, { key: 'sentAt', label: 'Sent', first: 'desc', right: true }],
+  clicked: [
+    { key: 'email', label: 'Email' }, { key: 'clicks', label: 'Clicks', first: 'desc', right: true }, { key: 'links', label: 'Different links', first: 'desc', right: true },
+    { key: 'firstClickedAt', label: 'First clicked', first: 'desc', right: true }, { key: 'lastClickedAt', label: 'Last clicked', first: 'desc', right: true },
+  ],
+  replied: [{ key: 'recipientEmail', label: 'Email' }, { key: 'subject', label: 'Subject' }, { key: 'status', label: 'Status' }, { key: 'createdAt', label: 'Replied', first: 'desc', right: true }],
+  failed: [{ key: 'toEmail', label: 'Email' }, { key: 'errorCode', label: 'Error' }, { key: 'lastAttemptAt', label: 'Last attempt', first: 'desc', right: true }],
+};
+
+function TabRows({ tab, tabData, loading, view, onView, page, onPage }: {
   tab: AnalyticsTabKey;
   tabData: any;
+  loading: boolean;
+  view: { q: string; sort: string; dir: string; pageSize: number };
+  onView: (v: Partial<{ q: string; sort: string; dir: string; pageSize: number }>) => void;
   page: number;
   onPage: (n: number) => void;
 }) {
-  if (!tabData) return <div className="py-8 text-center text-sm text-muted-foreground">No data.</div>;
-  const { rows, total } = tabData;
-  const totalPages = Math.ceil(total / 50);
-
-  const fmt = (d: string | Date | null) => d ? new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+  const [text, setText] = useState(view.q);
+  // Search as you type, a moment after the last key.
+  useEffect(() => {
+    if (text === view.q) return;
+    const t = setTimeout(() => onView({ q: text }), 350);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+  const cols = TAB_COLUMNS[tab] ?? [];
+  const sort = { key: tabData?.sort?.key ?? '', dir: (tabData?.sort?.dir ?? 'desc') as SortDir };
+  const onSort = (key: string, first: SortDir) => {
+    const n = nextSort(sort, key, first);
+    onView({ sort: n.key, dir: n.dir });
+  };
+  const total = tabData?.total ?? 0;
 
   return (
     <div>
-      <div className="mb-2 text-xs text-muted-foreground">{total} records</div>
-      <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full text-sm">
-          <thead className="bg-muted text-xs text-muted-foreground">
-            <tr>
-              <th className="px-4 py-2 text-left">Email</th>
-              {tab === 'sent' && <th className="px-4 py-2 text-left">Subject</th>}
-              {tab === 'clicked' && <th className="px-4 py-2 text-left">URL clicked</th>}
-              {tab === 'replied' && <><th className="px-4 py-2 text-left">Subject</th><th className="px-4 py-2 text-left">Status</th></>}
-              {tab === 'failed' && <><th className="px-4 py-2 text-left">Error</th></>}
-              <th className="px-4 py-2 text-right">Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row: any, i: number) => (
-              <tr key={i} className={`border-t border-border-subtle ${i % 2 === 1 ? 'bg-muted/30' : ''}`}>
-                <td className="px-4 py-2 font-mono text-xs">{row.email ?? row.toEmail ?? row.recipientEmail}</td>
-                {tab === 'sent' && <td className="px-4 py-2 text-xs text-muted-foreground truncate max-w-xs">{row.subject}</td>}
-                {tab === 'clicked' && <td className="px-4 py-2 text-xs text-muted-foreground truncate max-w-xs">{row.url ?? '—'}</td>}
-                {tab === 'replied' && (
-                  <>
-                    <td className="px-4 py-2 text-xs truncate max-w-xs">{row.subject}</td>
-                    <td className="px-4 py-2"><span className="badge badge-info text-xs">{row.status}</span></td>
-                  </>
-                )}
-                {tab === 'failed' && (
-                  <td className="px-4 py-2 text-xs text-destructive truncate max-w-sm">
-                    {row.errorCode && <span className="mr-1 font-semibold">[{row.errorCode}]</span>}
-                    {row.errorMessage}
-                  </td>
-                )}
-                <td className="px-4 py-2 text-right text-xs text-muted-foreground whitespace-nowrap">
-                  {fmt(row.sentAt ?? row.openedAt ?? row.clickedAt ?? row.createdAt ?? row.lastAttemptAt)}
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">No records.</td></tr>
-            )}
-          </tbody>
-        </table>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
+          <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
+          <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Search by email…" aria-label="Search this list" data-analytics-search className="w-full rounded-md border bg-card py-1.5 pl-8 pr-8 text-sm" />
+          {text && <button type="button" aria-label="Clear search" onClick={() => { setText(''); onView({ q: '' }); }} className="absolute right-2 top-1.5 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>}
+        </div>
+        {loading && <span className="text-xs text-muted-foreground">Updating…</span>}
       </div>
-      {totalPages > 1 && (
-        <div className="mt-3 flex items-center justify-between text-sm">
-          <button disabled={page <= 1} onClick={() => onPage(page - 1)} className="btn-secondary !px-3 !py-1 text-xs disabled:opacity-40">Prev</button>
-          <span className="text-muted-foreground">Page {page} of {totalPages}</span>
-          <button disabled={page >= totalPages} onClick={() => onPage(page + 1)} className="btn-secondary !px-3 !py-1 text-xs disabled:opacity-40">Next</button>
+      {!tabData ? (
+        <div className="py-8 text-center text-sm text-muted-foreground">No data.</div>
+      ) : (
+        <>
+          <div className="overflow-x-auto rounded-lg border">
+            <table className="w-full text-sm" data-analytics-table={tab}>
+              <thead className="bg-muted text-xs text-muted-foreground">
+                <tr>
+                  {cols.map((c) => <SortTh key={c.key} label={c.label} k={c.key} sort={sort} onSort={onSort} first={c.first ?? 'asc'} align={c.right ? 'right' : 'left'} />)}
+                </tr>
+              </thead>
+              <tbody>
+                {tabData.rows.map((row: any, i: number) => (
+                  <tr key={`${row.email ?? row.toEmail ?? row.recipientEmail}-${i}`} className={`border-t border-border-subtle ${i % 2 === 1 ? 'bg-muted/30' : ''}`}>
+                    {tab === 'sent' && <><td className="px-4 py-2 font-mono text-xs">{row.toEmail}</td><td className="max-w-xs truncate px-4 py-2 text-xs text-muted-foreground">{row.subject}</td><td className="whitespace-nowrap px-4 py-2 text-right text-xs text-muted-foreground">{fmtDate(row.sentAt)}</td></>}
+                    {tab === 'read' && (
+                      <>
+                        <td className="px-4 py-2 font-mono text-xs">{row.email}</td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums"><span className={row.opens > 1 ? 'font-semibold text-success' : ''}>{row.opens}×</span></td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums text-muted-foreground">{row.clicks || '—'}</td>
+                        <td className="px-4 py-2 text-xs text-muted-foreground" title={row.client}>{row.device}{row.client && row.client !== 'Unknown' ? ` · ${row.client}` : ''}</td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums text-muted-foreground">{fmtDuration(row.secondsToFirstOpen)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-xs text-muted-foreground">{fmtDate(row.firstOpenedAt)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-xs text-muted-foreground">{fmtDate(row.lastOpenedAt)}</td>
+                      </>
+                    )}
+                    {tab === 'unopened' && <><td className="px-4 py-2 font-mono text-xs">{row.email}</td><td className="whitespace-nowrap px-4 py-2 text-right text-xs text-muted-foreground">{fmtDate(row.sentAt)}</td></>}
+                    {tab === 'clicked' && (
+                      <>
+                        <td className="px-4 py-2 font-mono text-xs">{row.email}<div className="max-w-xs truncate font-sans text-[11px] text-faint" title={row.topUrl ?? ''}>{row.topUrl}</div></td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums">{row.clicks}×</td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums text-muted-foreground">{row.links}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-xs text-muted-foreground">{fmtDate(row.firstClickedAt)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-xs text-muted-foreground">{fmtDate(row.lastClickedAt)}</td>
+                      </>
+                    )}
+                    {tab === 'replied' && <><td className="px-4 py-2 font-mono text-xs">{row.recipientEmail}</td><td className="max-w-xs truncate px-4 py-2 text-xs">{row.subject}</td><td className="px-4 py-2"><span className="badge badge-info text-xs">{row.status}</span></td><td className="whitespace-nowrap px-4 py-2 text-right text-xs text-muted-foreground">{fmtDate(row.createdAt)}</td></>}
+                    {tab === 'failed' && (
+                      <>
+                        <td className="px-4 py-2 font-mono text-xs">{row.toEmail}</td>
+                        <td className="max-w-sm truncate px-4 py-2 text-xs text-destructive">{row.errorCode && <span className="mr-1 font-semibold">[{row.errorCode}]</span>}{row.errorMessage}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-xs text-muted-foreground">{fmtDate(row.lastAttemptAt)}</td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+                {tabData.rows.length === 0 && (
+                  <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">{view.q ? `No record matches “${view.q}”.` : 'No records.'}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <ListPager page={page} pageSize={tabData.pageSize ?? view.pageSize} total={total} onPage={onPage} onPageSize={(n) => onView({ pageSize: n })} noun="records" className="mt-1" />
+        </>
+      )}
+    </div>
+  );
+}
+
+function Bars({ title, values, labels, color = 'bg-primary/70', note }: { title: string; values: number[]; labels: string[]; color?: string; note?: string }) {
+  const max = Math.max(...values, 1);
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <div className="mb-2 text-sm font-semibold">{title}</div>
+      <div className="flex h-24 items-end gap-0.5">
+        {values.map((v, i) => (
+          <div key={i} className="flex h-full min-w-0 flex-1 flex-col justify-end" title={`${labels[i]}: ${v}`}>
+            <div className={`w-full rounded-sm ${color}`} style={{ height: v > 0 ? `${Math.max(3, (v / max) * 100)}%` : 0 }} />
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex justify-between text-[10px] text-faint"><span>{labels[0]}</span><span>{labels[Math.floor(labels.length / 2)]}</span><span>{labels[labels.length - 1]}</span></div>
+      {note && <div className="mt-1 text-xs text-muted-foreground">{note}</div>}
+    </div>
+  );
+}
+
+function Share({ title, items, empty }: { title: string; items: { label: string; count: number }[]; empty: string }) {
+  const total = items.reduce((s, i) => s + i.count, 0);
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <div className="mb-2 text-sm font-semibold">{title}</div>
+      {total === 0 ? <div className="text-xs text-muted-foreground">{empty}</div> : (
+        <ul className="space-y-1.5">
+          {items.slice(0, 6).map((i) => (
+            <li key={i.label} className="text-xs">
+              <div className="flex justify-between"><span>{i.label}</span><span className="tabular-nums text-muted-foreground">{i.count} · {Math.round((i.count / total) * 100)}%</span></div>
+              <div className="mt-0.5 h-1.5 rounded bg-muted"><div className="h-1.5 rounded bg-primary/70" style={{ width: `${(i.count / total) * 100}%` }} /></div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function TopLinks({ links }: { links: { url: string; clicks: number; people: number }[] }) {
+  const [sort, setSort] = useState<{ key: 'url' | 'clicks' | 'people'; dir: SortDir }>({ key: 'clicks', dir: 'desc' });
+  const rows = sortRows(links, (l) => l[sort.key], sort.dir);
+  return (
+    <div className="rounded-lg border bg-card">
+      <div className="border-b px-4 py-2 text-sm font-semibold">Which links get clicked</div>
+      {links.length === 0 ? <div className="px-4 py-4 text-xs text-muted-foreground">No link has been clicked yet.</div> : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" data-top-links>
+            <thead className="bg-muted text-xs text-muted-foreground">
+              <tr>
+                <SortTh label="Link" k="url" sort={sort} onSort={(k, f) => setSort((c) => nextSort(c, k, f))} />
+                <SortTh label="Clicks" k="clicks" sort={sort} onSort={(k, f) => setSort((c) => nextSort(c, k, f))} first="desc" align="right" />
+                <SortTh label="People" k="people" sort={sort} onSort={(k, f) => setSort((c) => nextSort(c, k, f))} first="desc" align="right" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((l) => (
+                <tr key={l.url} className="border-t border-border-subtle">
+                  <td className="max-w-md truncate px-4 py-2 text-xs" title={l.url}>{l.url}</td>
+                  <td className="px-4 py-2 text-right text-xs tabular-nums">{l.clicks}</td>
+                  <td className="px-4 py-2 text-right text-xs tabular-nums text-muted-foreground">{l.people}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
   );
 }
 
-function CampaignAnalytics({ campaignId, data, loading, tab, page, onTabChange, onPageChange }: {
+function CampaignAnalytics({ campaignId, data, loading, tab, page, view, onView, onTabChange, onPageChange }: {
   campaignId: string;
   data: any;
   loading: boolean;
   tab: string;
   page: number;
+  view: { q: string; sort: string; dir: string; pageSize: number };
+  onView: (v: Partial<{ q: string; sort: string; dir: string; pageSize: number }>) => void;
   onTabChange: (t: string) => void;
   onPageChange: (n: number) => void;
 }) {
   const s = data?.stats;
+  const ins = data?.insights;
   const sent = s?.sent ?? 0;
   const pct = (n: number) => sent > 0 ? `${Math.round((n / sent) * 100)}%` : '0%';
+  const hours = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`);
+  const bestHour = ins ? ins.opensByHour.indexOf(Math.max(...ins.opensByHour)) : -1;
+  const sp = ins?.speed ?? { within1h: 0, within24h: 0, later: 0 };
 
   return (
-    <div className="mb-6">
+    <div className="mb-6" data-campaign-analytics>
       {/* Stat tabs */}
       <div className="mb-5 flex flex-wrap gap-0 overflow-x-auto rounded-lg border bg-card">
-        {ANALYTICS_TABS.map((t, i) => {
+        {ANALYTICS_TABS.map((t) => {
           const count = s ? statCount({ stats: s }, t.key) : 0;
-          const perc = t.key === 'overview' ? `${s?.audience ?? 0}` : (sent > 0 ? `${Math.round((count / sent) * 100)}%` : '0%');
           const active = tab === t.key;
           return (
             <button
               key={t.key}
               onClick={() => onTabChange(t.key)}
+              data-analytics-tab={t.key}
               className={`flex flex-col items-start border-r border-border px-5 py-3 text-left transition last:border-r-0 ${active ? 'bg-primary/5 text-primary' : 'hover:bg-elevated text-foreground'}`}
             >
               <span className={`text-lg font-bold tabular-nums leading-none ${active ? 'text-primary' : ''}`}>
-                {s ? (t.key === 'overview' ? `${s.audience}` : `${perc}`) : '—'}
+                {s ? (t.key === 'overview' ? `${s.audience}` : t.key === 'unopened' ? `${count}` : `${pct(count)}`) : '—'}
               </span>
               <span className="mt-0.5 text-xs text-muted-foreground">
-                {t.key !== 'overview' && s ? `(${count}) ` : ''}{t.label}
+                {t.key !== 'overview' && t.key !== 'unopened' && s ? `(${count}) ` : ''}{t.label}
               </span>
               {active && <span className="mt-1.5 block h-0.5 w-full rounded-full bg-primary" />}
             </button>
@@ -1045,8 +1183,7 @@ function CampaignAnalytics({ campaignId, data, loading, tab, page, onTabChange, 
 
       {tab === 'overview' && s && (
         <>
-          {/* KPI tiles row 1 */}
-          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-4">
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
               { label: 'Audience', value: s.audience, sub: 'Total recipients' },
               { label: 'Sent', value: s.sent, sub: `${pct(s.sent)} of audience` },
@@ -1060,28 +1197,66 @@ function CampaignAnalytics({ campaignId, data, loading, tab, page, onTabChange, 
               </div>
             ))}
           </div>
-          {/* KPI tiles row 2 */}
-          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-4">
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
-              { label: 'Opened', value: s.opens, sub: `${s.openRate}% open rate`, good: s.opens > 0 },
-              { label: 'Clicked', value: s.clicks, sub: `${s.clickRate}% click rate`, good: s.clicks > 0 },
+              { label: 'Unique opens', value: s.opens, sub: `${s.openRate}% open rate`, good: s.opens > 0 },
+              { label: 'Total opens', value: s.totalOpens, sub: `${s.avgOpensPerOpener || 0} per person who opened`, good: s.totalOpens > 0 },
+              { label: 'Clicked', value: s.clicks, sub: `${s.clickRate}% click rate · ${s.totalClicks} clicks in all`, good: s.clicks > 0 },
               { label: 'Replied', value: s.replied, sub: `${s.replyRate}% reply rate`, good: s.replied > 0 },
-              { label: 'Bounced', value: s.bounced, sub: 'Added to suppression list', warn: s.bounced > 0 },
             ].map((k) => (
               <div key={k.label} className="rounded-lg border bg-card p-4">
                 <div className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">{k.label}</div>
-                <div className={`text-2xl font-bold tabular-nums ${k.warn ? 'text-destructive' : k.good ? 'text-success' : 'text-foreground'}`}>{k.value}</div>
+                <div className={`text-2xl font-bold tabular-nums ${k.good ? 'text-success' : 'text-foreground'}`}>{k.value}</div>
                 <div className="mt-0.5 text-xs text-faint">{k.sub}</div>
               </div>
             ))}
           </div>
-          {/* Trend chart */}
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              { label: 'Not opened', value: s.unopened, sub: 'Sent, no open recorded (images blocked also counts)' },
+              { label: 'Opened more than once', value: s.repeatOpeners, sub: 'Re-read or forwarded: a sign of interest', good: s.repeatOpeners > 0 },
+              { label: 'Click-to-open', value: `${s.clickToOpenRate}%`, sub: 'Of those who opened, who clicked' },
+              { label: 'Median time to open', value: fmtDuration(s.medianSecondsToOpen), sub: 'From sending to the first open' },
+            ].map((k) => (
+              <div key={k.label} className="rounded-lg border bg-card p-4">
+                <div className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">{k.label}</div>
+                <div className={`text-2xl font-bold tabular-nums ${k.good ? 'text-success' : 'text-foreground'}`}>{k.value}</div>
+                <div className="mt-0.5 text-xs text-faint">{k.sub}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              { label: 'Delivered', value: s.delivered, sub: 'Sent minus bounced' },
+              { label: 'Bounced', value: s.bounced, sub: `${s.bounceRate}% bounce rate · added to suppression`, warn: s.bounced > 0 },
+              { label: 'Opened within 1 hour', value: sp.within1h, sub: `${sp.within24h} within a day · ${sp.later} later` },
+              { label: 'Best hour to open', value: bestHour >= 0 && Math.max(...ins.opensByHour) > 0 ? hours[bestHour] : '—', sub: 'India time' },
+            ].map((k) => (
+              <div key={k.label} className="rounded-lg border bg-card p-4">
+                <div className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">{k.label}</div>
+                <div className={`text-2xl font-bold tabular-nums ${k.warn ? 'text-destructive' : 'text-foreground'}`}>{k.value}</div>
+                <div className="mt-0.5 text-xs text-faint">{k.sub}</div>
+              </div>
+            ))}
+          </div>
           {data?.trend?.length > 0 && <MiniChart trend={data.trend} />}
+          {ins && (
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              <Bars title="When people open (hour of day, India time)" values={ins.opensByHour} labels={hours} />
+              <Bars title="When people click (hour of day, India time)" values={ins.clicksByHour} labels={hours} color="bg-green-400/70" />
+              <Share title="Device" items={ins.devices} empty="No opens recorded yet." />
+              <Share title="Mail app / browser" items={ins.clients} empty="No opens recorded yet." />
+              <div className="lg:col-span-2"><TopLinks links={ins.topLinks} /></div>
+              {ins.clickedWithoutOpen > 0 && (
+                <p className="text-xs text-muted-foreground lg:col-span-2">{ins.clickedWithoutOpen} {ins.clickedWithoutOpen === 1 ? 'person clicked' : 'people clicked'} without an open being recorded: their mail app blocks images, so opens are always a minimum, clicks are the surer sign.</p>
+              )}
+            </div>
+          )}
         </>
       )}
 
       {tab !== 'overview' && (
-        <TabRows tab={tab as AnalyticsTabKey} tabData={data?.tabData} page={page} onPage={onPageChange} />
+        <TabRows key={tab} tab={tab as AnalyticsTabKey} tabData={data?.tabData} loading={loading} view={view} onView={onView} page={page} onPage={onPageChange} />
       )}
     </div>
   );
