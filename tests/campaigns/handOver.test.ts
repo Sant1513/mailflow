@@ -25,7 +25,7 @@ describe('hand-over to the next send worker', () => {
     await vi.advanceTimersByTimeAsync(1_500);
     expect(await p).toBe(true);
     expect(f).toHaveBeenCalledTimes(2);
-    expect(String(f.mock.calls[0][0])).toContain('chain=1');
+    expect(String(f.mock.calls[0]![0])).toContain('chain=1');
   });
 
   it('counts a deliberate hang-up as started', async () => {
