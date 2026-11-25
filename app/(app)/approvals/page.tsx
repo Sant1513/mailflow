@@ -257,8 +257,8 @@ function ApprovalsPageInner() {
               No pending registrations — all users are approved.
             </div>
           ) : (
-            <div className="panel overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="panel overflow-x-auto">
+              <table className="w-full min-w-[820px] text-sm">
                 <thead className="text-left text-[11px] uppercase tracking-wider text-muted-foreground bg-muted">
                   <tr>
                     <th className="px-4 py-2">Name</th>
@@ -355,29 +355,29 @@ function ApprovalsPageInner() {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search campaign, requester, workspace…" className="w-full !py-1.5 text-sm sm:w-72" />
       </div>
 
-      <div className="panel overflow-hidden">
+      <div className="panel overflow-x-auto">
         {loading ? (
           <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p>
         ) : rows.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-muted-foreground">{tab === 'pending' ? 'Nothing is waiting for approval.' : 'No requests match.'}</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm md:min-w-[760px]">
               <thead className="text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-2">Campaign</th>
-                  <th className="px-4 py-2">Requester</th>
+                  <th className="px-4 py-2 md:w-[38%] md:min-w-[260px]">Campaign</th>
+                  <th className="hidden min-w-[210px] px-4 py-2 md:table-cell">Requester</th>
                   <th className="hidden px-4 py-2 md:table-cell">Recipients</th>
-                  <th className="hidden px-4 py-2 lg:table-cell">Template</th>
-                  <th className="px-4 py-2">{tab === 'pending' ? 'Waiting' : 'Decided'}</th>
-                  <th className="px-4 py-2" />
+                  <th className="hidden w-[24%] px-4 py-2 lg:table-cell">Template</th>
+                  <th className="hidden whitespace-nowrap px-4 py-2 md:table-cell">{tab === 'pending' ? 'Waiting' : 'Decided'}</th>
+                  <th className="hidden px-4 py-2 md:table-cell" />
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
                   <Fragment key={r.id}>
                     <tr className="border-t border-border-subtle align-top">
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 md:min-w-[260px]">
                         <Link href={`/campaigns/${r.id}`} className="font-medium hover:text-primary">{r.name}</Link>
                         <div className="text-xs text-faint">
                           <span className={`badge ${STATUS_BADGE[r.status] ?? 'badge-neutral'} mr-2`}>{r.status.replace(/_/g, ' ').toLowerCase()}</span>
@@ -387,17 +387,28 @@ function ApprovalsPageInner() {
                         <button onClick={() => setExpanded(expanded === r.id ? null : r.id)} className="mt-1 text-[11px] text-muted-foreground hover:text-foreground">
                           {expanded === r.id ? 'Hide details' : 'Details'}
                         </button>
+                        {/* On a phone the requester, the wait and the buttons sit under the name instead of in columns that would scroll away. */}
+                        <div className="mt-2 text-xs text-muted-foreground md:hidden">
+                          {r.requester.name} · {tab === 'pending' ? ago(r.submittedAt) : r.decidedAt ? new Date(r.decidedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                          {r.status === 'PENDING_APPROVAL' && r.canDecide && (
+                            <div className="mt-2 flex gap-1.5">
+                              <button onClick={() => setDecision({ row: r, action: 'APPROVE' })} className="btn-primary whitespace-nowrap !py-1 text-[11px]">{r.sendsOnApproval ? 'Approve & send' : 'Approve'}</button>
+                              <button onClick={() => setDecision({ row: r, action: 'REJECT' })} className="btn-secondary whitespace-nowrap !py-1 text-[11px]">Reject</button>
+                            </div>
+                          )}
+                        </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden min-w-[210px] px-4 py-3 md:table-cell">
                         <div>{r.requester.name}</div>
-                        <div className="text-xs text-faint">{r.requester.email}</div>
+                        <div className="break-words text-xs text-faint">{r.requester.email}</div>
                       </td>
                       <td className="hidden px-4 py-3 tabular-nums md:table-cell">{r.recipients}</td>
                       <td className="hidden px-4 py-3 text-xs text-muted-foreground lg:table-cell">
-                        <div>{r.template}</div>
-                        <div className="truncate text-faint" title={r.subjectLine}>{r.subjectLine}</div>
+                        {/* A long template or subject is cut with an ellipsis (hover for the whole text) so it never squeezes the campaign name. */}
+                        <div className="max-w-[240px] truncate" title={r.template}>{r.template}</div>
+                        <div className="max-w-[240px] truncate text-faint" title={r.subjectLine}>{r.subjectLine}</div>
                       </td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                      <td className="hidden whitespace-nowrap px-4 py-3 text-xs text-muted-foreground md:table-cell">
                         {tab === 'pending' ? (
                           <span title={r.submittedAt ?? ''}>{ago(r.submittedAt)}</span>
                         ) : (
@@ -407,12 +418,12 @@ function ApprovalsPageInner() {
                           </>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="hidden whitespace-nowrap px-4 py-3 text-right md:table-cell">
                         {r.status === 'PENDING_APPROVAL' ? (
                           r.canDecide ? (
                             <div className="flex justify-end gap-1.5">
-                              <button onClick={() => setDecision({ row: r, action: 'APPROVE' })} className="btn-primary !py-1 text-[11px]">{r.sendsOnApproval ? 'Approve & send' : 'Approve'}</button>
-                              <button onClick={() => setDecision({ row: r, action: 'REJECT' })} className="btn-secondary !py-1 text-[11px]">Reject</button>
+                              <button onClick={() => setDecision({ row: r, action: 'APPROVE' })} className="btn-primary whitespace-nowrap !py-1 text-[11px]">{r.sendsOnApproval ? 'Approve & send' : 'Approve'}</button>
+                              <button onClick={() => setDecision({ row: r, action: 'REJECT' })} className="btn-secondary whitespace-nowrap !py-1 text-[11px]">Reject</button>
                             </div>
                           ) : (
                             <span className="text-[11px] text-faint">Your own request</span>
