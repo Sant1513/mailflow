@@ -606,7 +606,7 @@ export default function RecruiterSendPage({ params }: { params: { id: string } }
             {total > 0 && !isFollowUp && (
               <RecentWindow windowDays={form.repeatWindowDays ?? 10} readOnly={false} onWindow={(n) => edit({ repeatWindowDays: n })} />
             )}
-            {listPreviewOpen && <RecruiterListPreview blastId={b.id} open onClose={() => setListPreviewOpen(false)} />}
+            {listPreviewOpen && <RecruiterListPreview blastId={b.id} open onClose={() => setListPreviewOpen(false)} onChanged={() => void load()} />}
           </Section>
           )}
 

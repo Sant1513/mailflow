@@ -6,6 +6,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { loadBlast, requireBlastAdmin, requireBlastReader } from '@/lib/recruiterSend/access';
 import { parseRecipientFile, parseRecipientPaste, type RecipientList } from '@/lib/recruiterSend/core';
 import { emailKey } from '@/lib/recruiterSend/emailKey';
+import { cleanDomains, domainsWhere, listOrderBy, parseListSort } from '@/lib/recruiterSend/listEdit';
 
 /**
  * GET: one page of the recruiter list with every uploaded column, for the "Preview list" table
@@ -27,19 +28,34 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
   const rawPage = Math.floor(Number(url.searchParams.get('page') ?? '1'));
   const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.min(rawPage, 100_000) : 1;
   const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200);
+  const sort = parseListSort(url.searchParams.get('sort'), url.searchParams.get('dir'));
+
+  // ?domains=1[&dq=text]: every email domain in the list with how many recruiters use it (for the domain filter).
+  if (url.searchParams.get('domains')) {
+    const dq = (url.searchParams.get('dq') ?? '').trim().toLowerCase().slice(0, 100).replace(/[%_\\]/g, '');
+    const rows = await prisma.$queryRaw<{ domain: string; n: bigint }[]>(
+      Prisma.sql`SELECT lower(split_part("email", '@', 2)) AS domain, count(*) AS n FROM "RecruiterBlastRecipient" WHERE "blastId" = ${blast.id} ${dq ? Prisma.sql`AND lower(split_part("email", '@', 2)) LIKE ${`%${dq}%`}` : Prisma.empty} GROUP BY 1 ORDER BY n DESC, domain ASC LIMIT 300`,
+    );
+    return NextResponse.json({ domains: rows.map((r) => ({ domain: r.domain, count: Number(r.n) })) });
+  }
+
+  const domains = cleanDomains(url.searchParams.get('domain'));
   const where: Prisma.RecruiterBlastRecipientWhereInput = {
     blastId: blast.id,
-    ...(q ? { OR: [{ email: { contains: q, mode: 'insensitive' } }, { name: { contains: q, mode: 'insensitive' } }] } : {}),
+    AND: [
+      ...(q ? [{ OR: [{ email: { contains: q, mode: 'insensitive' as const } }, { name: { contains: q, mode: 'insensitive' as const } }] }] : []),
+      ...(domains.length ? [domainsWhere(domains)] : []),
+    ],
   };
   const [total, rows] = await Promise.all([
     prisma.recruiterBlastRecipient.count({ where }),
     prisma.recruiterBlastRecipient.findMany({
       where,
-      // Ids are created in list order, so this keeps the order of the sheet.
-      orderBy: { id: 'asc' },
+      // Ids are created in list order, so the default keeps the order of the sheet; a column header can sort instead.
+      orderBy: listOrderBy(sort.sort, sort.dir),
       skip: (page - 1) * PREVIEW_PAGE_SIZE,
       take: PREVIEW_PAGE_SIZE,
-      select: { email: true, name: true, status: true, data: true },
+      select: { id: true, email: true, name: true, status: true, data: true },
     }),
   ]);
   return NextResponse.json({
@@ -51,7 +67,13 @@ export const GET = withErrorHandling(async (req, { params }: { params: { id: str
     perPage: PREVIEW_PAGE_SIZE,
     pages: Math.max(1, Math.ceil(total / PREVIEW_PAGE_SIZE)),
     total,
+    sort: sort.sort,
+    dir: sort.dir,
+    /** Only a draft can be edited by hand (a follow-up: delete only). */
+    canEdit: blast.status === 'DRAFT' && !blast.parentBlastId,
+    canDelete: blast.status === 'DRAFT',
     recipients: rows.map((r) => ({
+      id: r.id,
       email: r.email,
       name: r.name,
       status: r.status,

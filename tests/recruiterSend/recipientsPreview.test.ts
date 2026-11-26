@@ -28,8 +28,8 @@ beforeEach(() => {
   db.recruiterBlast.findUnique.mockResolvedValue(blast);
   db.recruiterBlastRecipient.count.mockResolvedValue(120);
   db.recruiterBlastRecipient.findMany.mockResolvedValue([
-    { email: 'a@acme.com', name: 'Asha', status: 'PENDING', data: { 'Email Id': 'a@acme.com', Name: 'Asha', Link: 'https://x.y/?a' } },
-    { email: 'b@corp.in', name: null, status: 'PENDING', data: null },
+    { id: 'r1', email: 'a@acme.com', name: 'Asha', status: 'PENDING', data: { 'Email Id': 'a@acme.com', Name: 'Asha', Link: 'https://x.y/?a' } },
+    { id: 'r2', email: 'b@corp.in', name: null, status: 'PENDING', data: null },
   ]);
 });
 
@@ -40,12 +40,13 @@ describe('GET /api/recruiter-blasts/[id]/recipients', () => {
     const j = await res.json();
     expect(j).toMatchObject({ columns: blast.columns, emailColumn: 'Email Id', status: 'DRAFT', page: 1, perPage: 50, pages: 3, total: 120, q: '' });
     expect(j.recipients).toEqual([
-      { email: 'a@acme.com', name: 'Asha', status: 'PENDING', data: { 'Email Id': 'a@acme.com', Name: 'Asha', Link: 'https://x.y/?a' } },
-      { email: 'b@corp.in', name: null, status: 'PENDING', data: {} },
+      { id: 'r1', email: 'a@acme.com', name: 'Asha', status: 'PENDING', data: { 'Email Id': 'a@acme.com', Name: 'Asha', Link: 'https://x.y/?a' } },
+      { id: 'r2', email: 'b@corp.in', name: null, status: 'PENDING', data: {} },
     ]);
     const args = db.recruiterBlastRecipient.findMany.mock.calls[0]![0];
-    expect(args).toMatchObject({ where: { blastId: 'b1' }, skip: 0, take: 50, select: { email: true, name: true, status: true, data: true } });
-    expect(args.where).not.toHaveProperty('OR');
+    expect(args).toMatchObject({ where: { blastId: 'b1' }, skip: 0, take: 50, select: { id: true, email: true, name: true, status: true, data: true } });
+    expect(args.where).toEqual({ blastId: 'b1', AND: [] });
+    expect(j.canEdit).toBe(true);
   });
 
   it('pages with ?page= and searches email and name with ?q=', async () => {
@@ -56,7 +57,7 @@ describe('GET /api/recruiter-blasts/[id]/recipients', () => {
     expect(args.skip).toBe(100);
     expect(args.where).toEqual({
       blastId: 'b1',
-      OR: [{ email: { contains: 'Acme', mode: 'insensitive' } }, { name: { contains: 'Acme', mode: 'insensitive' } }],
+      AND: [{ OR: [{ email: { contains: 'Acme', mode: 'insensitive' } }, { name: { contains: 'Acme', mode: 'insensitive' } }] }],
     });
     // The total counts the same search.
     expect(db.recruiterBlastRecipient.count.mock.calls[0]![0].where).toEqual(args.where);
