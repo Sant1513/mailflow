@@ -26,12 +26,15 @@ export function decideAccess(
   session: Pick<AppSession, 'workspaceId' | 'userId' | 'role'>,
   conv: { workspaceId: string; ownerId: string; assigneeId: string | null },
   shareLevels: string[],
+  /** The caller is an Admin of the organisation (team) this conversation's workspace belongs to. */
+  adminOfSameOrg = false,
 ): ConversationAccess | null {
   if (conv.workspaceId === session.workspaceId || session.role === Role.SUPER_ADMIN) return 'FULL';
   let best: ConversationAccess | null = null;
   const consider = (a: ConversationAccess) => {
     if (!best || RANK[a] > RANK[best]) best = a;
   };
+  if (adminOfSameOrg) consider('WORK');
   if (conv.assigneeId && conv.assigneeId === session.userId) consider('WORK');
   for (const level of shareLevels) consider(level === 'REPLY' ? 'REPLY' : 'VIEW');
   return best;
@@ -53,7 +56,25 @@ export async function accessFor(
 ): Promise<ConversationAccess | null> {
   const quick = decideAccess(session, conv, []);
   if (quick === 'FULL') return quick;
-  return decideAccess(session, conv, await shareLevelsFor(session, conv.ownerId));
+  // An Admin works the replies of their own organisation (team) even when they sit in a colleague's inbox.
+  let adminOfSameOrg = false;
+  if (session.role === Role.ADMIN && session.orgUnitId) {
+    const ws = await prisma.workspace.findUnique({ where: { id: conv.workspaceId }, select: { orgUnitId: true, organizationId: true } });
+    adminOfSameOrg = !!ws && ws.organizationId === session.organizationId && ws.orgUnitId === session.orgUnitId;
+  }
+  return decideAccess(session, conv, await shareLevelsFor(session, conv.ownerId), adminOfSameOrg);
+}
+
+/**
+ * The "Team replies" view of the inbox: every conversation the admin may oversee, whoever's mailbox it landed in.
+ *   Super Admin  the whole company (optionally one mailbox owner)
+ *   Admin        their organisation (team)
+ * Anyone else: null (no such view).
+ */
+export function teamScope(session: Pick<AppSession, 'organizationId' | 'role' | 'orgUnitId'>): import('@prisma/client').Prisma.ConversationWhereInput | null {
+  if (session.role === Role.SUPER_ADMIN) return { organizationId: session.organizationId };
+  if (session.role === Role.ADMIN && session.orgUnitId) return { organizationId: session.organizationId, workspace: { orgUnitId: session.orgUnitId } };
+  return null;
 }
 
 /** Owners (user ids) whose inboxes this user can see through a share. */

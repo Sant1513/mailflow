@@ -56,8 +56,12 @@ function timeAgo(iso: string | null): string {
 export default function InboxPage() {
   const [filter, setFilter] = useState('open');
   // "Shared with me" shows the inboxes teammates shared in Settings → Inbox sharing.
-  const [scope, setScope] = useState<'mine' | 'shared'>('mine');
+  // "Team replies" (admins): every reply in any mailbox of the organisation, optionally one mailbox owner.
+  const [scope, setScope] = useState<'mine' | 'shared' | 'team'>('mine');
   const [hasShared, setHasShared] = useState(false);
+  const [canSeeTeam, setCanSeeTeam] = useState(false);
+  const [ownerId, setOwnerId] = useState('');
+  const [owners, setOwners] = useState<{ id: string; name: string; count: number }[]>([]);
   const [q, setQ] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
   const [tag, setTag] = useState('');
@@ -88,6 +92,7 @@ export default function InboxPage() {
     if (q.trim()) params.set('q', q.trim());
     if (assigneeId) params.set('assigneeId', assigneeId);
     if (tag.trim()) params.set('tag', tag.trim());
+    if (scope === 'team' && ownerId) params.set('ownerId', ownerId);
     try {
       const res = await fetch(`/api/inbox?${params}`);
       const json = await res.json().catch(() => ({}));
@@ -98,13 +103,15 @@ export default function InboxPage() {
       setCounts(json.counts ?? {});
       setTotal(json.total ?? 0);
       setHasShared(!!json.hasSharedInboxes);
+      setCanSeeTeam(!!json.canSeeTeam);
+      setOwners(json.owners ?? []);
       setSelected(new Set()); // clear selection on reload
     } catch (err) {
       if (seq === loadSeq.current) setLoadError(err instanceof Error && err.message !== 'Failed to fetch' ? err.message : 'The inbox could not be loaded. Check your connection and try again.');
     } finally {
       if (seq === loadSeq.current) { setLoading(false); setLoadedOnce(true); }
     }
-  }, [filter, scope, q, page, assigneeId, tag]);
+  }, [filter, scope, q, page, assigneeId, tag, ownerId]);
 
   // Links into the inbox (e.g. "Replied" on a Recruiter Bulk Send) can preset ?filter= and ?q=.
   useEffect(() => {
@@ -131,7 +138,7 @@ export default function InboxPage() {
     const t = setTimeout(() => load(1), q ? 250 : 0);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, scope, q, assigneeId, tag]);
+  }, [filter, scope, q, assigneeId, tag, ownerId]);
 
   useEffect(() => {
     if (loadedPage.current === page) return;
@@ -221,19 +228,30 @@ export default function InboxPage() {
           </button>
         </div>
 
-        {(hasShared || scope === 'shared') && (
-          <div className="mb-3 grid grid-cols-2 gap-1 rounded-md bg-muted p-0.5 text-xs" role="tablist" aria-label="Which inboxes">
-            {(['mine', 'shared'] as const).map((s) => (
+        {(hasShared || canSeeTeam || scope !== 'mine') && (
+          <div className="mb-3 grid gap-1 rounded-md bg-muted p-0.5 text-xs" style={{ gridTemplateColumns: `repeat(${1 + (hasShared || scope === 'shared' ? 1 : 0) + (canSeeTeam ? 1 : 0)}, minmax(0, 1fr))` }} role="tablist" aria-label="Which inboxes">
+            {([['mine', 'My inbox'], ...(hasShared || scope === 'shared' ? [['shared', 'Shared']] : []), ...(canSeeTeam ? [['team', 'Team replies']] : [])] as [string, string][]).map(([s, label]) => (
               <button
                 key={s}
                 role="tab"
                 aria-selected={scope === s}
-                onClick={() => setScope(s)}
+                data-scope={s}
+                onClick={() => { setScope(s as 'mine' | 'shared' | 'team'); if (s !== 'team') setOwnerId(''); }}
+                title={s === 'team' ? 'Every reply that landed in any mailbox of your organisation' : undefined}
                 className={`rounded px-2 py-1 ${scope === s ? 'bg-card font-medium shadow-sm' : 'text-muted-foreground'}`}
               >
-                {s === 'mine' ? 'My inbox' : 'Shared with me'}
+                {label}
               </button>
             ))}
+          </div>
+        )}
+        {scope === 'team' && owners.length > 0 && (
+          <div className="mb-3">
+            <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">Mailbox of</div>
+            <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)} aria-label="Mailbox owner" className="w-full rounded border bg-background px-2 py-1 text-xs">
+              <option value="">Everyone ({owners.reduce((s, o) => s + o.count, 0).toLocaleString()})</option>
+              {owners.map((o) => <option key={o.id} value={o.id}>{o.name} ({o.count.toLocaleString()})</option>)}
+            </select>
           </div>
         )}
 

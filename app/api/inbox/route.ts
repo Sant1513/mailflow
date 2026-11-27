@@ -5,7 +5,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { resolveWorkspaceId } from '@/lib/permissions/workspace';
 import { ConversationStatus, Prisma } from '@prisma/client';
 import { checkSlaBreach } from '@/lib/sla';
-import { ownersSharingWith } from '@/lib/conversations/access';
+import { ownersSharingWith, teamScope } from '@/lib/conversations/access';
 
 /**
  * §51 Inbox list. Filters: unread | mine | open | waiting | resolved | all,
@@ -13,6 +13,8 @@ import { ownersSharingWith } from '@/lib/conversations/access';
  *
  * scope=mine (default): this workspace's conversations, plus any assigned to me from another
  * inbox. scope=shared: the inboxes teammates shared with me (Settings → Inbox sharing).
+ * scope=team (admins only): every reply that landed in any mailbox of the admin's organisation (Super Admin: the whole
+ * company), optionally one mailbox owner (?ownerId=).
  */
 export const GET = withErrorHandling(async (req) => {
   const session = await requireSession();
@@ -26,10 +28,15 @@ export const GET = withErrorHandling(async (req) => {
   const page = Math.max(1, Number(url.searchParams.get('page') ?? '1'));
   const pageSize = Math.min(100, Number(url.searchParams.get('pageSize') ?? '40'));
 
-  const scope = url.searchParams.get('scope') === 'shared' ? 'shared' : 'mine';
+  const team = teamScope(session);
+  const wanted = url.searchParams.get('scope');
+  const scope: 'mine' | 'shared' | 'team' = wanted === 'shared' ? 'shared' : wanted === 'team' && team ? 'team' : 'mine';
   const sharingOwners = await ownersSharingWith(session);
+  const ownerFilter = url.searchParams.get('ownerId');
   const scopeWhere: Prisma.ConversationWhereInput =
-    scope === 'shared'
+    scope === 'team'
+      ? { AND: [team!, ...(ownerFilter ? [{ ownerId: ownerFilter }] : [])] }
+      : scope === 'shared'
       ? { ownerId: { in: sharingOwners }, workspaceId: { not: workspaceId } }
       : workspaceId === session.workspaceId
         ? { OR: [{ workspaceId }, { assigneeId: session.userId }] }
@@ -104,6 +111,14 @@ export const GET = withErrorHandling(async (req) => {
     }),
   ]);
 
+  // Team view: whose mailbox each reply landed in, with counts, for the owner filter.
+  let owners: { id: string; name: string; count: number }[] | undefined;
+  if (scope === 'team') {
+    const grouped = await prisma.conversation.groupBy({ by: ['ownerId'], where: { AND: [team!, where] }, _count: { _all: true } });
+    const people = await prisma.user.findMany({ where: { id: { in: grouped.map((g) => g.ownerId) } }, select: { id: true, name: true } });
+    owners = grouped.map((g) => ({ id: g.ownerId, name: people.find((p) => p.id === g.ownerId)?.name ?? 'Unknown', count: g._count._all })).sort((a, b) => b.count - a.count);
+  }
+
   // For each conversation, fetch the first (oldest) message direction in a single
   // bulk query so we can show a "direct inbound" badge for pre-Rule-3 conversations.
   const convIds = conversations.map((c) => c.id);
@@ -164,5 +179,7 @@ export const GET = withErrorHandling(async (req) => {
     counts: { unread: counts[0], mine: counts[1], open: counts[2], waiting: counts[3] },
     scope,
     hasSharedInboxes: sharingOwners.length > 0,
+    canSeeTeam: !!team,
+    owners,
   });
 });

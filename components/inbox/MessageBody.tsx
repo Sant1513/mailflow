@@ -14,8 +14,8 @@ import { frameDocument } from '@/lib/conversations/frameDoc';
  * toggle, matching the UX of Gmail's "message clipped" disclosure.
  */
 
-const COLLAPSE_THRESHOLD = 280; // px — taller than this → start collapsed
-const PREVIEW_HEIGHT = 200;      // px — height of the collapsed preview
+const COLLAPSE_THRESHOLD = 420; // px — taller than this → start collapsed
+const PREVIEW_HEIGHT = 320;      // px — height of the collapsed preview
 
 export function MessageBody({
   main,
@@ -112,7 +112,7 @@ export function MessageBody({
         {isTall && collapsed && !expanded && (
           <div
             className="pointer-events-none absolute bottom-0 left-0 right-0 h-16"
-            style={{ background: 'linear-gradient(to bottom, transparent, var(--card, #fff))' }}
+            style={{ background: 'linear-gradient(to bottom, rgba(255,255,255,0), #fff)' }}
           />
         )}
       </div>

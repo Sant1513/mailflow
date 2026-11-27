@@ -6,6 +6,7 @@ import { withErrorHandling } from '@/lib/api/respond';
 import { ConversationStatus } from '@prisma/client';
 import { audit } from '@/lib/audit/log';
 import { requireCanWrite } from '@/lib/permissions/workspace';
+import { teamScope } from '@/lib/conversations/access';
 
 const bulkSchema = z.object({
   ids: z.array(z.string().cuid()).min(1).max(100),
@@ -22,9 +23,11 @@ export const POST = withErrorHandling(async (req) => {
   const workspaceId = session.workspaceId;
   const body = bulkSchema.parse(await req.json());
 
-  // Restrict to conversations in this workspace only.
+  // Own workspace only; admins also resolve / reopen / read / assign the replies of their organisation (not tags: those belong to a workspace).
+  const team = teamScope(session);
+  const teamActions = ['resolve', 'reopen', 'mark_read', 'mark_unread', 'assign'];
   const allowed = await prisma.conversation.findMany({
-    where: { id: { in: body.ids }, workspaceId },
+    where: { id: { in: body.ids }, ...(team && teamActions.includes(body.action) ? { OR: [{ workspaceId }, team] } : { workspaceId }) },
     select: { id: true },
   });
   const validIds = allowed.map((c) => c.id);

@@ -74,9 +74,50 @@ function linkify(escaped: string): string {
  * otherwise the plain text converted; quoted history split off for a
  * "Show quoted text" toggle.
  */
+/**
+ * Takes the empty lines mail programs leave at the top and bottom of a message (Outlook's empty "elementToProof" div, a lone <br>,
+ * the empty "appendonsend" marker) and squeezes runs of blank lines to one, so the message starts at its first word
+ * and does not float in white space. Content is untouched.
+ */
+export function tidyEmailHtml(html: string): string {
+  // Everything is removed one small piece at a time with simple patterns (no nested repeats, so no slow backtracking).
+  const EMPTY_BLOCK = /<(div|p|span)\b[^>]*>(?:\s|&nbsp;|<br\s*\/?>)*<\/\1>/iy;
+  const lead = (x: string): string => {
+    for (let guard = 0; guard < 200; guard++) {
+      const m = /^(?:\s+|<br\s*\/?>|&nbsp;)/i.exec(x);
+      if (m) { x = x.slice(m[0].length); continue; }
+      EMPTY_BLOCK.lastIndex = 0;
+      const e = EMPTY_BLOCK.exec(x);
+      if (e) { x = x.slice(e[0].length); continue; }
+      break;
+    }
+    return x;
+  };
+  const trail = (x: string): string => {
+    for (let guard = 0; guard < 200; guard++) {
+      const tail = x.slice(-600);
+      const m = /(?:\s+|<br\s*\/?>|&nbsp;|<(div|p|span)\b[^>]*>(?:\s|&nbsp;|<br\s*\/?>)*<\/\1>)$/i.exec(tail);
+      if (!m) break;
+      x = x.slice(0, x.length - m[0].length);
+    }
+    return x;
+  };
+  let out = html.replace(/<div[^>]*id="appendonsend"[^>]*><\/div>/gi, '');
+  const body = /<body\b[^>]*>/i.exec(out);
+  const closeAt = out.search(/<\/body>/i);
+  if (body) {
+    const start = body.index + body[0].length;
+    const end = closeAt >= start ? closeAt : out.length;
+    out = out.slice(0, start) + trail(lead(out.slice(start, end))) + out.slice(end);
+  } else {
+    out = trail(lead(out));
+  }
+  return out.replace(/(?:<br\s*\/?>\s*){3,}/gi, '<br><br>');
+}
+
 export function splitMessageBody(input: { htmlBody?: string | null; plainTextBody?: string | null; snippet?: string | null }): SplitBody {
   if (input.htmlBody && input.htmlBody.trim()) {
-    const clean = sanitizeEmailHtml(input.htmlBody);
+    const clean = tidyEmailHtml(sanitizeEmailHtml(input.htmlBody));
     const at = quotedHtmlStart(clean);
     if (at > 0) {
       const main = clean.slice(0, at);
