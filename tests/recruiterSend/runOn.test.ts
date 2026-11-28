@@ -30,11 +30,22 @@ const db = {
   recruiterBlastGroup: {
     findMany: vi.fn(async (q: any) => {
       if (q.where.createdAt) return []; // recoverStuck: nothing is old enough here
-      return state.groups.filter((g) => g.blastId === q.where.blastId && statusOk(q.where.status, g.status)).sort((a, b) => a.seq - b.seq).map((g) => ({ ...g }));
+      const orphan = (g: G) => !q.where.OR || g.plannedAccountId === null || !(q.where.OR[1].plannedAccountId.notIn as string[]).includes(g.plannedAccountId);
+      return state.groups.filter((g) => g.blastId === q.where.blastId && statusOk(q.where.status, g.status) && orphan(g)).sort((a, b) => a.seq - b.seq).map((g) => ({ ...g }));
     }),
-    findFirst: vi.fn(async () => null),
+    // planRound's "next pending batch" (overall, or planned for one mailbox); the sender's other lookups stay empty here.
+    findFirst: vi.fn(async (q: any) => {
+      if (q.select?.recipientCount === undefined) return null;
+      const g = state.groups.filter((x) => x.blastId === q.where.blastId && statusOk(q.where.status, x.status) && (q.where.plannedAccountId === undefined || x.plannedAccountId === q.where.plannedAccountId)).sort((a, b) => a.seq - b.seq)[0];
+      return g ? { ...g } : null;
+    }),
     count: vi.fn(async (q: any) => state.groups.filter((g) => g.blastId === q.where.blastId && statusOk(q.where.status, g.status)).length),
     groupBy: vi.fn(async (q: any) => {
+      if (q.by[0] === 'plannedAccountId') {
+        const by = new Map<string | null, number>();
+        for (const g of state.groups.filter((x) => x.blastId === q.where.blastId && statusOk(q.where.status, x.status))) by.set(g.plannedAccountId, (by.get(g.plannedAccountId) ?? 0) + 1);
+        return [...by].map(([plannedAccountId, n]) => ({ plannedAccountId, _count: { _all: n } }));
+      }
       const rows = state.groups.filter((g) => g.blastId === q.where.blastId && statusOk(q.where.status, g.status) && g.accountId && (!q.where.sentAt || g.sentAt));
       const by = new Map<string, G[]>();
       for (const g of rows) by.set(g.accountId!, [...(by.get(g.accountId!) ?? []), g]);

@@ -28,11 +28,22 @@ const db = {
   recruiterBlastGroup: {
     findMany: vi.fn(async (q: any) => {
       if (q.where.createdAt) return []; // recoverStuck: nothing is stuck in these tests
-      return state.groups.filter((g) => g.blastId === q.where.blastId && statusOk(q.where.status, g.status)).sort((a, b) => a.seq - b.seq).map((g) => ({ ...g }));
+      const orphan = (g: G) => !q.where.OR || g.plannedAccountId === null || !(q.where.OR[1].plannedAccountId.notIn as string[]).includes(g.plannedAccountId);
+      return state.groups.filter((g) => g.blastId === q.where.blastId && statusOk(q.where.status, g.status) && orphan(g)).sort((a, b) => a.seq - b.seq).map((g) => ({ ...g }));
     }),
-    findFirst: vi.fn(async () => null),
+    // planRound's "next pending batch" (overall, or planned for one mailbox); the sender's other lookups stay empty here.
+    findFirst: vi.fn(async (q: any) => {
+      if (q.select?.recipientCount === undefined) return null;
+      const g = state.groups.filter((x) => x.blastId === q.where.blastId && statusOk(q.where.status, x.status) && (q.where.plannedAccountId === undefined || x.plannedAccountId === q.where.plannedAccountId)).sort((a, b) => a.seq - b.seq)[0];
+      return g ? { ...g } : null;
+    }),
     count: vi.fn(async (q: any) => state.groups.filter((g) => statusOk(q.where.status, g.status)).length),
     groupBy: vi.fn(async (q: any) => {
+      if (q.by[0] === 'plannedAccountId') {
+        const by = new Map<string | null, number>();
+        for (const g of state.groups.filter((x) => x.blastId === q.where.blastId && statusOk(q.where.status, x.status))) by.set(g.plannedAccountId, (by.get(g.plannedAccountId) ?? 0) + 1);
+        return [...by].map(([plannedAccountId, n]) => ({ plannedAccountId, _count: { _all: n } }));
+      }
       const rows = state.groups.filter((g) => statusOk(q.where.status, g.status) && g.accountId && (!q.where.sentAt || g.sentAt));
       const by = new Map<string, G[]>();
       for (const g of rows) by.set(g.accountId!, [...(by.get(g.accountId!) ?? []), g]);
@@ -143,6 +154,29 @@ describe('planning rounds', () => {
     expect(rounds).toBe(1);
     expect(estimateMinutes(rounds, 60, 'PARALLEL', 10)).toBe(2); // a minute's pause plus the stagger
     expect(estimateMinutes(10, 60, 'SEQUENTIAL', 10)).toBe(10);
+  });
+});
+
+describe('database traffic of a big send', () => {
+  it('planning a round never reads the queue: only counts, each mailbox\'s next batch and, if any, the orphans', async () => {
+    // 3,000 batches pending across 3 mailboxes: reading them all each round was most of the database's egress.
+    setup(['a1', 'a2', 'a3'], Array.from({ length: 3000 }, (_, i) => ['a1', 'a2', 'a3'][i % 3]!));
+    await run();
+    const queueReads = db.recruiterBlastGroup.findMany.mock.calls.filter(([q]: any) => q.where.status === 'PENDING');
+    expect(queueReads).toHaveLength(0);
+    const heads = db.recruiterBlastGroup.findFirst.mock.calls.filter(([q]: any) => q.select?.recipientCount !== undefined);
+    expect(heads.length).toBeGreaterThan(0);
+    for (const [q] of heads) expect((q as any).orderBy).toEqual({ seq: 'asc' }); // one row each, never a list
+    expect(sent).toHaveLength(3);
+  });
+
+  it('batches planned for a mailbox that cannot send are the only ones read, and move on', async () => {
+    setup(['a1', 'a2'], ['a1', 'a2', 'a3gone', 'a3gone']);
+    state.accounts.get('a1').status = 'CONNECTED';
+    await run();
+    const orphanReads = db.recruiterBlastGroup.findMany.mock.calls.filter(([q]: any) => q.where.status === 'PENDING');
+    expect(orphanReads).toHaveLength(1);
+    expect(state.groups.filter((g) => g.plannedAccountId === 'a3gone')).toHaveLength(0);
   });
 });
 

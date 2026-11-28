@@ -410,19 +410,29 @@ async function deliver(blast: BlastRow, group: { id: string; attempts: number },
  * its batches to the mailboxes that can, fewest-left first, so nothing waits on it.
  */
 export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ ready: { group: GroupRow; accountId: string }[]; nextGap: number; waiting: string | null }> {
-  const pending = await prisma.recruiterBlastGroup.findMany({
-    where: { blastId: blast.id, status: 'PENDING' },
-    orderBy: { seq: 'asc' },
-    take: 5000,
-    select: { id: true, seq: true, attempts: true, recipientCount: true, plannedAccountId: true, inReplyToGroupId: true },
-  });
-  if (!pending.length) return { ready: [], nextGap: Infinity, waiting: null };
-  const [used, allowed, lastSent, busyRows] = await Promise.all([
+  // This runs every few seconds for every sending blast, so it must not read the whole queue (a big individual send has
+  // thousands of pending messages: reading them all every round was most of the database's outgoing traffic).
+  // It reads: how many are pending per planned mailbox (a handful of rows), each mailbox's next one, and only the
+  // batches planned for a mailbox that cannot send (rare).
+  const SELECT = { id: true, seq: true, attempts: true, recipientCount: true, plannedAccountId: true, inReplyToGroupId: true } as const;
+  const pendingWhere = { blastId: blast.id, status: 'PENDING' } as const;
+  const [perMailbox, firstOverall] = await Promise.all([
+    prisma.recruiterBlastGroup.groupBy({ by: ['plannedAccountId'], where: pendingWhere, _count: { _all: true } }),
+    prisma.recruiterBlastGroup.findFirst({ where: pendingWhere, orderBy: { seq: 'asc' }, select: SELECT }),
+  ]);
+  const totalPending = perMailbox.reduce((n, r) => n + r._count._all, 0);
+  if (!firstOverall || !totalPending) return { ready: [], nextGap: Infinity, waiting: null };
+  const [used, allowed, lastSent, busyRows, heads] = await Promise.all([
     sentPerAccount(blast.id),
     allowedMailboxIds(blast.organizationId, blast.createdById, blast),
     prisma.recruiterBlastGroup.groupBy({ by: ['accountId'], where: { blastId: blast.id, status: { in: ['SENT', 'SENDING'] }, sentAt: { not: null } }, _max: { sentAt: true } }),
     prisma.recruiterBlastGroup.findMany({ where: { blastId: blast.id, status: 'SENDING' }, select: { accountId: true } }),
+    // Each chosen mailbox's own next batch.
+    Promise.all(blast.accountIds.map((id) => prisma.recruiterBlastGroup.findFirst({ where: { ...pendingWhere, plannedAccountId: id }, orderBy: { seq: 'asc' }, select: SELECT }))),
   ]);
+  const head = new Map<string, GroupRow>();
+  blast.accountIds.forEach((id, i) => { if (heads[i]) head.set(id, heads[i]!); });
+  const planned = new Map(perMailbox.filter((r) => r.plannedAccountId).map((r) => [r.plannedAccountId!, r._count._all]));
   const last = new Map(lastSent.filter((r) => r.accountId).map((r) => [r.accountId!, r._max.sentAt?.getTime() ?? 0]));
   const busy = new Set(busyRows.map((r) => r.accountId).filter(Boolean) as string[]);
 
@@ -433,7 +443,7 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
   // they cost seconds per round on the laptop's link to the cloud database.
   const checks = await Promise.all(
     blast.accountIds.map(async (id) => {
-      const size = pending.find((g) => g.plannedAccountId === id)?.recipientCount ?? pending[0]!.recipientCount;
+      const size = (head.get(id) ?? firstOverall).recipientCount;
       return { id, r: await checkMailbox(blast, id, size, { used, allowed }) };
     }),
   );
@@ -444,19 +454,31 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
   if (!usable.length) return { ready: [], nextGap: Infinity, waiting: `Waiting: ${reasons.join('; ') || 'no sending mailbox chosen'}. Sending carries on by itself when one is free.` };
 
   // Batches planned for a mailbox that can't send (or for none) move to ones that can.
-  const left = new Map(usable.map((id) => [id, pending.filter((g) => g.plannedAccountId === id).length]));
+  const usableSet = new Set(usable);
+  const left = new Map(usable.map((id) => [id, planned.get(id) ?? 0]));
+  const orphanCount = totalPending - usable.reduce((n, id) => n + (planned.get(id) ?? 0), 0);
+  const orphans: GroupRow[] = orphanCount > 0
+    ? await prisma.recruiterBlastGroup.findMany({
+        where: { ...pendingWhere, OR: [{ plannedAccountId: null }, { plannedAccountId: { notIn: usable } }] },
+        orderBy: { seq: 'asc' },
+        take: 5000,
+        select: SELECT,
+      })
+    : [];
   const moves = new Map<string, string[]>();
-  for (const g of pending) {
-    if (g.plannedAccountId && left.has(g.plannedAccountId)) continue;
+  const movedTo = new Map<string, GroupRow[]>();
+  for (const g of orphans) {
+    if (g.plannedAccountId && usableSet.has(g.plannedAccountId)) continue;
     if (waitsForMailbox(blast, g)) continue; // a follow-up waits for the mailbox of its thread
     const target = usable.reduce((best, id) => (left.get(id)! < left.get(best)! ? id : best), usable[0]!);
     left.set(target, left.get(target)! + 1);
     moves.set(target, [...(moves.get(target) ?? []), g.id]);
     g.plannedAccountId = target;
+    movedTo.set(target, [...(movedTo.get(target) ?? []), g]);
   }
   // Everything left is a follow-up waiting for a mailbox that can't send: say so (and stop handing over).
-  const blocked = pending.filter((g) => waitsForMailbox(blast, g) && !left.has(g.plannedAccountId!));
-  if (blocked.length === pending.length) {
+  const blocked = orphans.filter((g) => waitsForMailbox(blast, g) && !left.has(g.plannedAccountId!));
+  if (orphans.length === totalPending && blocked.length === orphans.length) {
     return { ready: [], nextGap: Infinity, waiting: `Waiting: the mailbox that sent the original email can't send now (${reasons.join('; ') || 'it is not one of the chosen mailboxes'}). The follow-up goes out in its thread when it can; or choose “another mailbox (new thread)”.` };
   }
   for (const [target, ids] of moves) {
@@ -464,7 +486,7 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
   }
   if (moves.size) console.log(`[recruiter-send] ${blast.id}: moved ${[...moves.values()].flat().length} batch(es) to mailboxes that can send (${reasons.join('; ')})`);
 
-  // Each usable mailbox's next batch, once its own pause is over.
+  // Each usable mailbox's next batch (its own, or one just handed to it, whichever is first), once its own pause is over.
   const ready: { group: GroupRow; accountId: string }[] = [];
   let nextGap = Infinity;
   for (const id of usable) {
@@ -474,7 +496,8 @@ export async function planRound(blast: BlastRow, now = Date.now()): Promise<{ re
       nextGap = Math.min(nextGap, wait);
       continue;
     }
-    const group = pending.find((g) => g.plannedAccountId === id);
+    const candidates = [head.get(id), movedTo.get(id)?.[0]].filter((g): g is GroupRow => !!g);
+    const group = candidates.sort((x, y) => x.seq - y.seq)[0];
     if (group) ready.push({ group, accountId: id });
   }
   ready.sort((a, b) => (last.get(a.accountId) ?? 0) - (last.get(b.accountId) ?? 0));
