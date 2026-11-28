@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DateInput } from '@/components/ui/DateInput';
 import { LoadError, loadErrorMessage } from '@/components/ui/LoadError';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
+import { ArrowLeft, CheckCheck, ChevronsUpDown, Download, GitMerge, RotateCcw } from 'lucide-react';
+import { ThreadMessage } from '@/components/inbox/ThreadMessage';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
@@ -19,7 +21,26 @@ const STATUSES = ['OPEN', 'IN_PROGRESS', 'WAITING_FOR_STUDENT', 'RESOLVED', 'CLO
 /** §110 conversation view: header, messages + notes timeline, reply composer. */
 export default function ConversationPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const [data, setData] = useState<any>(null);
+  // Gmail-style thread: the latest message (and anything unread) is open, older ones are one-line rows; click to open.
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const initialised = useRef<string | null>(null);
+  const [showAllOlder, setShowAllOlder] = useState(false);
+  // The reply box opens from Reply / the r key; once opened it stays mounted so a half-written reply is not lost.
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerEver, setComposerEver] = useState(false);
+  const composerRef = useRef<HTMLDivElement | null>(null);
+  const dataRef = useRef<any>(null);
+  dataRef.current = data;
+  const openComposer = useCallback(() => {
+    setComposerOpen(true);
+    setComposerEver(true);
+    setTimeout(() => {
+      composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      composerRef.current?.querySelector<HTMLElement>('[contenteditable="true"], textarea')?.focus();
+    }, 60);
+  }, []);
   const [busy, setBusy] = useState<string | null>(null);
   const [inject, setInject] = useState<{ text: string; key: number } | null>(null);
 
@@ -57,6 +78,34 @@ export default function ConversationPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const msgs: any[] = data?.conversation?.messages ?? [];
+    if (!msgs.length || initialised.current === params.id) return;
+    initialised.current = params.id;
+    const next = new Set<string>([msgs[msgs.length - 1].id]);
+    for (const m of msgs) if (m.direction === 'INBOUND' && m.isRead === false) next.add(m.id);
+    setOpen(next);
+  }, [data, params.id]);
+
+  // Gmail keys (not while typing): r reply, e resolve / reopen, u back to the inbox.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      const conv = dataRef.current?.conversation;
+      if (!conv) return;
+      if (e.key === 'r' && conv.access !== 'VIEW') { e.preventDefault(); openComposer(); }
+      else if (e.key === 'u') { e.preventDefault(); router.push('/inbox'); }
+      else if (e.key === 'e' && conv.access !== 'VIEW') {
+        e.preventDefault();
+        document.querySelector<HTMLButtonElement>('[data-resolve-toggle]')?.click();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [openComposer, router]);
 
   // §104: pull the mailbox on open (student replies + our own Gmail replies), then refresh.
   useAutoSync(() => load());
@@ -313,154 +362,93 @@ export default function ConversationPage() {
 
   return (
     <div className="flex h-full min-h-[calc(100dvh-3.5rem)] lg:min-h-0 flex-col">
-      {/* Header */}
-      <div className="border-b bg-card px-4 py-3">
-        <Link href="/inbox" className="text-xs text-muted-foreground hover:text-foreground">← Inbox</Link>
-        <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            <Avatar email={c.recipientEmail} name={c.contact.name} size={40} />
-            <div className="min-w-0">
-            <h1 className="truncate text-base font-semibold">{c.subject}</h1>
-            <div className="text-sm text-muted-foreground">
-              <Link href={`/contacts/${c.contact.id}`} className="font-medium text-foreground hover:underline">
-                {c.contact.name || c.recipientEmail}
-              </Link>{' '}
-              · {c.recipientEmail} · {c.messageCount} message{c.messageCount === 1 ? '' : 's'} · via {c.account.emailAddress}
-            </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <label className="flex items-center gap-1">
-              <span className="text-muted-foreground">Status</span>
-              <select
-                value={c.status}
-                onChange={(e) => patch({ status: e.target.value }, 'change status')}
-                disabled={!!busy}
-                className="rounded border px-1.5 py-1"
-              >
-                {STATUSES.map((s) => (
-                  <option key={s} value={s}>{s.replace(/_/g, ' ').toLowerCase()}</option>
-                ))}
-              </select>
-            </label>
-            <label className="flex items-center gap-1">
-              <span className="text-muted-foreground">Assigned</span>
-              <select
-                value={c.assigneeId ?? ''}
-                onChange={(e) => patch({ assigneeId: e.target.value || null }, 'assign')}
-                disabled={!!busy}
-                className="rounded border px-1.5 py-1"
-              >
-                <option value="">— unassigned —</option>
-                {data.members.map((m: any) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-            </label>
-            {c.status !== 'RESOLVED' && (
-              <button onClick={() => patch({ status: 'RESOLVED' }, 'resolve')} disabled={!!busy} className="rounded border px-2 py-1 hover:bg-elevated">
-                Mark resolved
-              </button>
-            )}
-            <button onClick={exportConversation} className="rounded border px-2 py-1 hover:bg-elevated" title="Print / export conversation">
-              Export
-            </button>
-            <button onClick={openMerge} className="rounded border px-2 py-1 hover:bg-elevated" title="Merge another conversation into this one">
-              Merge
-            </button>
-          </div>
+      {/* Header: Gmail-style toolbar, then the subject with its labels */}
+      <div className="border-b bg-card px-4 pb-3 pt-2">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <Link href="/inbox" className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-muted" title="Back to the inbox (u)" aria-label="Back to the inbox"><ArrowLeft className="h-4 w-4" /></Link>
+          {c.status !== 'RESOLVED' ? (
+            <button data-resolve-toggle onClick={() => patch({ status: 'RESOLVED' }, 'resolve')} disabled={!!busy} className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 hover:bg-muted" title="Mark resolved (e)"><CheckCheck className="h-3.5 w-3.5" /> Mark resolved</button>
+          ) : (
+            <button data-resolve-toggle onClick={() => patch({ status: 'OPEN' }, 'reopen')} disabled={!!busy} className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 hover:bg-muted" title="Reopen (e)"><RotateCcw className="h-3.5 w-3.5" /> Reopen</button>
+          )}
+          <button onClick={openMerge} className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 hover:bg-muted" title="Merge another conversation into this one"><GitMerge className="h-3.5 w-3.5" /> Merge</button>
+          <button onClick={exportConversation} className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 hover:bg-muted" title="Print / export conversation"><Download className="h-3.5 w-3.5" /> Export</button>
+          <button onClick={() => setOpen((cur) => (cur.size >= c.messages.length ? new Set([c.messages[c.messages.length - 1]?.id].filter(Boolean)) : new Set(c.messages.map((m: any) => m.id))))} className="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 hover:bg-muted" title="Expand or collapse every message" data-expand-all><ChevronsUpDown className="h-3.5 w-3.5" /> {open.size >= c.messages.length ? 'Collapse all' : 'Expand all'}</button>
+          <span className="flex-1" />
+          <label className="flex items-center gap-1">
+            <span className="text-muted-foreground">Status</span>
+            <select value={c.status} onChange={(e) => patch({ status: e.target.value }, 'change status')} disabled={!!busy} className="rounded-md border bg-background px-1.5 py-1">
+              {STATUSES.map((s) => (<option key={s} value={s}>{s.replace(/_/g, ' ').toLowerCase()}</option>))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1">
+            <span className="text-muted-foreground">Assigned</span>
+            <select value={c.assigneeId ?? ''} onChange={(e) => patch({ assigneeId: e.target.value || null }, 'assign')} disabled={!!busy} className="rounded-md border bg-background px-1.5 py-1">
+              <option value="">— unassigned —</option>
+              {data.members.map((m: any) => (<option key={m.id} value={m.id}>{m.name}</option>))}
+            </select>
+          </label>
         </div>
 
-        {/* Tags */}
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <h1 className="text-xl font-normal leading-tight" data-thread-subject>{c.subject}</h1>
           {c.tags.map((t: any) => (
-            <span key={t.tag.id} className="flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px]">
+            <span key={t.tag.id} className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[11px]">
               {t.tag.name}
-              <button onClick={() => removeTag(t.tag.name)} className="text-muted-foreground hover:text-destructive" title="Remove tag">✕</button>
+              <button onClick={() => removeTag(t.tag.name)} className="text-muted-foreground hover:text-destructive" title="Remove tag" aria-label={`Remove tag ${t.tag.name}`}>✕</button>
             </span>
           ))}
-          <input
-            value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addTag()}
-            placeholder="+ tag"
-            className="w-24 rounded border px-1.5 py-0.5 text-[11px]"
-          />
+          <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTag()} placeholder="+ tag" className="w-20 rounded-md border bg-background px-1.5 py-0.5 text-[11px]" />
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          <Link href={`/contacts/${c.contact.id}`} className="font-medium text-foreground hover:underline">{c.contact.name || c.recipientEmail}</Link>{' '}
+          · {c.recipientEmail} · {c.messageCount} message{c.messageCount === 1 ? '' : 's'} · via {c.account.emailAddress} <span className="text-faint">· shortcuts: r reply, e resolve, u inbox</span>
         </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Timeline */}
         <div className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-muted/30 p-4">
-          <div className="mx-auto w-full max-w-3xl space-y-3">
-            {timeline.map(({ kind, item }) =>
-              kind === 'note' ? (
-                <div key={`n-${item.id}`} className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
-                  <div className="mb-1 flex items-center justify-between text-xs text-warning">
-                    <span><strong>INTERNAL NOTE</strong> · {item.author.name}</span>
-                    <div className="flex items-center gap-2">
-                      <span>{new Date(item.createdAt).toLocaleString()}</span>
-                      <button
-                        onClick={() => deleteNote(item.id)}
-                        className="text-warning/60 hover:text-warning"
-                        title="Delete note"
-                      >
-                        ✕
-                      </button>
+          <div className="mx-auto w-full max-w-4xl divide-y overflow-hidden rounded-lg border bg-card" data-thread>
+            {(() => {
+              // Long threads: first message, a "N more messages" pill, then the latest three.
+              const msgCount = timeline.filter((t) => t.kind === 'message').length;
+              const hideFrom = 1, hideTo = timeline.length - 3;
+              const collapseMiddle = !showAllOlder && msgCount > 5 && hideTo > hideFrom;
+              return timeline.map(({ kind, item }, idx) => {
+                if (collapseMiddle && idx >= hideFrom && idx < hideTo) {
+                  return idx === hideFrom ? (
+                    <button key="older" type="button" data-older onClick={() => setShowAllOlder(true)} className="flex w-full items-center gap-2 bg-muted/40 px-4 py-2 text-xs text-muted-foreground hover:bg-muted">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full border bg-card font-semibold">{hideTo - hideFrom}</span> older messages in between: click to show
+                    </button>
+                  ) : null;
+                }
+                return kind === 'note' ? (
+                  <div key={`n-${item.id}`} className="bg-warning/10 px-4 py-2.5 text-sm">
+                    <div className="mb-1 flex items-center justify-between text-xs text-warning">
+                      <span><strong>INTERNAL NOTE</strong> · {item.author.name}</span>
+                      <div className="flex items-center gap-2">
+                        <span>{new Date(item.createdAt).toLocaleString()}</span>
+                        <button onClick={() => deleteNote(item.id)} className="text-warning/60 hover:text-warning" title="Delete note">✕</button>
+                      </div>
                     </div>
+                    <div className="whitespace-pre-wrap text-warning">{item.body}</div>
+                    <div className="mt-1 text-[10px] text-warning">Never sent to the recipient.</div>
                   </div>
-                  <div className="whitespace-pre-wrap text-warning">{item.body}</div>
-                  <div className="mt-1 text-[10px] text-warning">Never sent to the recipient.</div>
-                </div>
-              ) : (
-                <div
-                  key={`m-${item.id}`}
-                  className={`rounded-lg border bg-card p-3 text-sm ${item.direction === 'OUTBOUND' ? 'ml-8' : 'mr-8'}`}
-                >
-                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span className="inline-flex flex-wrap items-center gap-1.5">
-                      <Avatar email={item.direction === 'OUTBOUND' ? c.account.emailAddress : item.senderEmail} name={item.direction === 'OUTBOUND' ? null : item.senderName} size={22} />
-                      <strong className={item.direction === 'OUTBOUND' ? 'text-primary' : ''}>
-                        {item.direction === 'OUTBOUND' ? 'You' : item.senderName || item.senderEmail}
-                      </strong>{' '}
-                      · {item.direction}
-                      {item.classification && item.classification !== 'HUMAN_REPLY' && item.direction === 'INBOUND' && (
-                        <span className="ml-1 rounded bg-warning/15 px-1 text-[10px] text-warning">
-                          {item.classification.replace(/_/g, ' ').toLowerCase()}
-                        </span>
-                      )}
-                      {item.hasAttachments && <span className="ml-1">📎</span>}
-                    </span>
-                    <span>{new Date(item.sentAt ?? item.receivedAt).toLocaleString()}</span>
-                  </div>
-                  <MessageBody main={item.bodyMain ?? '<p><em>(no text)</em></p>'} quoted={item.bodyQuoted ?? null} collapsible />
-                  {item.attachments?.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1 text-[11px]">
-                      {item.attachments.map((a: any) =>
-                        a.campaignDocumentId ? (
-                          <a
-                            key={a.id}
-                            href={`/api/attachments/${a.id}?inline=1`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="badge badge-neutral !normal-case !tracking-normal hover:text-primary"
-                            title={`Open the personalised PDF sent in this email${a.documentRef ? ` (${a.documentRef})` : ''}`}
-                          >
-                            📎 {a.filename} <span className="text-faint">({Math.max(1, Math.round(a.size / 1024))} KB)</span>
-                          </a>
-                        ) : (
-                          <span key={a.id} className="badge badge-neutral !normal-case !tracking-normal" title={a.mimeType}>
-                            📎 {a.filename} <span className="text-faint">({Math.max(1, Math.round(a.size / 1024))} KB)</span>
-                          </span>
-                        )
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            )}
-            {timeline.length === 0 && <div className="text-sm text-muted-foreground">No messages yet.</div>}
+                ) : (
+                  <ThreadMessage
+                    key={`m-${item.id}`}
+                    m={item}
+                    mailbox={c.account.emailAddress}
+                    expanded={open.has(item.id)}
+                    onToggle={() => setOpen((cur) => { const n = new Set(cur); n.has(item.id) ? n.delete(item.id) : n.add(item.id); return n; })}
+                    onReply={openComposer}
+                    canReply={c.access !== 'VIEW'}
+                  />
+                );
+              });
+            })()}
+            {timeline.length === 0 && <div className="px-4 py-3 text-sm text-muted-foreground">No messages yet.</div>}
           </div>
 
           {/* Reply composer (§53/§54): rich text / HTML / preview, attachments, snippets.
@@ -489,9 +477,15 @@ export default function ConversationPage() {
                 refreshKey={data}
                 canWrite={c.access !== 'WORK'}
                 onSent={load}
-                onEdit={(text) => setInject({ text, key: Date.now() })}
+                onEdit={(text) => { setInject({ text, key: Date.now() }); openComposer(); }}
               />
-              <ReplyComposer
+              {!composerOpen && (
+                <div className="mx-auto mt-3 flex w-full max-w-4xl gap-2">
+                  <button type="button" data-open-reply onClick={openComposer} className="inline-flex items-center gap-2 rounded-full border bg-card px-5 py-2 text-sm hover:bg-muted"><span aria-hidden>↩</span> Reply <kbd className="rounded border px-1 text-[10px] text-muted-foreground">r</kbd></button>
+                </div>
+              )}
+              <div ref={composerRef} className={composerOpen ? 'mx-auto mt-3 w-full max-w-4xl' : 'hidden'} data-composer>
+              {composerEver && (<ReplyComposer
                 inject={inject}
                 conversationId={c.id}
                 recipientEmail={c.recipientEmail}
@@ -500,7 +494,8 @@ export default function ConversationPage() {
                 subject={c.subject}
                 busy={busy === 'reply'}
                 onSend={sendReply}
-              />
+              />)}
+              </div>
             </>
           )}
         </div>

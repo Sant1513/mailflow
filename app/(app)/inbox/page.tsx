@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { CheckCheck, MailOpen } from 'lucide-react';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from 'sonner';
 import { useAutoSync } from '@/components/inbox/useAutoSync';
@@ -210,6 +211,13 @@ export default function InboxPage() {
     load(page);
   }
 
+  /** One conversation's quick action from the row (resolve / reopen / read / unread). */
+  async function quickAction(id: string, action: string) {
+    const res = await fetch('/api/inbox/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [id], action }) }).catch(() => null);
+    if (!res?.ok) { const j = await res?.json().catch(() => ({})); toast.error(j?.error ?? 'That did not work: check your connection and try again.'); return; }
+    load(page);
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
@@ -391,78 +399,53 @@ export default function InboxPage() {
                 {rows.map((c) => {
                   const isColdInbound = c.firstMessageDirection === 'INBOUND';
                   const isChecked = selected.has(c.id);
+                  const sender = c.contact?.name || c.recipientEmail;
+                  const last = c.lastMessage;
                   return (
-                    <li key={c.id} className={`border-b ${isChecked ? 'bg-primary/5' : ''}`}>
-                      <div className="flex items-stretch">
-                        {/* Checkbox column */}
-                        <div className="flex shrink-0 items-center px-3" onClick={(e) => { e.preventDefault(); toggleRow(c.id); }}>
-                          <input type="checkbox" checked={isChecked} onChange={() => toggleRow(c.id)}
+                    <li key={c.id} data-conversation={c.id} className={`group border-b ${isChecked ? 'bg-primary/10' : c.unread ? 'bg-card' : 'bg-muted/30'}`}>
+                      <div className="flex items-center">
+                        <div className="flex shrink-0 items-center px-3 py-2" onClick={(e) => { e.preventDefault(); toggleRow(c.id); }}>
+                          <input type="checkbox" checked={isChecked} onChange={() => toggleRow(c.id)} aria-label={`Select ${sender}`}
                             className="h-3.5 w-3.5 rounded accent-primary" onClick={(e) => e.stopPropagation()} />
                         </div>
-                        {/* Conversation link */}
-                        <Link href={`/inbox/${c.id}`}
-                          className={`block min-w-0 flex-1 py-3 pr-4 hover:bg-elevated/60 ${c.unread ? 'bg-primary/5' : ''}`}>
-                          <div className="flex items-start justify-between gap-3">
-                            <Avatar email={c.recipientEmail} name={c.contact?.name} size={34} className="mt-0.5" />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                {c.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" />}
-                                <span className={`truncate text-sm ${c.unread ? 'font-semibold' : 'font-medium'}`}>
-                                  {c.contact?.name || c.recipientEmail}
-                                </span>
-                                {c.assignee && (
-                                  <span className="shrink-0 rounded bg-muted px-1.5 text-[10px] text-muted-foreground">{c.assignee.name}</span>
-                                )}
-                                {isColdInbound && (
-                                  <span className="shrink-0 rounded border border-warning/40 bg-warning/10 px-1.5 text-[10px] text-warning">
-                                    direct inbound
-                                  </span>
-                                )}
-                                {c.slaBreached && (
-                                  <span
-                                    className="shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 text-[10px] font-medium text-destructive"
-                                    title={`SLA breached — ${c.slaMinutesOverdue}m overdue`}
-                                  >
-                                    SLA
-                                  </span>
-                                )}
-                              </div>
-                              <div className="truncate text-sm">{c.subject}</div>
-                              <div className="truncate text-xs text-muted-foreground">
-                                {c.lastMessage?.direction === 'OUTBOUND' && <span className="mr-1">You:</span>}
-                                {c.lastMessage?.classification && c.lastMessage.classification !== 'HUMAN_REPLY' && (
-                                  <span className="mr-1 rounded bg-warning/15 px-1 text-[10px] text-warning">
-                                    {c.lastMessage.classification.replace(/_/g, ' ').toLowerCase()}
-                                  </span>
-                                )}
-                                {c.lastMessage?.snippet ?? ''}
-                              </div>
-                              {(c.tags.length > 0 || c.aiDraft || c.mailbox) && (
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                  {c.mailbox && (
-                                    <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground" title={c.mailbox.emailAddress}>
-                                      {c.mailbox.displayName ?? c.mailbox.emailAddress}&apos;s inbox
-                                    </span>
-                                  )}
-                                  {c.aiDraft && (
-                                    <span className="rounded bg-primary/10 px-1.5 text-[10px] font-medium text-primary">AI draft ready</span>
-                                  )}
-                                  {c.tags.map((t) => (
-                                    <span key={t.name} className="rounded px-1.5 text-[10px]"
-                                      style={{ background: t.color ? `${t.color}22` : undefined, color: t.color ?? undefined }}>
-                                      {t.name}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <div className="shrink-0 text-right text-xs text-muted-foreground">
-                              <div>{timeAgo(c.lastMessageAt)}</div>
-                              <div className="mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px]">{c.status.replace(/_/g, ' ').toLowerCase()}</div>
-                              <div className="mt-0.5 text-[10px]">{c.messageCount} msg{c.messageCount !== 1 ? 's' : ''}</div>
-                            </div>
-                          </div>
+                        <Link href={`/inbox/${c.id}`} className="flex min-w-0 flex-1 items-center gap-3 py-2 pr-3 hover:shadow-[inset_0_0_0_9999px_hsl(var(--muted)/0.4)]">
+                          <Avatar email={c.recipientEmail} name={c.contact?.name} size={28} />
+                          <span className={`w-44 shrink-0 truncate text-sm ${c.unread ? 'font-semibold' : ''}`}>
+                            {c.lastMessage?.direction === 'OUTBOUND' ? <span className="text-muted-foreground">To: </span> : null}{sender}
+                            {c.messageCount > 1 && <span className="ml-1 text-xs font-normal text-muted-foreground">({c.messageCount})</span>}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-sm">
+                            {c.unread && <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-primary align-middle" aria-label="Unread" />}
+                            <span className={c.unread ? 'font-semibold' : ''}>{c.subject}</span>
+                            <span className="font-normal text-muted-foreground"> – {last?.direction === 'OUTBOUND' ? 'You: ' : ''}{last?.snippet ?? ''}</span>
+                          </span>
+                          <span className="hidden shrink-0 items-center gap-1 md:flex">
+                            {last?.classification && last.classification !== 'HUMAN_REPLY' && (
+                              <span className="rounded bg-warning/15 px-1.5 text-[10px] text-warning">{last.classification.replace(/_/g, ' ').toLowerCase()}</span>
+                            )}
+                            {c.mailbox && (
+                              <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground" title={c.mailbox.emailAddress}>{c.mailbox.displayName ?? c.mailbox.emailAddress}</span>
+                            )}
+                            {c.assignee && <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground" title="Assigned to">{c.assignee.name}</span>}
+                            {isColdInbound && <span className="rounded border border-warning/40 bg-warning/10 px-1.5 text-[10px] text-warning">direct</span>}
+                            {c.slaBreached && <span className="rounded border border-destructive/40 bg-destructive/10 px-1.5 text-[10px] font-medium text-destructive" title={`SLA breached — ${c.slaMinutesOverdue}m overdue`}>SLA</span>}
+                            {c.aiDraft && <span className="rounded bg-primary/10 px-1.5 text-[10px] font-medium text-primary">AI draft</span>}
+                            {c.status !== 'OPEN' && c.status !== 'IN_PROGRESS' && <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground">{c.status.replace(/_/g, ' ').toLowerCase()}</span>}
+                            {c.tags.map((t) => (
+                              <span key={t.name} className="rounded px-1.5 text-[10px]" style={{ background: t.color ? `${t.color}22` : undefined, color: t.color ?? undefined }}>{t.name}</span>
+                            ))}
+                          </span>
                         </Link>
+                        {/* Date; on hover the same spot shows Gmail-style row actions */}
+                        <div className="relative h-8 w-[4.75rem] shrink-0 pr-3">
+                          <span className={`absolute inset-y-0 right-3 flex items-center text-xs group-hover:hidden ${c.unread ? 'font-semibold' : 'text-muted-foreground'}`}>{timeAgo(c.lastMessageAt)}</span>
+                          <div className="absolute inset-y-0 right-1 hidden items-center group-hover:flex">
+                            <button type="button" title={c.status === 'RESOLVED' ? 'Reopen' : 'Mark resolved'} aria-label={c.status === 'RESOLVED' ? 'Reopen' : 'Mark resolved'} data-quick-resolve
+                              onClick={() => void quickAction(c.id, c.status === 'RESOLVED' ? 'reopen' : 'resolve')} className="rounded-full p-1.5 hover:bg-muted"><CheckCheck className="h-4 w-4" /></button>
+                            <button type="button" title={c.unread ? 'Mark read' : 'Mark unread'} aria-label={c.unread ? 'Mark read' : 'Mark unread'}
+                              onClick={() => void quickAction(c.id, c.unread ? 'mark_read' : 'mark_unread')} className="rounded-full p-1.5 hover:bg-muted"><MailOpen className="h-4 w-4" /></button>
+                          </div>
+                        </div>
                       </div>
                     </li>
                   );

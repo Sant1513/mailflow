@@ -131,6 +131,33 @@ describe('cross-mailbox duplicate inbound', () => {
   });
 });
 
+describe('a bounce is a report, never a conversation', () => {
+  const bounce = (over: Record<string, unknown> = {}) => msg({ from: { email: 'mailer-daemon@googlemail.com', name: 'Mail Delivery Subsystem' }, subject: 'Delivery Status Notification (Failure)', ...over });
+
+  it('a bounce that answers one of our sends (so the person is known) opens no conversation in the inbox', async () => {
+    // Before: the bounce referenced a sent job, the contact was found and a "Delivery Status Notification" thread was created.
+    const out = await ingestInboundMessage(mailboxB, bounce());
+    expect(out.status).toBe('IGNORED');
+    expect(applyDeliveryReport).toHaveBeenCalledTimes(1); // suppression and "bounced" still applied
+    expect(tx.conversation.create).not.toHaveBeenCalled();
+    expect(tx.conversationMessage.create).not.toHaveBeenCalled();
+    expect(tx.notification.create).not.toHaveBeenCalled();
+  });
+
+  it('a real reply to the same send still opens its conversation', async () => {
+    const out = await ingestInboundMessage(mailboxB, msg());
+    expect(out.status).toBe('STORED');
+    expect(tx.conversation.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('a bounce that lands in a thread we already track is kept in that thread, unread and notification untouched', async () => {
+    db.conversation.findUnique.mockResolvedValue({ id: 'c-known', contactId: 'contact-1', workspaceId: 'w1', ownerId: 'u2', assigneeId: null, recruiterBlastId: null, recipientEmail: 'gone@corp.com' });
+    const out = await ingestInboundMessage(mailboxB, bounce());
+    expect(out.status).toBe('STORED');
+    expect(tx.notification.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('Message-ID helpers', () => {
   it('normalises case, brackets and whitespace', () => {
     expect(normalizeMessageId('  <AbC@Mail.Gmail.com> ')).toBe('abc@mail.gmail.com');

@@ -183,6 +183,13 @@ export async function ingestInboundMessage(account: AccountShape, message: Parse
     ? reportActions.map((a) => `${a.email ?? '?'} ${a.category}${willSuppress(a.decision) ? ' (suppressed)' : ` (${a.decision.toLowerCase()})`}`).join(', ')
     : 'nothing matched';
 
+  // A bounce or spam complaint was acted on above (suppressed, the send marked bounced). It is a report about a
+  // send, not a conversation: it must never open one in the inbox, whichever send it answers (campaign, Quick Send,
+  // Recruiter send) and even when it mentions a person we know.
+  if (!knownThread && (isBounce || report?.kind === 'COMPLAINT')) {
+    return { status: 'IGNORED', reason: `${report?.kind === 'COMPLAINT' ? 'Spam complaint' : 'Delivery report'}: ${reportSummary}.` };
+  }
+
   if (!knownThread) {
     // Not a known thread. Does it answer something we sent?
     const referenced = [message.inReplyTo, ...(message.references ?? '').split(/\s+/)]

@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db/client';
 import { requireSession } from '@/lib/auth/session';
 import { withErrorHandling } from '@/lib/api/respond';
 import { resolveWorkspaceId } from '@/lib/permissions/workspace';
-import { ConversationStatus, Prisma } from '@prisma/client';
+import { ConversationStatus, MessageClassification, Prisma } from '@prisma/client';
 import { checkSlaBreach } from '@/lib/sla';
 import { ownersSharingWith, teamScope } from '@/lib/conversations/access';
 
@@ -41,6 +41,16 @@ export const GET = withErrorHandling(async (req) => {
       : workspaceId === session.workspaceId
         ? { OR: [{ workspaceId }, { assigneeId: session.userId }] }
         : { workspaceId };
+  // A conversation that only holds delivery reports (a bounce that was stored as a thread before bounces were kept
+  // out of the inbox) is not a conversation: hidden, and left out of every count.
+  const REPORTS = [MessageClassification.BOUNCE, MessageClassification.DELIVERY_FAILURE];
+  const onlyReports: Prisma.ConversationWhereInput = {
+    AND: [
+      { messages: { some: { classification: { in: REPORTS } } } },
+      { messages: { none: { OR: [{ direction: 'OUTBOUND' }, { classification: { notIn: REPORTS } }] } } },
+    ],
+  };
+  const visible: Prisma.ConversationWhereInput = { NOT: onlyReports };
   const where: Prisma.ConversationWhereInput = {};
 
   switch (filter) {
@@ -80,7 +90,7 @@ export const GET = withErrorHandling(async (req) => {
 
   const [conversations, total, counts, slaRules] = await Promise.all([
     prisma.conversation.findMany({
-      where: { AND: [scopeWhere, where] },
+      where: { AND: [scopeWhere, visible, where] },
       orderBy: [{ unread: 'desc' }, { lastMessageAt: 'desc' }],
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -96,13 +106,13 @@ export const GET = withErrorHandling(async (req) => {
         },
       },
     }),
-    prisma.conversation.count({ where: { AND: [scopeWhere, where] } }),
+    prisma.conversation.count({ where: { AND: [scopeWhere, visible, where] } }),
     // Badge counts for the filter rail, independent of the active filter.
     Promise.all([
-      prisma.conversation.count({ where: { AND: [scopeWhere, { unread: true }] } }),
-      prisma.conversation.count({ where: { AND: [scopeWhere, { assigneeId: session.userId, status: { notIn: ['RESOLVED', 'CLOSED'] } }] } }),
-      prisma.conversation.count({ where: { AND: [scopeWhere, { status: { in: ['OPEN', 'IN_PROGRESS'] } }] } }),
-      prisma.conversation.count({ where: { AND: [scopeWhere, { status: 'WAITING_FOR_STUDENT' }] } }),
+      prisma.conversation.count({ where: { AND: [scopeWhere, visible, { unread: true }] } }),
+      prisma.conversation.count({ where: { AND: [scopeWhere, visible, { assigneeId: session.userId, status: { notIn: ['RESOLVED', 'CLOSED'] } }] } }),
+      prisma.conversation.count({ where: { AND: [scopeWhere, visible, { status: { in: ['OPEN', 'IN_PROGRESS'] } }] } }),
+      prisma.conversation.count({ where: { AND: [scopeWhere, visible, { status: 'WAITING_FOR_STUDENT' }] } }),
     ]),
     // Active SLA rules for breach detection.
     prisma.slaRule.findMany({
@@ -114,7 +124,7 @@ export const GET = withErrorHandling(async (req) => {
   // Team view: whose mailbox each reply landed in, with counts, for the owner filter.
   let owners: { id: string; name: string; count: number }[] | undefined;
   if (scope === 'team') {
-    const grouped = await prisma.conversation.groupBy({ by: ['ownerId'], where: { AND: [team!, where] }, _count: { _all: true } });
+    const grouped = await prisma.conversation.groupBy({ by: ['ownerId'], where: { AND: [team!, visible, where] }, _count: { _all: true } });
     const people = await prisma.user.findMany({ where: { id: { in: grouped.map((g) => g.ownerId) } }, select: { id: true, name: true } });
     owners = grouped.map((g) => ({ id: g.ownerId, name: people.find((p) => p.id === g.ownerId)?.name ?? 'Unknown', count: g._count._all })).sort((a, b) => b.count - a.count);
   }
